@@ -14,7 +14,7 @@ Core principle: The browser is not an application with scripting added. It is a 
 
 * Rust: Native application infrastructure, operating system integration, security boundaries, and performance-critical components.
 * Servo: Embedded web engine providing HTML/CSS rendering, JavaScript execution, DOM interaction, and web platform APIs.
-* Clojurust (Corium): Primary application and extension language, providing runtime customization, scripting, asynchronous programming, and interactive development.
+* Clojurust: Primary application and extension language, providing runtime customization, scripting, asynchronous programming, and interactive development.
 
 The architecture should minimize functionality implemented exclusively in Rust. Wherever practical, user-facing behavior should be implemented in Clojurust using stable, well-defined native APIs.
 

@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: draft v0.1 (2026-10-27). Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
+Status: draft v0.2 (2026-10-27). Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
 This document is the working plan. `docs/bulwark.md` remains the statement of vision and
@@ -107,22 +107,18 @@ Verified against the README, `TODO.md`, `examples/rust-interop/src/main.rs`,
 - Other gaps relevant here: `cljrs-tx` (STM/refs) is "initial"; `locking` deferred; LSP is
   syntactic only; the calling convention for Clojure → Rust is listed as still open.
 
-### 2.3 Corium (`csm/corium`)
+### 2.3 Scope note
 
-The vision document says "Clojurust (Corium)". Corium is not an alias for the runtime: it is a
-Datomic-style database (immutable, time-aware, fact-oriented, Datalog) written in Rust, with a
-`corium-cljrs` crate providing value conversion, a `corium.api` namespace, and a sandbox host
-for `:db/fn` functions. Storage backends include in-memory, filesystem, PostgreSQL, Turso, S3.
-
-Reading: the vision intends Corium as a candidate for the "persistent, inspectable state"
-principle (history, bookmarks, sessions, snapshots, replay). This plan treats it that way
-(decision D7) and flags the phrasing as an open question (§8, Q1).
+An earlier draft of the vision document read "Clojurust (Corium)". Corium is an unrelated
+project (a Datomic-style database by the same author) that entered the text by way of an AI
+assistant's memory; it is not part of this project. The aim is a Clojurust programmable
+interface for a Servo-powered browser, and nothing in this plan depends on Corium.
 
 ### 2.4 Implications that drive the architecture
 
 1. Servo and Clojurust are both single-thread-affine. The natural design is **one shell
    thread** that owns the `winit` event loop, the `Servo` instance, the Clojurust `Runtime`,
-   the Tokio `LocalSet`, and the nREPL `Poller`. Everything else (network, disk, Corium) runs
+   the Tokio `LocalSet`, and the nREPL `Poller`. Everything else (network, disk, storage) runs
    on other threads and communicates by message.
 2. Because Clojure runs on the UI thread, a slow Clojure function freezes rendering and
    input. Mitigation is architectural (cooperative scheduling via core.async, time-budgeted
@@ -198,11 +194,12 @@ once E5 shows multiple webviews can coexist and the bridge can be made safe. Win
 and layout are pure Clojure data in both options; Rust only receives rectangles.
 
 **D7. Persistence.**
-Phase 1 and 2: EDN files under the profile directory, written atomically. Phase 4 decides
-between Corium (strong fit for history/snapshots/replay, same author, `corium-cljrs` binding
-exists) and SQLite (boring, proven for browser profiles). Decision criteria: startup cost,
-binary size, write latency on the shell thread (must be off-thread either way), and whether
-time-travel queries are actually used by then. See Q1.
+Phase 1 and 2: EDN files under the profile directory, written atomically. Phase 4 chooses
+the daily-driver store; the default is SQLite (proven for browser profiles, small, no server),
+with an append-only EDN log kept as the fallback if a Rust SQLite binding proves awkward to
+expose through `bulwark.native`. Decision criteria: startup cost, binary size, and write
+latency, which must be off the shell thread either way. Snapshot and replay features in
+Phase 5 are designed on top of whichever store is chosen, not the other way around.
 
 **D8. Security tiers and enforcement point.**
 Three principals, enforced in Rust at the native boundary, as the vision requires:
@@ -530,8 +527,7 @@ mini-plan when picked up; none is scheduled.
 - Reactive buffers: a buffer whose content is a function of app state and external data,
   re-rendered on change (builds on `bulwark://` buffers and core.async).
 - Snapshots and replay: serialize app state (not Servo state) per the "persistent,
-  inspectable state" principle; replay command sequences; Corium's time-travel model is the
-  obvious fit if D7 chose it.
+  inspectable state" principle; replay command sequences against a fresh shell.
 - Background tasks: worker isolates from `cljrs-async` for scheduled scraping and
   aggregation, with capability sets.
 - Agent and remote control: a structured external API (nREPL already exists; add a
@@ -568,8 +564,7 @@ than its author, without changes to Rust.
 
 ## 8. Open questions for the project owner
 
-- **Q1. Corium's role.** Is "Clojurust (Corium)" in the vision meant to name Corium as the
-  state store, or is it just a label? This plan assumes the former as a Phase 4 candidate.
+- **Q1. Resolved 2026-10-27.** Corium is not part of this project; see §2.3.
 - **Q2. Platform priority.** Linux first, macOS second, Windows later? Servo's Windows story
   (`no-wgl`) and GStreamer packaging make Windows the costliest; this plan assumes Linux +
   macOS through Phase 4.
