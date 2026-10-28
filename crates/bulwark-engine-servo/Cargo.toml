@@ -1,0 +1,12 @@
+[package]
+name = "bulwark-engine-servo"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+servo = ["dep:servo"]
+
+[dependencies]
+bulwark-engine.workspace = true
+servo = { workspace = true, optional = true }

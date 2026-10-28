@@ -1,0 +1,8 @@
+(ns bulwark.experiment
+  (:require [clojure.core.async :refer [go timeout]]))
+(def async-ticks (atom 0))
+(def nrepl-evals (atom 0))
+(go (loop []
+      (await (timeout 100))
+      (swap! async-ticks inc)
+      (recur)))

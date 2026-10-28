@@ -1,0 +1,13 @@
+[package]
+name = "bulwark-runtime"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cljrs-runtime.workspace = true
+cljrs-stdlib.workspace = true
+cljrs-reader.workspace = true
+cljrs-value.workspace = true
+cljrs-gc.workspace = true

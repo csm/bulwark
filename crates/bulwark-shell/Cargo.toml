@@ -1,0 +1,10 @@
+[package]
+name = "bulwark-shell"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bulwark-runtime.workspace = true
+cljrs-runtime.workspace = true

@@ -1,0 +1,20 @@
+name: Bootstrap
+on: [push, pull_request]
+jobs:
+  runtime:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - run: cargo run --locked
+      - run: cargo run --locked -p bulwark-experiment-e2
+      - run: cargo build --locked -p bulwark-experiment-e1
+      - run: python3 experiments/run_e1.py --seconds 5
