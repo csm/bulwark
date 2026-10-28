@@ -671,6 +671,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bulwark-experiment-e7"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "bulwark-runtime",
+ "cljrs-async",
+ "cljrs-gc",
+ "cljrs-runtime",
+ "cljrs-value",
+ "rustls",
+ "servo",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "bulwark-runtime"
 version = "0.0.0"
 dependencies = [

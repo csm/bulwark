@@ -16,5 +16,7 @@ jobs:
       - run: cargo test --locked --workspace
       - run: cargo run --locked
       - run: cargo run --locked -p bulwark-experiment-e2
-      - run: cargo build --locked -p bulwark-experiment-e1
+      - run: cargo build --locked -p bulwark-experiment-e1 -p bulwark-experiment-e7
       - run: python3 experiments/run_e1.py --seconds 5
+      - run: python3 experiments/run_e6.py
+      - run: python3 experiments/run_e7.py

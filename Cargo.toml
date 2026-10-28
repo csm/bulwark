@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "experiments/e1-shell-loop", "experiments/e2-callback", "experiments/e3-servo"]
+members = ["crates/*", "experiments/e1-shell-loop", "experiments/e2-callback", "experiments/e3-servo", "experiments/e7-async-bridge"]
 default-members = ["crates/bulwark-engine", "crates/bulwark-runtime", "crates/bulwark-shell"]
 
 [workspace.package]
@@ -20,7 +20,7 @@ cljrs-gc = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852
 cljrs-async = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61", default-features = false }
 cljrs-nrepl = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61", default-features = false }
 servo = { version = "=0.7.0", default-features = false, features = ["bundled", "js_jit"] }
-tokio = { version = "1", features = ["rt", "time"] }
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 winit = "0.30.13"
 url = "2"
 euclid = "0.22"

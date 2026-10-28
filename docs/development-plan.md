@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: active v0.3 (2026-10-27), Phase 0 bootstrap in progress. Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
+Status: active v0.5 (2026-10-27), Phase 0 experiments in progress. Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
 This document is the working plan. `docs/bulwark.md` remains the statement of vision and
@@ -122,20 +122,21 @@ interface for a Servo-powered browser, and nothing in this plan depends on Coriu
 
 ### 2.4 Implications that drive the architecture
 
-1. Servo and Clojurust are both single-thread-affine. The natural design is **one shell
-   thread** that owns the `winit` event loop, the `Servo` instance, the Clojurust `Runtime`,
-   the Tokio `LocalSet`, and the nREPL `Poller`. Everything else (network, disk, storage) runs
-   on other threads and communicates by message.
-2. Because Clojure runs on the UI thread, a slow Clojure function freezes rendering and
-   input. Mitigation is architectural (cooperative scheduling via core.async, time-budgeted
-   event dispatch, worker isolates for heavy work), not optional.
+1. Servo and Clojurust are both single-thread-affine, but they can own different threads.
+   The current investigation puts `winit`, Servo, native resources, and rendering on the main thread.
+   A dedicated thread owns Clojurust, its Tokio `LocalSet`, and future nREPL integration.
+   Owned requests, replies, and events cross channels. E7 validates this mechanism with real Servo.
+2. A blocking Clojure function stops commands and hooks on its runtime, while Servo continues independently.
+   User entry points use `^:async` and `await`. Async metadata does not preempt blocking calls or infinite synchronous code.
 3. DOM access must be built by Bulwark, as injected JS plus a message protocol, because
    Servo exposes only `evaluate_javascript` and `UserContentManager`.
 4. Native-handle lifetime management is Bulwark's responsibility: handles are revocable
    tokens, not GC-managed objects.
 5. Bulwark will exercise Clojurust embedding paths that require experiments.
    E2 uses an existing public API without an upstream patch.
-   Host-driven `LocalSet` scheduling and bounded nREPL polling still require investigation.
+   E6 confirms mid-form nREPL interruption and recovery. Cooperative scheduling still permits unbounded synchronous work.
+   E7 establishes two more gaps: idle awaits repeatedly poll, and some nested await expressions block the runtime.
+   These async gaps take priority over bounded nREPL polling under the separate-thread direction.
    The owner approved preparation of required upstream Clojurust fixes under Q4.
 
 ---
@@ -147,22 +148,25 @@ any can be revisited when an experiment in §5 contradicts it. Record final choi
 ADRs under `docs/adr/`.
 
 **D1. Threading and event-loop ownership.**
-One shell thread hosts `winit`, `Servo`, the Clojurust runtime, the Tokio `LocalSet`, and the
-nREPL poller. Servo's `EventLoopWaker` posts a `winit` user event. The loop iteration order is:
-drain winit events → forward input to the focused `WebView` → `Servo::spin_event_loop` →
-dispatch queued engine events to Clojure → run the `LocalSet` until idle or until a time
-budget expires → `Poller::poll_timeout(0)` for nREPL → paint. Default: adopt. Experiment E1
-validates it.
+Current direction under investigation: separate engine and runtime threads, per the owner's request.
+The main thread hosts `winit`, Servo, native chrome, and rendering.
+The dedicated Clojurust thread runs its own Tokio executor and LocalSet continuously.
+Native browser calls return futures backed by bounded requests and one-shot replies.
+Engine events cross a bounded ordered queue and reach Clojure through an async event loop.
+Servo wakeups and command arrivals wake the main event loop. No engine callback evaluates Clojure on the main thread.
+E7 validates the mechanism. Native window integration, nREPL scheduling, and upstream async gaps remain open.
+The [D1 ADR](adr/0001-shell-thread.md) and [async bridge report](async-bridge.md) record the revised direction.
+E1 remains the historical comparison for the earlier shared-thread proposal.
 
 **D2. Rust ↔ Clojure boundary is data, not objects.**
 Native capabilities are exposed as a small set of namespaced native functions
 (`bulwark.native/*`) that take and return plain Clojure data (maps, vectors, keywords,
-strings, numbers) plus opaque handle values. Engine events are delivered as event maps
+strings, numbers) plus opaque handle values. Engine operations return futures whose results contain that data.
+Rust converts arguments and replies on the Clojurust thread. No GC or Servo object crosses a channel.
+Engine events are delivered as event maps
 (`{:event/type :page/url-changed :webview 7 :url "https://..."}`) into a single Clojure
-dispatcher function; all routing, hooks, and modes are Clojure. Rust never calls arbitrary
-Clojure functions, only the registered dispatcher and a registered "idle/tick" entry point.
-This limits the Rust → Clojure callback surface to one mechanism (E2) and keeps the native
-API small enough to document and stabilize.
+dispatcher function from a Clojure async event loop. Routing, hooks, and modes remain in Clojure.
+E2 remains the supported local host callback mechanism. The engine thread never calls it directly.
 
 **D3. Handles are explicit, revocable tokens.**
 A webview, buffer, window, download, or subscription is identified by an integer or keyword
@@ -261,7 +265,8 @@ which wrap the native layer and can be kept stable while the native layer change
 
 ```
             ┌──────────────────────┐
-            │ E1 shell thread loop │
+            │ D1 ownership probe   │
+            │ E7 async channels    │
             └──────┬───────────────┘
                    │
    ┌───────────────┼──────────────────┐
@@ -287,7 +292,10 @@ callbacks      (window+paint)     + layout rects
 
 Hard dependencies:
 
-- Phase 1 cannot start until E1, E2, E3 pass. These three are the architectural hypothesis.
+- Phase 1 needs a completed D1 ownership review plus E2 and E3.
+  E7 is the ownership probe for the separate-thread direction. E1 remains evidence for the earlier shared-thread proposal.
+  The review must record upstream fixes for E7's async gaps and the product queue policies.
+  The [async gap register](clojurust-async-gaps.md) defines the adoption gates and regression requirements.
 - Phase 2 needs E5 only for split windows showing multiple web pages at once; a Phase 2 with
   one visible webview at a time (Emacs with a single window) is acceptable fallback.
 - Phase 3 needs E4.
@@ -300,7 +308,7 @@ Clojurust capabilities each phase relies on:
 |---|---|---|
 | 1 | embed runtime, native fns, `builtin_source`, nREPL poller | documented |
 | 1 | Rust → Clojure dispatcher call | public API, E2 passed in tree-walk and tiered modes |
-| 1 | core.async on host-driven `LocalSet` | documented, host integration unverified (E1) |
+| 1 | core.async on an independent runtime thread | E7 works with real Servo; idle CPU and nested-await gaps remain |
 | 2 | dynamic vars, protocols, multimethods, metadata/docstrings for introspection | implemented |
 | 2 | `require` of embedded and on-disk namespaces, reload | implemented |
 | 3 | JSON/EDN conversion at scale, `NativeObject` for node handles | implemented |
@@ -326,8 +334,13 @@ with a cross-thread command/event queue (costs latency and complicates Servo int
 
 Bootstrap status: the driver and concurrent loopback nREPL client exist.
 A 60-second headless repeat reached 3,600 ticks with no gaps greater than 25 ms.
-The full native redraw criterion remains open. The pinned async API uses `(await (timeout 100))`
+Native 60-second runs now report runtime ticks, redraw callbacks, and skipped deadlines.
+The full native criterion remains open. The dedicated-thread fallback exists as an experiment.
+Current measurements separate window startup from the interval between redraw callbacks.
+The [scheduling report](scheduling.md) records its limits and the remaining D1 decisions.
+The pinned async API uses `(await (timeout 100))`
 inside `go`, rather than the assumed `<!` syntax.
+This experiment now serves as the historical comparison for D1. E7 investigates the separate-thread direction.
 
 **E2. Rust → Clojure callback.** From Rust, look up a var (e.g. `bulwark.core/dispatch!`) and
 invoke it with a map argument, 10,000 times, with the GC active, without leaks or crashes.
@@ -352,7 +365,9 @@ stop and report.
 
 Bootstrap status: the public-API window probe builds on macOS arm64.
 Servo rendered servo.org and Wikipedia. Bounded screenshot captures passed for both pages.
-Interactive keyboard and mouse checks, Linux, release size, and clean build timing remain open.
+The clean debug target built in 2m 30s. A release build took 194.83 s and produced a 126 MiB executable.
+These measurements used cached sources and include concurrent runtime checks.
+Interactive keyboard and mouse checks and Linux remain open.
 
 Q5 sets the sequence: complete the single-process baseline, then compare multiprocess Servo.
 The comparison will cover rendering and input, startup and memory costs, crash containment,
@@ -371,13 +386,33 @@ per frame; two `OffscreenRenderingContext`s composited by the shell. Pass: two p
 interactive side by side at acceptable frame rate. Time box: 4 days. Runs after E3. If it
 fails: Phase 2 ships with one visible web buffer per frame, with non-web buffers in `egui`.
 
-**E6. Clojure-on-UI-thread time budgeting.** Instrument the E1 loop: cap Clojure dispatch
+**E6. Runtime time budgeting.** Instrument the E1 loop: cap Clojure dispatch
 per frame, measure how core.async `go` blocks yield, and test whether a long synchronous
 Clojure call can be interrupted (nREPL `interrupt` exists; does it reach the interpreter
 mid-form?). Pass: a written policy for what runs where, and an `interrupt` that works from a
 second nREPL connection. Time box: 2 days. Runs after E1.
 
-Phase 0 exit: E1, E2, E3 passed; E4, E5, E6 either passed or have a recorded fallback; the
+Progress: `experiments/run_e6.py` proves mid-form interruption from a second connection and subsequent session and async recovery.
+It also measures a blocking `go` task and a burst of queued evaluations.
+Both exceed the host's nominal time slice.
+The [scheduling report](scheduling.md) defines the provisional policy.
+Bounded polling and enforcement between event callbacks remain open. E6 is not complete.
+Under D1's separate-thread direction, these limits affect runtime responsiveness rather than Servo frame scheduling.
+
+**E7. Async user code across a thread boundary.** Run Servo on the main thread and Clojurust on a dedicated LocalSet thread.
+Use bounded owned requests, one-shot replies, ordered events, and async Clojure browser helpers.
+Pass: real Servo create/evaluate/close requests, reply correlation under concurrency, overload and stale-handle errors,
+runtime async progress, and continued Servo painting during a deliberate runtime stall.
+Record idle CPU, request latency, shutdown behavior, and gaps in the pinned async evaluator.
+Time box: 2 days. Native `winit` and nREPL integration remain separate follow-up checks.
+
+Initial result: the real Servo probe passed its mechanism assertions.
+During a 200 ms runtime block, Servo completed 57 turns and painted six frames. The page timer also advanced.
+The mock reverses reply batches to exercise correlation independently of completion order.
+Idle awaits consume CPU, and await under a keyword call blocks. Both have repeatable probes.
+The [async bridge report](async-bridge.md) records the contract, results, and remaining decisions.
+
+Phase 0 exit: D1 ownership review, E2, and E3 complete; E4, E5, E6 either passed or have a recorded fallback; the
 ADRs for D1–D6 written with final choices.
 
 ---
@@ -399,7 +434,7 @@ Deliverables:
 2. Native API v0 (`bulwark.native`): `webview-create`, `webview-close`, `navigate`, `reload`,
    `back`, `forward`, `webview-info` (url, title, load status, can-go-back/forward),
    `eval-js`, `log`, `quit`, and `set-echo!` (text in the egui echo area).
-3. Event delivery: Rust calls `bulwark.core/dispatch!` with event maps for url-changed,
+3. Event delivery: the runtime's async event loop calls `bulwark.core/dispatch!` with event maps for url-changed,
    title-changed, load-status-changed, history-changed, closed, crashed, and key input.
 4. Clojure side: a command registry (`defcommand` with docstring), a keymap with
    Emacs-style sequences (`C-x C-f` style parsing), `bulwark.hooks` with `add-hook!`, and a
@@ -422,8 +457,8 @@ Acceptance criteria:
 - A6. Rust code in `bulwark-shell` and `bulwark-runtime` contains no browsing policy: a
   reviewer can list every native function and each is a mechanism (do X to view N), not a
   behavior (when Y happens, do Z).
-- A7. A 2-second synchronous Clojure loop at the REPL freezes the UI for 2 seconds and then
-  recovers, with no crash. (Known limitation, must be documented, must not corrupt state.)
+- A7. A 2-second synchronous Clojure loop pauses runtime commands while Servo input and rendering continue.
+  The runtime then recovers without a crash or invalid handle state. Document the command queue's behavior during the stall.
 - A8. CI builds on Linux and runs: Rust unit tests, Clojure tests in `clj/` under the
   interpreter, and a headless smoke test that starts the shell with
   `SoftwareRenderingContext`, loads a local HTML file, and asserts a title-changed event
@@ -609,6 +644,8 @@ than its author, without changes to Rust.
   Use the results to decide whether to change the default.
 - **Q6. Extension language surface.** Are extensions `.cljrs` only, or should `.cljc` with
   reader conditionals be supported for sharing code with JVM/CLJS tooling?
+- **Q7. Direction for investigation, 2026-10-27.** The owner requested pure async Clojurust user code with Servo and Clojurust on separate threads.
+  E7 implements and measures this direction. D1 remains provisional until the Phase 0 ownership review.
 
 ---
 
@@ -617,16 +654,21 @@ than its author, without changes to Rust.
 1. **Done:** create the D9 workspace skeleton, experiment crates, dependency pins, and
    [upstream notes](upstream.md). The default executable embeds `bulwark.core` and reports Phase 0.
 2. **In progress:** E3 builds on macOS and renders both target pages. Screenshot checks passed.
-   Complete macOS input checks and clean/release build measurements in single-process mode.
+   Clean debug timing, release timing, and executable sizes are recorded.
+   Complete macOS input checks in single-process mode. Native UI inspection timed out in this session.
    Then compare multiprocess Servo under Q5. Repeat on Linux as follow-up work.
-3. **In progress:** E1 drives async and nREPL on one thread. The headless repeat and synchronous
-   stall/recovery probe passed their checks. Complete the 60-second native redraw run with a client.
-   Resolve frame timing before accepting D1. **Done:** E2 passes in tree-walk and tiered modes.
-4. **Done:** record D1–D3 in [ADRs](adr/). D1 remains provisional until E1 completes.
-5. Run E4 and E5 after E3 passes. Use E6 to investigate interruption, bounded polling, and
-   cooperative execution. Prepare upstream Clojurust fixes for gaps that these probes establish.
+3. **Initial mechanism passed:** E7 runs async user code across channels to real Servo on a separate thread.
+   Complete native window wakeups, runtime-thread nREPL integration, and shutdown policy.
+   Prepare upstream fixes for idle await polling and non-symbol async call evaluation, with regression coverage.
+   Use CLJ-ASYNC-001 and CLJ-ASYNC-002 in the [gap register](clojurust-async-gaps.md).
+   Permanent local workarounds or language restrictions do not satisfy these adoption gates.
+   E1 remains a historical comparison. **Done:** E2 passes in tree-walk and tiered modes.
+4. **In progress:** D1 and D2 now record the async channel direction. Complete the D1 ownership review and queue policies.
+5. Run E4 and E5 after E3 passes. E6 confirms interruption and recovery with the existing upstream API.
+   Its blocking and queue probes remain evidence for runtime scheduling limits.
+   Complete the E6 policy and prepare CLJ-ASYNC-003 before runtime-thread nREPL integration.
    Hold the Phase 0 exit review and amend this plan.
-6. Begin Phase 1 with deliverables 1–3 after E1, E2, and E3 pass. The current skeleton does
+6. Begin Phase 1 with deliverables 1–3 after the D1 ownership review, E2, and E3 pass. The current skeleton does
    not implement the native browser API or claim the Phase 1 acceptance criteria.
 
 ---
@@ -641,6 +683,11 @@ Implemented:
 - E2 event ordering, callback errors, redefinition, and GC-retention checks.
 - E1 headless/native drivers, a concurrent nREPL client, and timing counters.
 - E3 window rendering, input forwarding, and bounded screenshot capture.
+- E1 native client automation, explicit deadline counters, and a dedicated-thread comparison.
+- E6 mid-form interruption, session recovery, async recovery, and blocking-work probes, with headless CI coverage.
+- A provisional [scheduling policy](scheduling.md) and E3 clean/debug and release build measurements.
+- E7's bounded request/reply/event bridge, pure async user example, real Servo backend, and process-bounded diagnostics.
+- Five E7 tests for transport types, overload, disconnect, deadlines, and pending-evaluation invalidation.
 - A local HTML input fixture, development instructions, and a runtime CI workflow.
 - Owner decisions Q2–Q5: macOS first, egui for initial chrome, preparation of upstream Clojurust
   fixes, and a single-process Servo baseline followed by a multiprocess comparison.
@@ -655,12 +702,21 @@ Measured locally on macOS arm64, Rust 1.97.1, debug builds:
 | E1 headless repeat, 60 s | 3,600 ticks, 545 async ticks, 498 nREPL evaluations, no gaps over 25 ms | Headless check passed, full native criterion pending |
 | E1 native, 5 s | 291 redraws, 44 async ticks, no nREPL client | Native loop runs, full criterion pending |
 | E1 synchronous stall | Three successful evaluations, maximum gap 2.023 s, driver recovered | Headless stall/recovery demonstrated |
+| E1 native repeat, 60 s, after initial redraw | 3,598 redraw callbacks, 544 async ticks, 496 evaluations, one skipped deadline, maximum gap 46.597 ms | Strict timing assertion failed |
+| E6 inline, 8 s | Active-form interrupt 0.307 ms, session recovery, maximum poll 237.554 ms, maximum LocalSet slice 202.183 ms | Interruption passed, cooperative limits demonstrated |
+| E6 worker, 8 s, before startup separation | Maximum runtime gap 289.017 ms, maximum native gap 50.211 ms | Runtime stalls isolated from equivalent redraw stalls |
 | E3 macOS | Build complete, rendered screenshots of servo.org and Wikipedia inspected | Interactive and Linux checks pending |
+| E3 builds | Clean debug target 2m 30s, first release build 194.83 s, release executable 131,904,848 bytes | Build measurements recorded, release fixture screenshot passed |
+| E7 Servo | 119 accepted requests, 62.5 microseconds median transport duration, six painted frames during a 200 ms runtime stall | Initial async bridge mechanism passed |
+| E7 async limits | One-second idle wait used about one CPU-second; await under keyword lookup blocked until process termination | Upstream gaps reproduced |
 
 The initial E1 run overlapped Servo compilation. The repeat ran after the main build.
 The Mac was locked during initial UI inspection, so interactive checks remain pending.
+Native UI inspection timed out during this continuation. No interactive input result is claimed.
+The later timing runs separate startup from scheduled redraws and run after compilation.
+The [scheduling report](scheduling.md) records their measurement limits and the dedicated-thread comparison.
 The CI workflow exists locally. No remote CI result is available yet.
 Local formatting, workspace Clippy, Servo-probe Clippy, and Python syntax checks passed.
-The workspace test command passed, with no Rust unit tests in the skeleton yet.
+The workspace test command passed, including two E1 schedule tests and five E7 bridge tests.
 The experiment programs provide the current integration assertions.
 Full instructions and measurement limits live in [experiments/README.md](../experiments/README.md).
