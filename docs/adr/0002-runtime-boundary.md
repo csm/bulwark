@@ -2,7 +2,15 @@
 
 Status: accepted for Phase 0, 2026-10-27.
 
-Rust delivers plain event data to one Clojurust dispatcher.
+The engine sends owned Rust messages to the Clojurust thread.
+Only that thread creates GC values from replies and events.
+Browser operations return futures, and an async Clojure event loop routes events to one dispatcher.
+The engine never waits for a Clojure callback on its own thread.
+
+E7 implements this direction as an experiment. Its contract remains provisional.
+The [async bridge report](../async-bridge.md) records the channel and future semantics.
+
+E2 established a separate, local host callback path:
 The host resolves the current var value for each call and calls `env::apply::apply_value`.
 This path accepts an explicit environment and roots the callee and arguments before collection.
 Returned values require a host root if they survive another evaluation or collection.
