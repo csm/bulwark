@@ -1,0 +1,6 @@
+(ns bulwark.core)
+
+(defn bootstrap-status
+  "Returns the current bootstrap stage. Browser mechanisms arrive after Phase 0."
+  []
+  {:phase 0 :status :experiments})

@@ -1,0 +1,15 @@
+(ns bulwark.experiment)
+(def delivered (atom 0))
+(defn dispatch!
+  "Checks event data and records its sequence without retaining event maps."
+  [event]
+  (assert (= :page/title-changed (:event/type event)))
+  (when (zero? (mod (:sequence event) 100))
+    (bulwark.native/collect!))
+  (assert (= (inc @delivered) (:sequence event)))
+  (assert (= (str "Page " (:sequence event)) (:title event)))
+  (reset! delivered (:sequence event)))
+(defn fail!
+  "Raises an exception to exercise host error propagation."
+  []
+  (throw (ex-info "expected callback error" {})))

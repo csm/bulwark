@@ -1,0 +1,21 @@
+[package]
+name = "bulwark-experiment-e3"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+servo = ["dep:servo"]
+
+[[bin]]
+name = "bulwark-experiment-e3"
+path = "src/main.rs"
+required-features = ["servo"]
+
+[dependencies]
+anyhow.workspace = true
+servo = { workspace = true, optional = true }
+winit.workspace = true
+euclid.workspace = true
+url.workspace = true
+rustls.workspace = true

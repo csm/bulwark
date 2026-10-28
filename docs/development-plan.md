@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: draft v0.2 (2026-10-27). Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
+Status: active v0.3 (2026-10-27), Phase 0 bootstrap in progress. Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
 This document is the working plan. `docs/bulwark.md` remains the statement of vision and
@@ -27,6 +27,11 @@ Section 9 of the vision document asks for five things. Each maps to a section be
 The plan is only as good as its assumptions about Servo and Clojurust. This section records
 what was verified against upstream sources on 2026-10-27, and what it implies. Re-verify at the
 start of Phase 0; both projects move quickly.
+
+Bootstrap update: the workspace pins the published Servo 0.7.0 crate and Clojurust commit
+`c74e54df68185a3852dcd6d6682af5f0f98c1d61`. The initial main-branch inspection remains
+background context. [Upstream notes](upstream.md) record the pinned-source inspection.
+Section 10 records experiment results and remaining checks.
 
 ### 2.1 Servo (the `servo` crate)
 
@@ -86,10 +91,11 @@ Verified against the README, `TODO.md`, `examples/rust-interop/src/main.rs`,
   `globals.intern(ns, ..)` of a `Value::NativeFunction`. Opaque Rust state is held as a
   `NativeObject` via `gc_native_object`. `globals.mark_loaded(ns)` stops `require` from
   searching the filesystem.
-- **Calling Clojure from Rust is not a documented public API.** The interop example only goes
-  Clojure → Rust. `cljrs_runtime::interp::apply` exists as a module, and `TODO.md` mentions
-  internal re-entry via a thread-local context. Event delivery from Servo into Clojure
-  callbacks depends on this; it is Experiment E2.
+- **Calling Clojure from Rust has a public path in the pinned revision.**
+  `cljrs_runtime::env::apply::apply_value` accepts a function value, argument values, and an
+  explicit `Env`. It roots the callee and arguments before its GC safepoint.
+  `tiered::invoke` requires an active evaluation context and is unnecessary for host calls.
+  E2 passed in tree-walk and tiered modes. JIT and AOT remain unverified.
 - Threading: `GcPtr`, `Value`, `Env`, and `GlobalEnv` are **not `Send`**. The runtime lives on
   one thread. `cljrs-async` runs core.async (`go`, `chan`, `<!`, `>!`, `alts!`, `timeout`) on
   a Tokio `current_thread` runtime with a `LocalSet` that the host must drive on that same
@@ -127,9 +133,10 @@ interface for a Servo-powered browser, and nothing in this plan depends on Coriu
    Servo exposes only `evaluate_javascript` and `UserContentManager`.
 4. Native-handle lifetime management is Bulwark's responsibility: handles are revocable
    tokens, not GC-managed objects.
-5. Bulwark will exercise undocumented or missing Clojurust paths (Rust → Clojure callbacks,
-   host-driven `LocalSet`, interop calling convention). Expect to land changes upstream in
-   `csm/clojurust`; budget for it.
+5. Bulwark will exercise Clojurust embedding paths that require experiments.
+   E2 uses an existing public API without an upstream patch.
+   Host-driven `LocalSet` scheduling and bounded nREPL polling still require investigation.
+   The owner approved preparation of required upstream Clojurust fixes under Q4.
 
 ---
 
@@ -188,7 +195,7 @@ Two viable options, with a recommended sequence:
   `load_web_resource` interception, with HTML generated from hiccup in Clojure. One rendering
   model, but depends on Servo maturity and needs a hardened privileged bridge.
 
-Default: Option A for the minimal chrome needed in Phases 1 and 2 (echo area, modeline,
+Accepted under Q3: Option A for the minimal chrome needed in Phases 1 and 2 (echo area, modeline,
 minibuffer/command palette, REPL buffer). Option B for user-defined buffer types from Phase 3,
 once E5 shows multiple webviews can coexist and the bridge can be made safe. Window splits
 and layout are pure Clojure data in both options; Rust only receives rectangles.
@@ -292,7 +299,7 @@ Clojurust capabilities each phase relies on:
 | Phase | Clojurust capability | Status |
 |---|---|---|
 | 1 | embed runtime, native fns, `builtin_source`, nREPL poller | documented |
-| 1 | Rust → Clojure dispatcher call | undocumented (E2) |
+| 1 | Rust → Clojure dispatcher call | public API, E2 passed in tree-walk and tiered modes |
 | 1 | core.async on host-driven `LocalSet` | documented, host integration unverified (E1) |
 | 2 | dynamic vars, protocols, multimethods, metadata/docstrings for introspection | implemented |
 | 2 | `require` of embedded and on-disk namespaces, reload | implemented |
@@ -317,6 +324,11 @@ busy loop in Clojure visibly freezes the UI (confirming the hazard is real and m
 budgeted). Time box: 3 days. If it fails: investigate running Clojurust on a dedicated thread
 with a cross-thread command/event queue (costs latency and complicates Servo interaction).
 
+Bootstrap status: the driver and concurrent loopback nREPL client exist.
+A 60-second headless repeat reached 3,600 ticks with no gaps greater than 25 ms.
+The full native redraw criterion remains open. The pinned async API uses `(await (timeout 100))`
+inside `go`, rather than the assumed `<!` syntax.
+
 **E2. Rust → Clojure callback.** From Rust, look up a var (e.g. `bulwark.core/dispatch!`) and
 invoke it with a map argument, 10,000 times, with the GC active, without leaks or crashes.
 Pass: a documented or newly contributed public API in `cljrs-runtime` for `apply` of a
@@ -325,12 +337,27 @@ PR time. If it fails: Rust pushes events into a core.async channel instead (veri
 `cljrs-async` `channel` module supports host-side puts), and Clojure pulls; this is
 acceptable and may even be preferable.
 
+Bootstrap status: passed using `env::apply::apply_value` in the pinned revision.
+Both execution modes delivered 10,000 ordered maps with 100 in-callback collections and 100 between calls.
+Live objects stayed constant after warmup. Errors and live redefinition also passed.
+The existing API roots its arguments. No upstream patch was necessary.
+
 **E3. Servo embed.** Using the `servo` crate, open a `winit` window, create one `WebView`
 with `WindowRenderingContext`, load a URL, paint on `notify_new_frame_ready`, forward
 keyboard and mouse. Record build time, binary size, and which Servo features are required.
-Pass: renders `https://servo.org` and `https://en.wikipedia.org` interactively on Linux and
-macOS. Time box: 3 days (mostly build time). If it fails: the project is blocked on upstream;
+Pass for the initial macOS milestone: renders `https://servo.org` and `https://en.wikipedia.org`
+interactively on macOS. Repeat on Linux as follow-up work under Q2.
+Time box: 3 days (mostly build time). If macOS embedding fails: the project is blocked on upstream;
 stop and report.
+
+Bootstrap status: the public-API window probe builds on macOS arm64.
+Servo rendered servo.org and Wikipedia. Bounded screenshot captures passed for both pages.
+Interactive keyboard and mouse checks, Linux, release size, and clean build timing remain open.
+
+Q5 sets the sequence: complete the single-process baseline, then compare multiprocess Servo.
+The comparison will cover rendering and input, startup and memory costs, crash containment,
+JavaScript evaluation, and resource interception. Record the results before changing the default.
+Multiprocess support does not gate the initial single-process milestone.
 
 **E4. DOM channel.** Inject an agent via `UserContentManager`; measure round-trip latency of
 `evaluate_javascript` for (a) a trivial expression, (b) serializing a 5,000-node subtree to
@@ -544,10 +571,12 @@ than its author, without changes to Rust.
 
 ## 7. Cross-cutting practices
 
+- **Platform priority.** macOS is the first development and validation platform, per Q2.
+  Linux remains follow-up work. Its runtime CI coverage stays in place.
 - **Tests.** Rust unit tests per crate; Clojure tests in `clj/` runnable under both
   interpreter and AOT; one headless integration test per native function using
-  `SoftwareRenderingContext` and local HTML fixtures. CI on Linux from Phase 1, macOS from
-  Phase 2.
+  `SoftwareRenderingContext` and local HTML fixtures. Runtime CI covers macOS and Linux from
+  bootstrap. Native Servo validation starts on macOS.
 - **Docs.** Every native function and every public `bulwark.*` function has a docstring,
   because `apropos` and `describe-*` are features. `docs/adr/` for decisions. A
   `docs/native-api.md` generated from docstrings at build time.
@@ -565,17 +594,19 @@ than its author, without changes to Rust.
 ## 8. Open questions for the project owner
 
 - **Q1. Resolved 2026-10-27.** Corium is not part of this project; see §2.3.
-- **Q2. Platform priority.** Linux first, macOS second, Windows later? Servo's Windows story
-  (`no-wgl`) and GStreamer packaging make Windows the costliest; this plan assumes Linux +
-  macOS through Phase 4.
-- **Q3. egui as the chrome renderer (D6 Option A).** Acceptable as a dependency, or is the
-  intent that even the echo area is a Servo-rendered buffer from day one? The plan defers
-  that to Phase 3 for risk reasons.
-- **Q4. Clojurust changes.** Confirm that landing changes in `csm/clojurust` (public apply
-  API, host-driven LocalSet helpers) is in scope for this project's timeline rather than
-  something to work around.
-- **Q5. Multiprocess Servo.** `servo/multiprocess` improves crash containment but changes how
-  `evaluate_javascript` and interception behave. Decide in E3 whether Phase 1 enables it.
+- **Q2. Resolved 2026-10-27: macOS first.** The owner selected macOS as the first platform.
+  Initial native validation gates macOS. Linux remains follow-up work with runtime CI coverage.
+  The owner has not set a Windows schedule.
+- **Q3. Resolved 2026-10-27: use egui.** The owner accepted D6 Option A for the initial chrome.
+  The echo area, modeline, minibuffer, and REPL use egui in Phases 1 and 2.
+  Privileged Servo buffers remain conditional Phase 3 work. See [D6 ADR](adr/0006-chrome-rendering.md).
+- **Q4. Resolved 2026-10-27: prepare upstream fixes.** Required Clojurust fixes are in scope.
+  Prepare changes in `csm/clojurust` with regression coverage and retain D10's contribution policy.
+  E2 needs no upstream change. Bounded nREPL polling and interruption remain candidates for E6.
+- **Q5. Resolved 2026-10-27: single process first, then compare multiprocess.**
+  Complete E3 with the current single-process configuration.
+  Compare multiprocess behavior and costs after that baseline works.
+  Use the results to decide whether to change the default.
 - **Q6. Extension language surface.** Are extensions `.cljrs` only, or should `.cljc` with
   reader conditionals be supported for sharing code with JVM/CLJS tooling?
 
@@ -583,9 +614,53 @@ than its author, without changes to Rust.
 
 ## 9. Immediate next actions
 
-1. Create the workspace skeleton per D9 and an `experiments/` directory. Pin `servo` and
-   `csm/clojurust` per D10; record the versions in `docs/upstream.md`.
-2. Run E3 first (its build time dominates), E1 and E2 in parallel with it.
-3. Write ADRs for D1–D3 as soon as E1/E2 results are in.
-4. Run E4, E5, E6; hold the Phase 0 exit review; amend this plan.
-5. Begin Phase 1 with deliverables 1–3, in that order, since A1–A3 depend on them.
+1. **Done:** create the D9 workspace skeleton, experiment crates, dependency pins, and
+   [upstream notes](upstream.md). The default executable embeds `bulwark.core` and reports Phase 0.
+2. **In progress:** E3 builds on macOS and renders both target pages. Screenshot checks passed.
+   Complete macOS input checks and clean/release build measurements in single-process mode.
+   Then compare multiprocess Servo under Q5. Repeat on Linux as follow-up work.
+3. **In progress:** E1 drives async and nREPL on one thread. The headless repeat and synchronous
+   stall/recovery probe passed their checks. Complete the 60-second native redraw run with a client.
+   Resolve frame timing before accepting D1. **Done:** E2 passes in tree-walk and tiered modes.
+4. **Done:** record D1–D3 in [ADRs](adr/). D1 remains provisional until E1 completes.
+5. Run E4 and E5 after E3 passes. Use E6 to investigate interruption, bounded polling, and
+   cooperative execution. Prepare upstream Clojurust fixes for gaps that these probes establish.
+   Hold the Phase 0 exit review and amend this plan.
+6. Begin Phase 1 with deliverables 1–3 after E1, E2, and E3 pass. The current skeleton does
+   not implement the native browser API or claim the Phase 1 acceptance criteria.
+
+---
+
+## 10. Bootstrap progress (2026-10-27)
+
+Implemented:
+
+- Four workspace crates per D9, plus standalone E1, E2, and E3 programs.
+- Embedded `bulwark.core`, a runtime source evaluator, and a host callback bridge.
+- Exact upstream pins and a checked-in lockfile.
+- E2 event ordering, callback errors, redefinition, and GC-retention checks.
+- E1 headless/native drivers, a concurrent nREPL client, and timing counters.
+- E3 window rendering, input forwarding, and bounded screenshot capture.
+- A local HTML input fixture, development instructions, and a runtime CI workflow.
+- Owner decisions Q2–Q5: macOS first, egui for initial chrome, preparation of upstream Clojurust
+  fixes, and a single-process Servo baseline followed by a multiprocess comparison.
+
+Measured locally on macOS arm64, Rust 1.97.1, debug builds:
+
+| Experiment | Evidence | Status |
+|---|---|---|
+| E2 tree-walk | 10,000 calls, 200 collections, live objects 5,226 throughout warmup samples | Passed |
+| E2 tiered, no JIT backend | 10,000 calls, 200 collections, live objects 9,933 throughout warmup samples | Passed |
+| E1 headless, 60 s | 3,432 ticks, 541 async ticks, 463 nREPL evaluations, 112 gaps over 25 ms | Progress established, timing criterion not met |
+| E1 headless repeat, 60 s | 3,600 ticks, 545 async ticks, 498 nREPL evaluations, no gaps over 25 ms | Headless check passed, full native criterion pending |
+| E1 native, 5 s | 291 redraws, 44 async ticks, no nREPL client | Native loop runs, full criterion pending |
+| E1 synchronous stall | Three successful evaluations, maximum gap 2.023 s, driver recovered | Headless stall/recovery demonstrated |
+| E3 macOS | Build complete, rendered screenshots of servo.org and Wikipedia inspected | Interactive and Linux checks pending |
+
+The initial E1 run overlapped Servo compilation. The repeat ran after the main build.
+The Mac was locked during initial UI inspection, so interactive checks remain pending.
+The CI workflow exists locally. No remote CI result is available yet.
+Local formatting, workspace Clippy, Servo-probe Clippy, and Python syntax checks passed.
+The workspace test command passed, with no Rust unit tests in the skeleton yet.
+The experiment programs provide the current integration assertions.
+Full instructions and measurement limits live in [experiments/README.md](../experiments/README.md).
