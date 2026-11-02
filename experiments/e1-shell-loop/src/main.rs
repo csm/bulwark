@@ -1,5 +1,10 @@
+// Upstream fiber and eval callbacks return EvalError by value.
+#![allow(clippy::result_large_err)]
+
 use anyhow::{Result, ensure};
 use bulwark_runtime::RuntimeHost;
+use cljrs_async::fiber;
+use cljrs_gc::mutator::MutatorState;
 use cljrs_runtime::{ExecutionMode, tiered::eval};
 use std::time::{Duration, Instant};
 use winit::{
@@ -14,7 +19,9 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 struct Driver {
     // Keep executor state and runtime values on the shell thread.
     poller: cljrs_nrepl::Poller,
-    local: tokio::task::LocalSet,
+    local: Option<tokio::task::LocalSet>,
+    /// Executor task roots retained between root-fiber drives.
+    carrier: MutatorState,
     executor: tokio::runtime::Runtime,
     host: RuntimeHost,
     started: Instant,
@@ -32,10 +39,12 @@ impl Driver {
             .enable_time()
             .build()?;
         let local = tokio::task::LocalSet::new();
-        executor.block_on(local.run_until(async {
-            cljrs_async::init(&host.env().globals);
-            host.eval(include_str!("../loop.cljrs"))
-        }))?;
+        let mut carrier = MutatorState::fresh();
+        local.block_on(&executor, async { cljrs_async::init(&host.env().globals) });
+        // Top-level forms run on a root fiber, so they may park.
+        host.eval_with(include_str!("../loop.cljrs"), |form, env| {
+            fiber::run_root(&executor, &local, &mut carrier, || eval(form, env))
+        })?;
         let poller = cljrs_nrepl::start(cljrs_nrepl::Config::default(), host.env().globals.clone())
             .map_err(|e| anyhow::anyhow!("{e}"))?
             .into_poller();
@@ -43,7 +52,8 @@ impl Driver {
         let now = Instant::now();
         Ok(Self {
             poller,
-            local,
+            local: Some(local),
+            carrier,
             executor,
             host,
             started: now,
@@ -56,16 +66,21 @@ impl Driver {
         })
     }
     fn tick(&mut self) -> Result<bool> {
-        // Enter both runtimes while polling: nREPL eval can spawn local tasks.
-        let executor_guard = self.executor.enter();
-        let local_guard = self.local.enter();
-        self.poller.poll_timeout(&mut eval, Duration::ZERO);
-        drop(local_guard);
-        drop(executor_guard);
-        // This is a cooperative slice, not preemption. A task can overrun it.
-        self.executor.block_on(self.local.run_until(async {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }));
+        let local = self.local.as_ref().unwrap();
+        let (executor, carrier) = (&self.executor, &mut self.carrier);
+        // Each nREPL form runs on a root fiber. A parked form lets other
+        // fibers run, but this call returns only when the form completes.
+        self.poller
+            .poll(&mut |form: &cljrs_reader::Form, env: &mut _| {
+                fiber::run_root(executor, local, carrier, || eval(form, env))
+            });
+        // The root parks on the slice timer while ready fibers run. Fibers
+        // yield at safepoints when their time slice expires.
+        fiber::run_root(executor, local, carrier, || {
+            fiber::park_on(tokio::time::sleep(Duration::from_millis(1)));
+            Ok(cljrs_value::Value::Nil)
+        })
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
         let now = Instant::now();
         let gap = now.duration_since(self.last_frame);
         self.max_gap = self.max_gap.max(gap);
@@ -96,6 +111,13 @@ impl Driver {
         );
         // The full E1 criterion also requires a concurrent nREPL client and UI.
         Ok(())
+    }
+}
+impl Drop for Driver {
+    fn drop(&mut self) {
+        if let Some(local) = self.local.take() {
+            fiber::drop_local_with_carrier(local, &mut self.carrier);
+        }
     }
 }
 struct App {

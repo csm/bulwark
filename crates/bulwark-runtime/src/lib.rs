@@ -1,6 +1,7 @@
 //! Single-thread Clojurust host for Phase 0. No browser policy belongs here.
 
 use anyhow::{Context, Result, anyhow};
+use cljrs_runtime::env::error::EvalResult;
 use cljrs_runtime::env::{apply::apply_value, gc_roots};
 use cljrs_runtime::tiered::{Env, eval};
 use cljrs_runtime::{ExecutionMode, Runtime};
@@ -32,13 +33,24 @@ impl RuntimeHost {
 
     /// Evaluates source and returns its final value. Keep retained values rooted across calls.
     pub fn eval(&mut self, source: &str) -> Result<Value> {
+        self.eval_with(source, eval)
+    }
+
+    /// Evaluates source with a caller-chosen form evaluator.
+    ///
+    /// A shell passes a root-fiber driver here so top-level forms may park.
+    pub fn eval_with(
+        &mut self,
+        source: &str,
+        mut eval_form: impl FnMut(&cljrs_reader::Form, &mut Env) -> EvalResult,
+    ) -> Result<Value> {
         let forms = cljrs_reader::Parser::new(source.into(), "<bulwark-host>".into())
             .parse_all()
             .map_err(|error| anyhow!("{error:?}"))?;
         let mut result = Value::Nil;
         for form in forms {
             let _frame = cljrs_gc::push_alloc_frame();
-            result = eval(&form, &mut self.env).map_err(|error| anyhow!("{error}"))?;
+            result = eval_form(&form, &mut self.env).map_err(|error| anyhow!("{error}"))?;
         }
         Ok(result)
     }

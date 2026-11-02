@@ -300,7 +300,7 @@ Clojurust capabilities each phase relies on:
 |---|---|---|
 | 1 | embed runtime, native fns, `builtin_source`, nREPL poller | documented |
 | 1 | Rust → Clojure dispatcher call | public API, E2 passed in tree-walk and tiered modes |
-| 1 | core.async on host-driven `LocalSet` | documented, host integration unverified (E1) |
+| 1 | core.async on host-driven `LocalSet`, fiber-backed since 0.2.34 | headless host integration verified (E1, E6) |
 | 2 | dynamic vars, protocols, multimethods, metadata/docstrings for introspection | implemented |
 | 2 | `require` of embedded and on-disk namespaces, reload | implemented |
 | 3 | JSON/EDN conversion at scale, `NativeObject` for node handles | implemented |
@@ -326,8 +326,11 @@ with a cross-thread command/event queue (costs latency and complicates Servo int
 
 Bootstrap status: the driver and concurrent loopback nREPL client exist.
 A 60-second headless repeat reached 3,600 ticks with no gaps greater than 25 ms.
-The full native redraw criterion remains open. The pinned async API uses `(await (timeout 100))`
-inside `go`, rather than the assumed `<!` syntax.
+The full native redraw criterion remains open.
+
+Fiber status (2026-11-02): the Clojurust 0.2.34 pin adds virtual threads. E1 now uses `(<! (timeout 100))`.
+Startup and nREPL forms run on root fibers. A 60-second Linux headless run had 497 nREPL evaluations
+and 2 gaps over 25 ms. A parked nREPL form still blocks the frame (csm/clojurust#447).
 
 **E2. Rust → Clojure callback.** From Rust, look up a var (e.g. `bulwark.core/dispatch!`) and
 invoke it with a map argument, 10,000 times, with the GC active, without leaks or crashes.
@@ -376,6 +379,12 @@ per frame, measure how core.async `go` blocks yield, and test whether a long syn
 Clojure call can be interrupted (nREPL `interrupt` exists; does it reach the interpreter
 mid-form?). Pass: a written policy for what runs where, and an `interrupt` that works from a
 second nREPL connection. Time box: 2 days. Runs after E1.
+
+Fiber status (2026-11-02): `experiments/e6-fibers` measures the 0.2.34 fiber runtime on a 60 Hz loop.
+Parked waits and offloaded Rust calls do not delay frames. Slice yields bound CPU-bound fibers.
+Carrier work, root-fiber work, and thread-blocking Rust calls still freeze the loop.
+Interrupts from a second connection stop running evaluations but not parked ones (csm/clojurust#446).
+The written policy is in [D1](adr/0001-shell-thread.md). The interrupt criterion remains open until #446 is fixed.
 
 Phase 0 exit: E1, E2, E3 passed; E4, E5, E6 either passed or have a recorded fallback; the
 ADRs for D1–D6 written with final choices.
@@ -623,8 +632,8 @@ than its author, without changes to Rust.
    stall/recovery probe passed their checks. Complete the 60-second native redraw run with a client.
    Resolve frame timing before accepting D1. **Done:** E2 passes in tree-walk and tiered modes.
 4. **Done:** record D1–D3 in [ADRs](adr/). D1 remains provisional until E1 completes.
-5. Run E4 and E5 after E3 passes. Use E6 to investigate interruption, bounded polling, and
-   cooperative execution. Prepare upstream Clojurust fixes for gaps that these probes establish.
+5. Run E4 and E5 after E3 passes. **In progress:** E6 measured fiber scheduling, parking, and interruption.
+   Upstream issues csm/clojurust#445–#447 record the gaps. Prepare fixes for #446 and #447 first.
    Hold the Phase 0 exit review and amend this plan.
 6. Begin Phase 1 with deliverables 1–3 after E1, E2, and E3 pass. The current skeleton does
    not implement the native browser API or claim the Phase 1 acceptance criteria.
@@ -656,6 +665,9 @@ Measured locally on macOS arm64, Rust 1.97.1, debug builds:
 | E1 native, 5 s | 291 redraws, 44 async ticks, no nREPL client | Native loop runs, full criterion pending |
 | E1 synchronous stall | Three successful evaluations, maximum gap 2.023 s, driver recovered | Headless stall/recovery demonstrated |
 | E3 macOS | Build complete, rendered screenshots of servo.org and Wikipedia inspected | Interactive and Linux checks pending |
+
+| E1 fibers, Linux headless, 60 s | 3,596 ticks, 538 async ticks, 497 nREPL evaluations, 2 gaps over 25 ms | Headless check passed on Clojurust 0.2.34 |
+| E6 fibers, Linux release | Parked waits and offloads keep frames under 25 ms; parked nREPL evaluation ignores interrupt | Policy recorded; interrupt criterion open (csm/clojurust#446) |
 
 The initial E1 run overlapped Servo compilation. The repeat ran after the main build.
 The Mac was locked during initial UI inspection, so interactive checks remain pending.
