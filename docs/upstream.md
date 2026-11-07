@@ -43,13 +43,22 @@ The owner approved preparation of required Clojurust fixes under Q4 on 2026-10-2
 Experiments must establish each gap before a change is necessary.
 Prepare upstream patches with regression coverage under D10's contribution policy.
 
+The [Clojurust async gap register](clojurust-async-gaps.md) defines the required fixes, reproducers, and acceptance criteria.
+CLJ-ASYNC-001 and CLJ-ASYNC-002 must be fixed upstream before product adoption of general async user code.
+CLJ-ASYNC-003 covers bounded polling before runtime-thread nREPL integration.
+Temporary probe workarounds do not close these items.
+
 | Area | Evidence | Next action |
 |---|---|---|
 | Host callbacks | E2 passed with stable live-object counts in two execution modes | Use the existing API. No upstream patch is necessary for this probe. |
-| Host async loop | E1 headless async and nREPL both advance | Measure native redraw timing without concurrent compilation. |
-| nREPL budget | `Poller::poll_timeout(0)` drains every queued job | Evaluate bounded polling during E6. Prepare an upstream fix if the probe establishes a gap. |
-| Cooperative tasks | A LocalSet slice cannot preempt synchronous work | Complete the stall and interrupt probes during E6. |
-| Servo build | Debug link emits an oversized `__eh_frame` warning on macOS | Record release build size and clean build time during E3. |
+| Host async loop | E1 native async, nREPL, and redraw callbacks advance together, but deadlines can expire | Compare the dedicated-thread fallback before settling D1. |
+| nREPL budget | E6 queues twenty 10 ms calls. One zero-timeout poll spends more than 200 ms on them. | Prepare bounded polling with a limit between jobs and regression coverage under Q4. |
+| Cooperative tasks | E6's blocking `go` task spends about 200 ms in a nominal one-millisecond LocalSet slice | Keep blocking work off the shell thread. See [scheduling policy](scheduling.md). |
+| nREPL interruption | E6 interrupts an active infinite loop from a second connection. The session and async loop recover. | Use the existing interrupt support. No upstream patch is necessary for this path. |
+| Async thread bridge | E7 passes pure async user code against real Servo on the main thread, with owned messages and continuous runtime execution. | Continue the separate-thread investigation. See [E7 report](async-bridge.md). |
+| Idle async waits | `await_value` repeatedly checks state and yields. E7's one-second idle timer used about one CPU-second. | Prepare notification-based future and promise waits, with completion, cancellation, lost-wakeup, and GC coverage. |
+| Async call evaluation | E7 reproduces a blocked `(:value (await pending))` inside `^:async`. Binding the reply first works. | Prepare async evaluation for non-symbol call heads and arguments, with regression coverage. |
+| Servo build | The clean debug target built in 2m 30s. The release build took 194.83 s and produced a 126 MiB executable. | Complete E3 input observation. Build timings used cached sources and include concurrent runtime checks. |
 | Servo process model | Q5 selects a single-process baseline | Compare multiprocess after E3 works, including E4's JavaScript and interception paths. |
 
 No upstream issue or pull request was opened during this bootstrap.

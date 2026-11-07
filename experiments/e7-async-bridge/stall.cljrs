@@ -1,0 +1,20 @@
+;; Deliberate misuse, separate from the purely asynchronous user example.
+(in-ns 'bulwark.experiment.async-bridge)
+(defn ^:async stall-probe!
+  "Prove that blocking user code stalls its runtime without stalling the engine."
+  []
+  (let [view (await (create! "data:text/html,<title>Async channel fixture</title><h1>Async</h1>"))]
+    (await (ready! view))
+    (when native/servo?
+      (await (eval-js! view "window.__e7ticks = 0; setInterval(() => window.__e7ticks++, 10); function frame() { document.body.style.opacity = String(0.5 + Math.random() / 2); requestAnimationFrame(frame); } frame(); 'timer-started'")))
+    (result! (await (native/request "stall-begin" 0 "")))
+    (Thread/sleep 200)
+    (let [turns (result! (await (native/request "stall-end" 0 "")))]
+      (require! (> turns 10) "Engine stopped while the runtime was blocked")
+      (when native/servo?
+        (require! (= "true" (await (eval-js! view "String(window.__e7ticks >= 5)")))
+                  "Page timers stopped while the runtime was blocked"))
+      (result! (await (native/request "close" view "")))
+      (await (native/next-event))
+      turns)))
+(stall-probe!)

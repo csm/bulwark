@@ -37,6 +37,15 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    cargo run --locked -p bulwark-experiment-e3 --features servo -- https://servo.org
    ```
 
+5. Run the async channel bridge experiment:
+
+   ```sh
+   cargo build --locked -p bulwark-experiment-e7
+   python3 experiments/run_e7.py
+   ```
+
+   This command uses a mock engine. The [async bridge report](docs/async-bridge.md) includes the real Servo command and measured limits.
+
 Servo requires a native display and platform build dependencies.
 The first Servo build is much larger than the runtime experiments.
 The default workspace build excludes Servo compilation.
@@ -46,7 +55,9 @@ The default workspace build excludes Servo compilation.
 - [Vision](docs/bulwark.md)
 - [Development plan and current progress](docs/development-plan.md)
 - [Experiment instructions and results](experiments/README.md)
+- [Separate engine and async runtime threads](docs/async-bridge.md)
 - [Dependency pins and upstream gaps](docs/upstream.md)
+- [Required Clojurust async fixes](docs/clojurust-async-gaps.md)
 - [Architecture decisions](docs/adr/)
 
 ## Local checks

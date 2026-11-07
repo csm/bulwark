@@ -1,0 +1,74 @@
+(ns bulwark.experiment.async-bridge
+  (:require [bulwark.experiment.native :as native]
+            [clojure.core.async :refer [go timeout]]))
+
+(def ticks (atom 0))
+(def running (atom true))
+
+(defn require! "Fail the experiment if its condition is false." [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defn result! "Return a successful response or throw its structured error." [reply]
+  (require! (:ok reply) (str "Native request failed: " reply))
+  (:value reply))
+
+(defn ^:async create! "Create a webview without blocking the runtime thread." [url]
+  (result! (await (native/request "create" 0 url))))
+
+(defn ^:async eval-js! "Await a script result from the engine thread." [view script]
+  (result! (await (native/request "eval-js" view script))))
+
+(defn ^:async ready! "Consume ordered lifecycle events until the view is ready." [view]
+  (loop [last-sequence 0]
+    (let [event (await (native/next-event))]
+      (require! event "Event channel closed before page readiness")
+      (require! (> (:sequence event) last-sequence) "Events arrived out of order")
+      (if (= :page/ready (:event/type event))
+        (do (require! (= view (:webview event)) "Wrong view in readiness event")
+            (require! (= "Async channel fixture" (:title event)) "Wrong fixture title")
+            (:sequence event))
+        (recur (:sequence event))))))
+
+(defn ^:async run! "Exercise the asynchronous request and event boundary." []
+  (let [heartbeat (go (loop []
+                        (when @running
+                          (await (timeout 5))
+                          (swap! ticks inc)
+                          (recur))))
+        view (await (create! "data:text/html,<title>Async channel fixture</title><h1>Async</h1>"))
+        last-event (await (ready! view))]
+    ;; Each call immediately returns a future. Only eight requests may remain
+    ;; outstanding; the other eight resolve to structured :busy responses.
+    (let [pending (mapv (fn [i] (native/request "eval-js" view (str "\"reply-" i "\""))) (range 16))]
+      (loop [i 0]
+        (when (< i 16)
+          (let [reply (await (nth pending i))]
+            (if (< i 8)
+              (require! (= (str "reply-" i) (result! reply)) "Mismatched request/reply")
+              (require! (= :busy (:error reply)) "In-flight limit failed")))
+          (recur (inc i)))))
+    (await (timeout 30))
+    (require! (> @ticks 0) "Async heartbeat did not progress")
+    (loop [i 0]
+      (when (< i 100)
+        (require! (= "round-trip" (await (eval-js! view "\"round-trip\""))) "Bad script result")
+        (recur (inc i))))
+    (result! (await (native/request "close" view "")))
+    (let [closed (await (native/next-event))]
+      (require! (= :page/closed (:event/type closed)) "Close event missing")
+      (require! (= view (:webview closed)) "Close event has wrong handle")
+      (require! (> (:sequence closed) last-event) "Close event arrived out of order"))
+    ;; Bind the await result before keyword lookup. The pinned async evaluator
+    ;; delegates non-symbol call heads to its synchronous path.
+    (let [stale (await (native/request "eval-js" view "\"stale\""))]
+      (require! (= :stale-handle (:error stale)) "Closed handle remained valid"))
+    (let [replacement (await (create! "data:text/html,<title>Async channel fixture</title>"))]
+      (require! (> replacement view) "Handle identifier was reused")
+      (await (ready! replacement))
+      (result! (await (native/request "close" replacement "")))
+      (await (native/next-event)))
+    (reset! running false)
+    (await heartbeat)
+    :async-bridge-passed))
+
+(run!)
