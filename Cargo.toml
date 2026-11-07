@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "experiments/e1-shell-loop", "experiments/e2-callback", "experiments/e3-servo", "experiments/e7-async-bridge"]
+members = ["crates/*", "experiments/e1-shell-loop", "experiments/e2-callback", "experiments/e3-servo", "experiments/e6-fibers", "experiments/e7-async-bridge"]
 default-members = ["crates/bulwark-engine", "crates/bulwark-runtime", "crates/bulwark-shell"]
 
 [workspace.package]
@@ -12,13 +12,13 @@ publish = false
 anyhow = "1"
 bulwark-engine = { path = "crates/bulwark-engine" }
 bulwark-runtime = { path = "crates/bulwark-runtime" }
-cljrs-runtime = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61", default-features = false, features = ["regex-full"] }
-cljrs-stdlib = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61", default-features = false, features = ["regex-full"] }
-cljrs-reader = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61" }
-cljrs-value = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61", default-features = false, features = ["regex-full"] }
-cljrs-gc = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61" }
-cljrs-async = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61", default-features = false }
-cljrs-nrepl = { git = "https://github.com/csm/clojurust", rev = "c74e54df68185a3852dcd6d6682af5f0f98c1d61", default-features = false }
+cljrs-runtime = { git = "https://github.com/csm/clojurust", rev = "4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b", default-features = false, features = ["regex-full"] }
+cljrs-stdlib = { git = "https://github.com/csm/clojurust", rev = "4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b", default-features = false, features = ["regex-full"] }
+cljrs-reader = { git = "https://github.com/csm/clojurust", rev = "4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b" }
+cljrs-value = { git = "https://github.com/csm/clojurust", rev = "4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b", default-features = false, features = ["regex-full"] }
+cljrs-gc = { git = "https://github.com/csm/clojurust", rev = "4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b" }
+cljrs-async = { git = "https://github.com/csm/clojurust", rev = "4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b", default-features = false }
+cljrs-nrepl = { git = "https://github.com/csm/clojurust", rev = "4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b", default-features = false }
 servo = { version = "=0.7.0", default-features = false, features = ["bundled", "js_jit"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 winit = "0.30.13"

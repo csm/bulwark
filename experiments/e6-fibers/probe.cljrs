@@ -1,0 +1,33 @@
+(ns bulwark.experiment
+  (:require [clojure.core.async :refer [go <! >! chan timeout]]))
+
+(def async-ticks (atom 0))
+(def stop? (atom false))
+(def cpu-progress (atom 0))
+(def delivered (atom 0))
+(def parked-deliveries (atom 0))
+
+;; E1's original form: `<!` now parks the go fiber.
+(go (loop []
+      (<! (timeout 100))
+      (swap! async-ticks inc)
+      (recur)))
+
+(defn spin!
+  "CPU-bound work with no explicit parks. Only safepoint yields interleave it."
+  []
+  (loop [i 0]
+    (when-not @stop?
+      (when (zero? (rem i 1000))
+        (swap! cpu-progress inc))
+      (recur (inc i)))))
+
+(defn dispatch!
+  "Host event handler. Every tenth event parks inside an ordinary function."
+  [event]
+  (let [n (:sequence event)]
+    (when (zero? (rem n 10))
+      (<! (timeout 1))
+      (swap! parked-deliveries inc))
+    (swap! delivered inc)
+    n))

@@ -77,7 +77,9 @@ State events can permit coalescing. Lifecycle and permission events need explici
 
 ## Results
 
-Measurements used macOS 26.5.2 arm64, Rust 1.97.1, Servo 0.7.0, and the pinned Clojurust revision.
+Measurements used macOS 26.5.2 arm64, Rust 1.97.1, Servo 0.7.0, and Clojurust `c74e54d`, before the 0.2.34 fiber pin.
+On 0.2.34 the mock run, idle probe, and unit tests pass on Linux. The keyword-await probe no longer blocks.
+Fiber time slices can preempt the request burst, so the overload probe now accepts early replies freeing permits; a unit test checks the limit.
 The Servo probe uses `SoftwareRenderingContext` and a local `data:` page.
 It does not depend on network pages or native UI automation.
 

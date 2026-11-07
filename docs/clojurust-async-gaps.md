@@ -1,6 +1,10 @@
 # Clojurust async gaps for upstream fixes
 
 Status: required upstream work, observed at `c74e54df68185a3852dcd6d6682af5f0f98c1d61`.
+Rechecked on Clojurust 0.2.34 (`4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b`), 2026-11-07, Linux x86_64 debug build:
+the E7 idle probe still used about one CPU-second per idle second (CLJ-ASYNC-001),
+and the keyword-await probe completed instead of blocking (CLJ-ASYNC-002).
+Source links below still point at the earlier revision.
 The observations do not establish the status of current upstream HEAD.
 No upstream issue or pull request exists for these findings yet.
 
@@ -14,7 +18,7 @@ The [async bridge report](async-bridge.md) records the architecture and transpor
 | ID | Upstream change | Evidence | Adoption gate |
 |---|---|---|---|
 | CLJ-ASYNC-001 | Suspend future and promise waiters until a state change | Future idle CPU reproduced. Promise path confirmed by source inspection. | Required before product adoption of the async runtime. |
-| CLJ-ASYNC-002 | Evaluate non-symbol calls asynchronously inside async bodies | Keyword lookup with an awaited argument blocks in E7. | Required before general async user code is supported. |
+| CLJ-ASYNC-002 | Evaluate non-symbol calls asynchronously inside async bodies | Keyword lookup with an awaited argument blocked in E7 before 0.2.34. The probe completes on 0.2.34; regression coverage is still required to close it. | Required before general async user code is supported. |
 | CLJ-ASYNC-003 | Add bounded nREPL polling for embedded async hosts | E6's zero-timeout poll drains more than 200 ms of queued work. | Required for runtime-thread nREPL integration with bounded queue work. |
 
 Each item needs an upstream issue or PR, regression coverage, and a deliberate dependency update after merge.

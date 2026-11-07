@@ -1,8 +1,9 @@
 (ns bulwark.experiment
-  (:require [clojure.core.async :refer [go timeout]]))
+  (:require [clojure.core.async :refer [go <! timeout]]))
 (def async-ticks (atom 0))
 (def nrepl-evals (atom 0))
+;; `<!` parks the go block's fiber (Clojurust 0.2.34 virtual threads).
 (go (loop []
-      (await (timeout 100))
+      (<! (timeout 100))
       (swap! async-ticks inc)
       (recur)))
