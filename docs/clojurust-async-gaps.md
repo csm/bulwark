@@ -1,198 +1,131 @@
-# Clojurust async gaps for upstream fixes
+# Clojurust async status
 
-Status: required upstream work, observed at `c74e54df68185a3852dcd6d6682af5f0f98c1d61`.
-The observations do not establish the status of current upstream HEAD.
-No upstream issue or pull request exists for these findings yet.
+Status: inspected and tested at `c6199faea544e029db7222aa3e9f5c9f64952773`, 2026-11-06.
+Bulwark now pins this revision. The previous observations used `c74e54df68185a3852dcd6d6682af5f0f98c1d61`.
+The owner requires upstream fixes rather than permanent dependency patches or language restrictions.
 
-The owner requires fixes in `csm/clojurust`.
-Bulwark must not adopt a permanent fork, local dependency patch, or language restriction as the resolution.
-The E7 binding workaround remains a temporary diagnostic aid.
-The [async bridge report](async-bridge.md) records the architecture and transport results.
+## Current findings
 
-## Tracking and priority
+| ID | Finding | Current status |
+|---|---|---|
+| CLJ-ASYNC-001 | Future and promise awaits repeatedly polled | The wait implementation now uses notifications. Whole-runtime idle CPU remains high because of CLJ-ASYNC-004. |
+| CLJ-ASYNC-002 | Await under a non-symbol call blocked | The native fiber model removes this evaluator split. The original reproducer completes. |
+| CLJ-ASYNC-003 | Embedded nREPL work lacked a bounded host turn | Partially addressed by `spawn_pending`; admission remains unbounded, and E1 still uses the synchronous poll API. |
+| CLJ-ASYNC-004 | The background GC service keeps the LocalSet runnable while idle | Confirmed in the current revision. Required upstream work before efficient idle operation. |
 
-| ID | Upstream change | Evidence | Adoption gate |
-|---|---|---|---|
-| CLJ-ASYNC-001 | Suspend future and promise waiters until a state change | Future idle CPU reproduced. Promise path confirmed by source inspection. | Required before product adoption of the async runtime. |
-| CLJ-ASYNC-002 | Evaluate non-symbol calls asynchronously inside async bodies | Keyword lookup with an awaited argument blocks in E7. | Required before general async user code is supported. |
-| CLJ-ASYNC-003 | Add bounded nREPL polling for embedded async hosts | E6's zero-timeout poll drains more than 200 ms of queued work. | Required for runtime-thread nREPL integration with bounded queue work. |
+These identifiers are local tracking labels, not GitHub issue numbers.
+The first two findings no longer require the previously proposed evaluator patches on native targets.
+The remaining work concerns idle GC scheduling, nREPL integration, and queue limits.
+No permanent local workaround closes these items.
 
-Each item needs an upstream issue or PR, regression coverage, and a deliberate dependency update after merge.
-The identifiers in this document are local tracking identifiers, not GitHub issue numbers.
+## Execution model
 
-## CLJ-ASYNC-001: Idle awaits repeatedly poll
+Native `go` bodies and `^:async` calls now run on stackful fibers through `corosensei`.
+Tokio schedules those fibers on the existing current-thread executor and LocalSet.
+Waiting operations park the fiber and let other tasks run on the same carrier thread.
+Ordinary helpers called inside a fiber can also wait through their call stack.
+The Rust bridge continues to use ordinary async futures, channels, and one-shot replies.
+Servo still owns the main thread.
 
-### Evidence and impact
+`go` now returns a result channel. `^:async` still returns a future.
+The exported Rust `await_value` supports both, as well as promises.
+`Thread/sleep` parks inside a fiber and blocks the OS thread outside one.
+Raw blocking Rust calls can still stall the carrier thread.
+Automatic yields at evaluator safepoints do not preempt arbitrary native code.
 
-`cljrs_async::await_value` repeatedly reads future state and calls `tokio::task::yield_now` until settlement.
-Its promise branch follows the same pattern.
-Yielding permits other tasks to run, but keeps the waiter runnable.
-The runtime therefore consumes CPU during an otherwise idle wait.
+Sources at the new pin:
 
-The final mock timer probe recorded 1.089 seconds elapsed and 1.028 CPU-seconds for a one-second timer.
-This measurement covers the child process, including its small engine driver.
-It does not isolate the waiter as a microbenchmark.
-The source inspection establishes the repeated polling mechanism.
+- [Native dispatch](https://github.com/csm/clojurust/blob/c6199faea544e029db7222aa3e9f5c9f64952773/crates/cljrs-async/src/runtime.rs).
+- [Task settlement and notification waits](https://github.com/csm/clojurust/blob/c6199faea544e029db7222aa3e9f5c9f64952773/crates/cljrs-async/src/task.rs).
+- [Fiber convergence regressions](https://github.com/csm/clojurust/blob/c6199faea544e029db7222aa3e9f5c9f64952773/crates/cljrs-async/tests/converged.rs).
 
-Sources at the pinned revision:
+## CLJ-ASYNC-001: Wait implementation corrected
 
-- [Future and promise await paths](https://github.com/csm/clojurust/blob/c74e54df68185a3852dcd6d6682af5f0f98c1d61/crates/cljrs-async/src/eval_async.rs#L277).
-- [Async future settlement](https://github.com/csm/clojurust/blob/c74e54df68185a3852dcd6d6682af5f0f98c1d61/crates/cljrs-async/src/eval_async.rs#L90).
-- [Promise delivery and future cancellation state](https://github.com/csm/clojurust/blob/c74e54df68185a3852dcd6d6682af5f0f98c1d61/crates/cljrs-value/src/types.rs#L1177).
+Future and promise waits now register an event listener before they inspect settlement.
+Unsettled waits suspend on that listener rather than repeatedly call `yield_now`.
+Settlement and cancellation paths notify listeners.
+The old await loop therefore no longer explains the remaining idle CPU use.
 
-### Reproduction
+The upstream tests cover native parking, GC during suspension, channel results, and error propagation.
+This continuation inspects those tests but does not claim a complete upstream test run.
+Bulwark's idle integration test still fails the efficiency goal because initialization starts the busy GC service.
 
-From the Bulwark repository root, run:
+## CLJ-ASYNC-002: Native nested waits corrected
+
+The original expression `(:value (await pending))` now completes without a binding workaround.
+Native execution uses the ordinary evaluator inside a fiber, so non-symbol callees do not enter a separate blocking evaluator.
+Bulwark's strict regression also exercises map, set, vector, function-literal, and computed callees.
+It includes `apply`, `reset!`, `swap!`, a synchronous helper, a promise, and a concurrent heartbeat.
+The normal bridge example now uses a direct keyword lookup around an awaited native reply.
+
+Run the strict regression:
 
 ```sh
-cargo build --locked -p bulwark-experiment-e7
+python3 experiments/run_e7.py --require-keyword-await
+```
+
+A timeout fails this command and terminates the child.
+The older `--probe-keyword-await` command retains diagnostic behavior for comparisons with the old revision.
+This native result does not establish wasm32 evaluator behavior or every cancellation and GC interleaving.
+
+## CLJ-ASYNC-003: nREPL integration and admission limits remain
+
+The new `Poller::spawn_pending` starts evaluations on fibers and returns before they finish.
+Jobs within one session retain arrival order. Different sessions can interleave at parks.
+This API addresses the host waiting for one parked evaluation.
+It also supports interruption of parked evaluations.
+
+However, `spawn_pending` still drains the incoming queue without a job or time budget.
+The existing `poll` and `poll_timeout` APIs still evaluate queued work synchronously.
+Bulwark's E1 comparison still calls `poll_timeout`; E7 does not yet integrate nREPL.
+The current E6 run recorded a 246.686 ms maximum poll during a burst of twenty 10 ms evaluations.
+Interruption and subsequent session recovery passed, with 0.251 ms measured interrupt latency.
+The maximum LocalSet slice fell to 2.087 ms because the `go` sleep now parks.
+
+Required follow-up:
+
+1. Use `spawn_pending` for runtime-thread nREPL integration.
+2. Bound admission and pending work under a continuous request stream.
+3. Assert cross-session progress, same-session order, interruption, and shutdown in the embedded host.
+
+The admission bound remains a missing mechanism, rather than proof that the new API deadlocks.
+
+Source: [embedded poller](https://github.com/csm/clojurust/blob/c6199faea544e029db7222aa3e9f5c9f64952773/crates/cljrs-nrepl/src/lib.rs).
+
+## CLJ-ASYNC-004: Idle background GC service spins
+
+`cljrs_async::init` starts `spawn_gc_service` on native targets.
+That task repeats `yield_now().await` and `async_gc_collect()` without an event wait or timer.
+The task therefore stays runnable even with no language futures or fibers.
+The idle executor control starts this service and waits only on a one-second Rust timer.
+The baseline performs the same wait without async initialization.
+
+Run the controls:
+
+```sh
+python3 experiments/run_e7.py --idle-baseline
+python3 experiments/run_e7.py --idle-executor
 python3 experiments/run_e7.py --idle
 ```
 
-The program awaits `(timeout 1000)` inside an `^:async` function.
-The runner reports elapsed time and child CPU time.
-The promise behavior needs a separate runtime regression and measurement.
+The initialized control used 1.054 CPU-seconds for a 1.017-second runtime wait.
+The baseline used 0.098 CPU-seconds. Its first large-binary startup increased process elapsed time to 6.197 seconds.
+The ordinary Clojure idle probe used 1.025 CPU-seconds for a 1.019-second runtime wait.
+These CPU figures cover the entire child process, including the small engine driver.
+They do not measure the GC task in isolation, but agree with the unconditional runnable loop in its source.
+Measurements used macOS 26.5.2 arm64, Rust 1.97.1, and debug builds.
 
-### Required upstream behavior
+The upstream fix must retain GC progress while allowing an idle executor to suspend.
+It needs notification or bounded scheduling for collection requests, plus coverage for parked roots and shutdown.
+A deterministic pending-task test must accompany CPU measurements.
+Bulwark does not disable the service locally.
 
-Pending future and promise waiters must suspend through a notification mechanism.
-Settlement must wake every applicable waiter without a lost-wakeup race.
-Completion before registration, during registration, and after registration must all work.
-All producers must participate, including native completions, promise delivery, failure, and cancellation.
-Synchronous `deref` waiters must retain their existing behavior.
+Source: [background GC service](https://github.com/csm/clojurust/blob/c6199faea544e029db7222aa3e9f5c9f64952773/crates/cljrs-async/src/runtime.rs#L172).
 
-GC roots must retain the awaited object and its required state across suspension.
-The fix must preserve exception data, resource-limit errors, cancellation semantics, and plain-value awaits.
-Cancellation notification does not imply cancellation of an underlying browser operation.
+## Historical evidence at the old pin
 
-Regression coverage must include:
-
-- An unsettled waiter returns `Poll::Pending` without repeatedly waking itself.
-- Early settlement, settlement during registration, and late settlement all resume the waiter.
-- Multiple waiters receive the result of one future or promise.
-- Success, failure, cancellation, gas exhaustion, and memory-limit errors preserve their result semantics.
-- Garbage collection during suspension does not reclaim a live waiter or its result.
-- A sleeping timer still completes while unrelated async tasks make progress.
-
-An upstream benchmark must record idle CPU before and after the fix.
-The benchmark needs a stated platform and build mode.
-A noisy wall-clock CPU threshold must not replace deterministic wakeup tests.
-
-## CLJ-ASYNC-002: Non-symbol calls take the blocking evaluator path
-
-### Evidence and impact
-
-The async evaluator delegates calls with a non-symbol head to synchronous `eval`.
-A keyword call is one such form.
-An awaited argument can therefore take a blocking path despite the enclosing `^:async` function.
-If completion requires the same LocalSet, that thread cannot make progress.
-
-The E7 reproducer enters its async function, then blocks until the parent process terminates it.
-Its pending future needs a 100 ms timer on that LocalSet:
-
-```clojure
-(defn ^:async reproduce! []
-  (let [pending (go (await (timeout 100)) {:value :done})]
-    (:value (await pending))))
-```
-
-The complete namespace and startup marker are in [await-keyword.cljrs](../experiments/e7-async-bridge/await-keyword.cljrs).
-The temporary E7 control binds the awaited value before lookup:
-
-```clojure
-(let [reply (await pending)]
-  (:value reply))
-```
-
-That control works, but does not satisfy the upstream acceptance criterion.
-Users must not need this rewrite for a valid async expression.
-
-Sources at the pinned revision:
-
-- [Non-symbol call fallback](https://github.com/csm/clojurust/blob/c74e54df68185a3852dcd6d6682af5f0f98c1d61/crates/cljrs-async/src/eval_async.rs#L261).
-- [Async call evaluation and form interception](https://github.com/csm/clojurust/blob/c74e54df68185a3852dcd6d6682af5f0f98c1d61/crates/cljrs-async/src/eval_async.rs#L758).
-
-### Reproduction
-
-From the Bulwark repository root, run:
-
-```sh
-cargo build --locked -p bulwark-experiment-e7
-python3 experiments/run_e7.py --probe-keyword-await
-```
-
-The runner terminates the blocked child after three seconds.
-`REPRODUCED` reports the defect. It is not a successful async feature test.
-The upstream regression needs a process deadline because an executor timer cannot stop its own blocked thread.
-
-### Required upstream behavior
-
-Calls inside async bodies must evaluate their callee and awaited arguments through async evaluation.
-The fix must preserve ordinary callable semantics, error behavior, and left-to-right evaluation order.
-Each callee and argument expression must run exactly once.
-GC roots must retain the callee and earlier arguments across a later argument's suspension.
-
-The regression matrix must cover keyword, map, set, vector, function-literal, and computed call heads.
-It must cover `await` in arguments and in a computed callee expression.
-It must also cover failed awaited arguments, ordinary non-callable errors, and macro-expanded forms.
-An independent heartbeat must advance during each pending await.
-
-The keyword case is reproduced. The broader call matrix remains an upstream coverage requirement.
-The source also delegates form-intercepted native calls to synchronous evaluation.
-That audit must include `apply`, `reset!`, and `swap!`, which require special call handling.
-Their behavior must remain correct without re-evaluating argument forms.
-These additional cases are source-identified audit targets, not separately measured failures in E7.
-
-## CLJ-ASYNC-003: The embedded nREPL poller cannot bound queued work
-
-### Evidence and impact
-
-`Poller::poll_timeout` limits the wait for the first job, then drains the queue through `poll`.
-A zero timeout therefore does not limit the number or duration of evaluations.
-E6 queued twenty evaluations that each called `Thread/sleep` for 10 ms.
-One measured native poll took 237.554 ms.
-
-On the separate-thread design, this delay stops Clojurust tasks and message handling, while Servo continues independently.
-The [E6 report](scheduling.md) records the measurements and their limits.
-The [upstream poller source](https://github.com/csm/clojurust/blob/c74e54df68185a3852dcd6d6682af5f0f98c1d61/crates/cljrs-nrepl/src/lib.rs#L248) establishes the queue-draining behavior.
-
-From the Bulwark repository root, run:
-
-```sh
-cargo build --locked -p bulwark-experiment-e1
-python3 experiments/run_e6.py
-```
-
-### Required upstream behavior
-
-The embedded poller needs an API that limits jobs or elapsed work between jobs.
-The existing unrestricted API can retain its current behavior.
-The bounded API must leave excess jobs queued and report enough state for the host to schedule another turn.
-It must preserve queue order, responses, sessions, shutdown, and interruption behavior.
-Regression coverage must demonstrate async progress between bounded batches under a continuous request stream.
-
-This limit cannot preempt one synchronous evaluation or a blocking native call.
-It is a fairness mechanism between jobs.
-E6 already demonstrates mid-form interruption of instrumented Clojure code from a second connection.
-That working interruption path does not need a speculative replacement.
-
-## Scope boundaries
-
-Synchronous top-level `await` and a direct `Thread/sleep` are blocking operations in the current execution model.
-Their blocking behavior is not evidence of an async evaluator defect by itself.
-Async entry points, background work, and separate Servo ownership remain necessary after these fixes.
-Hard cancellation of browser side effects also remains a Bulwark protocol concern.
-
-## Delivery and adoption
-
-1. Compare each finding with current upstream HEAD before a patch or issue.
-2. Add a bounded failing regression in `csm/clojurust` for each reproducible defect.
-3. Implement the upstream fix and run the async, GC, interpreter, and affected host suites.
-4. Submit an upstream PR under D10 and link it from this document.
-5. After merge, update the Bulwark pin and lockfile deliberately.
-6. Rerun E7's workflow, idle benchmark, keyword-await probe, and real Servo stall probe.
-7. For the nREPL change, rerun E6 and the runtime-thread integration checks.
-
-The corrected keyword-await probe must complete through the original expression without its temporary binding workaround.
-The idle benchmark must show that pending async waits no longer continuously consume a core.
-The D1 review must record the merged revisions and reproduction results before product adoption.
+The original idle probe used 1.028 CPU-seconds for a 1.089-second process duration.
+The original keyword lookup blocked until the parent terminated it after three seconds.
+The old E6 poll reached 237.554 ms, and its blocking `go` task reached a 202.183 ms LocalSet slice.
+The new fiber model changes those scheduling assumptions.
+The [async bridge report](async-bridge.md) preserves the earlier transport measurements.

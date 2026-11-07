@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [features]
-servo = ["dep:servo", "dep:url", "dep:rustls"]
+servo = ["dep:servo", "dep:url", "dep:rustls", "dep:winit", "dep:euclid"]
 
 [dependencies]
 anyhow.workspace = true
@@ -18,3 +18,5 @@ tokio.workspace = true
 servo = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
+euclid = { workspace = true, optional = true }

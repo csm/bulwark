@@ -671,6 +671,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bulwark-experiment-e4"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "rustls",
+ "serde_json",
+ "servo",
+ "url",
+]
+
+[[package]]
 name = "bulwark-experiment-e7"
 version = "0.0.0"
 dependencies = [
@@ -680,10 +691,12 @@ dependencies = [
  "cljrs-gc",
  "cljrs-runtime",
  "cljrs-value",
+ "euclid",
  "rustls",
  "servo",
  "tokio",
  "url",
+ "winit",
 ]
 
 [[package]]
@@ -934,24 +947,27 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 [[package]]
 name = "cljrs-async"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "cljrs-gc",
  "cljrs-reader",
  "cljrs-runtime",
  "cljrs-types",
  "cljrs-value",
+ "corosensei",
  "futures-util",
  "gloo-timers",
+ "rand 0.10.3",
  "tokio",
 ]
 
 [[package]]
 name = "cljrs-gc"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "bigdecimal",
+ "inventory",
  "num-bigint",
  "num-rational",
  "system-memory",
@@ -961,7 +977,7 @@ dependencies = [
 [[package]]
 name = "cljrs-ir"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "cljrs-reader",
  "cljrs-types",
@@ -972,8 +988,9 @@ dependencies = [
 [[package]]
 name = "cljrs-nrepl"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
+ "cljrs-async",
  "cljrs-gc",
  "cljrs-reader",
  "cljrs-runtime",
@@ -986,7 +1003,7 @@ dependencies = [
 [[package]]
 name = "cljrs-project"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "cljrs-gc",
  "cljrs-reader",
@@ -997,7 +1014,7 @@ dependencies = [
 [[package]]
 name = "cljrs-reader"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "cljrs-types",
  "miette",
@@ -1006,7 +1023,7 @@ dependencies = [
 [[package]]
 name = "cljrs-runtime"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "bigdecimal",
  "cljrs-gc",
@@ -1029,7 +1046,7 @@ dependencies = [
 [[package]]
 name = "cljrs-stdlib"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "chrono",
  "cljrs-gc",
@@ -1043,7 +1060,7 @@ dependencies = [
 [[package]]
 name = "cljrs-types"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "miette",
  "serde",
@@ -1053,7 +1070,7 @@ dependencies = [
 [[package]]
 name = "cljrs-value"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c74e54df68185a3852dcd6d6682af5f0f98c1d61#c74e54df68185a3852dcd6d6682af5f0f98c1d61"
+source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
 dependencies = [
  "arc-swap",
  "bigdecimal",
@@ -1270,6 +1287,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77745e017f5edba1a9c1d854f6f3a52dac8a12dd5af5d2f54aecf61e43d80d30"
 dependencies = [
  "libm",
+]
+
+[[package]]
+name = "corosensei"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6886a0c0f263965933c438626e7179139a62b978a33aa18281cbf0cd5a975f34"
+dependencies = [
+ "autocfg",
+ "cfg-if",
+ "libc",
+ "scopeguard",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

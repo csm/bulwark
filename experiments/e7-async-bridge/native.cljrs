@@ -1,0 +1,21 @@
+(ns bulwark.experiment.native-window
+  (:require [bulwark.experiment.native :as native]))
+
+(defn result! [reply]
+  (when-not (:ok reply) (throw (ex-info "Native request failed" reply)))
+  (:value reply))
+
+(defn ^:async run! []
+  (let [view (result! (await (native/request "create" 0
+                     "data:text/html,<title>Bulwark E7 native</title><body style='font:24px sans-serif;margin:40px'><h1>Bulwark E7 native</h1><p id='runtime'>Waiting for the runtime</p><label>Keyboard input <input oninput=\"document.title='Typed: '+this.value\"></label><button onclick=\"document.title='Clicked'\">Click to change title</button><div style='height:1400px'>Scroll down to see the end marker.</div><p>End marker</p>")))]
+    (loop []
+      (let [event (await (native/next-event))]
+        (when-not event (throw (ex-info "Event stream closed" {})))
+        (when-not (= :page/ready (:event/type event)) (recur))))
+    (loop [tick 0]
+      (result! (await (native/request "eval-js" view
+                 (str "document.getElementById('runtime').textContent = 'Runtime tick " tick "'; 'ok'"))))
+      (Thread/sleep 100)
+      (recur (inc tick)))))
+
+(run!)

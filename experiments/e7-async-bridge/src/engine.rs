@@ -73,7 +73,7 @@ impl Backend for Mock {
 }
 
 #[cfg(feature = "servo")]
-mod real {
+pub(crate) mod real {
     use super::*;
     use servo::{
         EventLoopWaker, JSValue, RenderingContext, Servo, ServoBuilder, SoftwareRenderingContext,
@@ -86,6 +86,7 @@ mod real {
         thread,
     };
     use tokio::sync::oneshot;
+    use winit::window::Window;
 
     type Pending = Rc<RefCell<BTreeMap<u64, (u64, oneshot::Sender<Result<Data, Fault>>)>>>;
 
@@ -103,6 +104,7 @@ mod real {
         id: u64,
         events: EventSink,
         frames: Rc<Cell<u64>>,
+        window: Option<Rc<Window>>,
     }
     impl servo::WebViewDelegate for Delegate {
         fn notify_load_status_changed(&self, view: WebView, status: servo::LoadStatus) {
@@ -112,8 +114,17 @@ mod real {
             }
         }
         fn notify_new_frame_ready(&self, view: WebView) {
-            self.frames.set(self.frames.get() + 1);
-            view.paint();
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            } else {
+                self.frames.set(self.frames.get() + 1);
+                view.paint();
+            }
+        }
+        fn notify_page_title_changed(&self, _: WebView, title: Option<String>) {
+            if let Some(window) = &self.window {
+                window.set_title(title.as_deref().unwrap_or("Bulwark E7"));
+            }
         }
     }
 
@@ -122,10 +133,11 @@ mod real {
         views: BTreeMap<u64, WebView>,
         pending: Pending,
         servo: Servo,
-        context: Rc<SoftwareRenderingContext>,
+        context: Rc<dyn RenderingContext>,
         events: EventSink,
         next: u64,
         frames: Rc<Cell<u64>>,
+        window: Option<Rc<Window>>,
     }
     impl ServoBackend {
         pub fn new(events: EventSink) -> Result<Self> {
@@ -134,12 +146,18 @@ mod real {
                 SoftwareRenderingContext::new((640, 480).into())
                     .map_err(|error| anyhow::anyhow!("Software context: {error:?}"))?,
             );
+            Self::with_context(context, events, Box::new(Waker(thread::current())), None)
+        }
+        pub fn with_context(
+            context: Rc<dyn RenderingContext>,
+            events: EventSink,
+            waker: Box<dyn EventLoopWaker>,
+            window: Option<Rc<Window>>,
+        ) -> Result<Self> {
             context
                 .make_current()
                 .map_err(|error| anyhow::anyhow!("GL context: {error:?}"))?;
-            let servo = ServoBuilder::default()
-                .event_loop_waker(Box::new(Waker(thread::current())))
-                .build();
+            let servo = ServoBuilder::default().event_loop_waker(waker).build();
             Ok(Self {
                 views: BTreeMap::new(),
                 pending: Rc::default(),
@@ -148,13 +166,27 @@ mod real {
                 events,
                 next: 1,
                 frames: Rc::default(),
+                window,
             })
+        }
+        pub fn view(&self) -> Option<WebView> {
+            self.views.values().last().cloned()
+        }
+        pub fn paint(&self) {
+            if let Some(view) = self.view() {
+                view.paint();
+                self.context.present();
+                self.frames.set(self.frames.get() + 1);
+            }
         }
     }
     impl Backend for ServoBackend {
         fn handle(&mut self, request: Request) {
             let result = match request.command {
                 Command::Create(url) => match url::Url::parse(&url) {
+                    Ok(_) if self.window.is_some() && !self.views.is_empty() => Err(Fault::Engine(
+                        "Native probe supports one live webview".into(),
+                    )),
                     Ok(url) => {
                         let id = self.next;
                         self.next += 1;
@@ -164,9 +196,16 @@ mod real {
                                 id,
                                 events: self.events.clone(),
                                 frames: self.frames.clone(),
+                                window: self.window.clone(),
                             }))
+                            .hidpi_scale_factor(euclid::Scale::new(
+                                self.window
+                                    .as_ref()
+                                    .map_or(1., |window| window.scale_factor() as f32),
+                            ))
                             .build();
                         view.show();
+                        view.set_focused(true);
                         self.views.insert(id, view);
                         self.events.emit("page/created", id, String::new());
                         Ok(Data::Id(id))

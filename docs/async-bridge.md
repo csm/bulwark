@@ -1,7 +1,33 @@
 # Separate engine and async runtime threads
 
-Status: Phase 0 investigation, 2026-10-27. E7 implements the mechanism as an experiment.
+Status: Phase 0 investigation, updated 2026-11-06. E7 implements the mechanism as an experiment.
 The product crates still contain the original bootstrap.
+
+The [native bridge continuation](native-async-bridge.md) now runs this protocol in a winit window.
+Command and Servo wakeups use `EventLoopProxy`. Worker completion and panic also wake the window loop.
+Six native lifecycle cases passed, including the two-second shutdown limit for an unresponsive runtime.
+
+## Current pin and execution model
+
+Bulwark now pins Clojurust `c6199faea544e029db7222aa3e9f5c9f64952773`.
+Native `go` bodies and `^:async` calls use stackful fibers scheduled on the existing Tokio LocalSet.
+Ordinary helpers inside a fiber can park through nested calls.
+The Rust command bridge still uses ordinary async futures and channels.
+`go` returns a result channel, while `^:async` returns a future.
+The exported `await_value` supports both.
+
+The nested-await regression passes 11 callable and promise cases with a concurrent heartbeat.
+The bridge example also asserts heartbeat progress during `Thread/sleep`, which now parks its fiber.
+The deliberate stall probe uses an explicitly blocking Rust native call instead.
+The real Servo repeat handled 119 requests and painted 21 frames during that 200 ms call.
+Its request median was 67.459 µs, and its maximum was 11.987 ms.
+
+The old keyword-await defect no longer reproduces on native targets.
+Future and promise waiters now use notifications, but initialization still starts a busy GC service.
+The idle executor control used 1.054 CPU-seconds during a one-second Rust timer.
+The baseline without async initialization used 0.098 CPU-seconds.
+The [gap register](clojurust-async-gaps.md) records the remaining GC and nREPL scheduling work.
+The results in the historical sections below used the previous pin.
 
 ## Ownership and user code
 
@@ -41,7 +67,8 @@ The example awaits lifecycle events and script results while a Clojure heartbeat
 Normal computation can remain synchronous. Operations that wait use `await` inside async entry points.
 
 This API does not enforce a sandbox for arbitrary user code.
-A blocking native call or infinite synchronous loop can still stop the Clojurust thread.
+A raw blocking native call can still stop the Clojurust thread.
+Fibers automatically yield at evaluator safepoints, but arbitrary native code has no preemption guarantee.
 Servo continues independently, but commands and hooks on that runtime stop until it recovers.
 
 ## Channel contract in E7
@@ -60,11 +87,11 @@ Servo continues independently, but commands and hooks on that runtime stop until
 | Close | The engine invalidates the handle. It rejects later requests and settles pending evaluations for that handle. |
 | Identifiers | Handle identifiers never repeat within the engine session. |
 | Disconnect | Request futures resolve to `:engine-disconnected` or `:reply-dropped`. Event reads return `nil` after the queue drains. |
-| Shutdown | The process runner imposes a deadline and kills a blocked child. Cooperative runtime cancellation alone cannot stop every blocking call. |
+| Shutdown | Both drivers allow two seconds for worker shutdown. The native process exits with an error if the worker remains blocked. The parent runner also imposes a process deadline. |
 
 The engine processes at most four requests before each Servo turn.
 The headless driver waits for channel or Servo wakeups, with a one-millisecond fallback.
-A native shell will use `EventLoopProxy` instead of this headless wait.
+The native driver now uses `EventLoopProxy` instead of this headless wait.
 
 The mock backend completes each batch in reverse order.
 The Clojure assertions require every reply to match its original request.
@@ -75,7 +102,7 @@ This contract bounds request counts, not message sizes or the number of arbitrar
 Product behavior still needs payload limits and an event overload policy.
 State events can permit coalescing. Lifecycle and permission events need explicit delivery or failure semantics.
 
-## Results
+## Historical results at the previous pin
 
 Measurements used macOS 26.5.2 arm64, Rust 1.97.1, Servo 0.7.0, and the pinned Clojurust revision.
 The Servo probe uses `SoftwareRenderingContext` and a local `data:` page.
@@ -98,10 +125,10 @@ The run also emitted the GL texture warning seen in E3.
 The Clojurust host uses Tiered mode with the pinned async evaluator.
 This result does not cover a JIT or AOT backend.
 
-## Pinned upstream limits
+## Historical upstream limits at the previous pin
 
 The [async gap register](clojurust-async-gaps.md) is the canonical specification for upstream fixes and regression coverage.
-The owner requires upstream fixes. The binding workaround below remains temporary probe code.
+The owner requires upstream fixes. The current probe no longer needs the binding workaround described below.
 
 ### Idle waits repeatedly poll
 
@@ -142,6 +169,9 @@ For the portable mock workflow, run:
 cargo build --locked -p bulwark-experiment-e7
 python3 experiments/run_e7.py
 python3 experiments/run_e7.py --idle
+python3 experiments/run_e7.py --idle-executor
+python3 experiments/run_e7.py --idle-baseline
+python3 experiments/run_e7.py --require-keyword-await
 python3 experiments/run_e7.py --probe-keyword-await
 ```
 
@@ -161,6 +191,7 @@ The Rust loop's cooperative deadline cannot stop an interpreter thread blocked i
 ## Next decisions
 
 E7 supports continued development of the separate-thread design.
-D1 remains provisional until the required upstream async fixes and product queue policies are complete.
-Next work includes a native `winit` wakeup path, async command dispatch, nREPL integration on the runtime thread, and shutdown under failure.
-E3 input observation, E4's DOM channel, and E5's layout experiment remain separate requirements.
+D1 remains provisional until idle GC scheduling and product queue policies are complete.
+The native wakeup path and failure shutdown probe passed.
+Next work includes nREPL integration on the runtime thread, bounded admission, and product event queue policies.
+E3 macOS input and E4's DOM channel passed. E5 remains necessary before web content splits.

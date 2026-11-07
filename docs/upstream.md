@@ -1,13 +1,13 @@
 # Upstream dependencies
 
-Last inspection: 2026-10-27.
+Last inspection: 2026-11-06.
 
 ## Pins
 
 | Dependency | Pin | Source |
 |---|---|---|
 | Servo | `=0.7.0`, published 2026-10-05 | [Published crate](https://crates.io/crates/servo/0.7.0) |
-| Clojurust | `c74e54df68185a3852dcd6d6682af5f0f98c1d61` | [Pinned commit](https://github.com/csm/clojurust/commit/c74e54df68185a3852dcd6d6682af5f0f98c1d61) |
+| Clojurust | `c6199faea544e029db7222aa3e9f5c9f64952773` | [Pinned commit](https://github.com/csm/clojurust/commit/c6199faea544e029db7222aa3e9f5c9f64952773) |
 
 `Cargo.toml` records direct pins. `Cargo.lock` records the complete dependency graph.
 Clojurust packages use one git revision. No dependency points at a local checkout.
@@ -44,9 +44,14 @@ Experiments must establish each gap before a change is necessary.
 Prepare upstream patches with regression coverage under D10's contribution policy.
 
 The [Clojurust async gap register](clojurust-async-gaps.md) defines the required fixes, reproducers, and acceptance criteria.
-CLJ-ASYNC-001 and CLJ-ASYNC-002 must be fixed upstream before product adoption of general async user code.
-CLJ-ASYNC-003 covers bounded polling before runtime-thread nREPL integration.
+The new pin uses native stackful fibers and notification-based future and promise waits.
+CLJ-ASYNC-002 no longer reproduces. E7 passes the expanded nested-await regression and real Servo workflow.
+CLJ-ASYNC-001's await mechanism is corrected, but CLJ-ASYNC-004 records a remaining busy GC service.
+CLJ-ASYNC-003 now includes `spawn_pending` integration and admission limits.
 Temporary probe workarounds do not close these items.
+
+The table below preserves evidence from the earlier pin.
+The [gap register](clojurust-async-gaps.md) supplies the current status and new measurements.
 
 | Area | Evidence | Next action |
 |---|---|---|

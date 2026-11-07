@@ -180,9 +180,29 @@ These measurements used macOS 26.5.2 arm64 and Rust 1.97.1.
 The release executable also captured the local input fixture successfully.
 Visual inspection showed its heading, text field, and button.
 The run emitted a GL texture warning despite the successful capture.
-Linux behavior and interactive input checks remain open.
+The [native macOS report](../docs/native-macos.md) records the later interactive checks.
+The fixture passed click, typing, editing, scrolling, resize, and close checks on 2026-11-06.
+Native link navigation also passed on servo.org and Wikipedia.
+Wikipedia's black icon squares remain visible. Linux behavior remains open.
 
-E4 and E5 remain follow-up experiments in the development plan.
+## E4: DOM channel
+
+```sh
+cargo build --locked -p bulwark-experiment-e4 --features servo
+python3 experiments/run_e4.py
+```
+
+The probe injects an agent through `UserContentManager` into a local intercepted HTTPS fixture.
+It asserts 100 trivial replies and 30 serialized subtrees after five warmup calls per operation.
+Every subtree contains 5,000 span records and produces 232,781 JSON bytes.
+It also asserts a page-to-host `fetch` message and its acknowledgement through resource interception.
+The runner imposes an independent process deadline.
+
+The first debug run measured a trivial-call p50 of 49.292 µs and a subtree p50 of 24.741 ms.
+The subtree maximum was 30.444 ms.
+The [DOM channel report](../docs/dom-channel.md) records a second run, measurement limits, and remaining security work.
+E4 passed its initial channel criterion. D5 selects JavaScript evaluation callbacks for DOM request results.
+E5 remains necessary before multiple web pages can appear side by side.
 
 ## E7: Pure async user code and a separate engine thread
 
@@ -190,6 +210,9 @@ E4 and E5 remain follow-up experiments in the development plan.
 cargo build --locked -p bulwark-experiment-e7
 python3 experiments/run_e7.py
 python3 experiments/run_e7.py --idle
+python3 experiments/run_e7.py --idle-executor
+python3 experiments/run_e7.py --idle-baseline
+python3 experiments/run_e7.py --require-keyword-await
 python3 experiments/run_e7.py --probe-keyword-await
 ```
 
@@ -200,25 +223,43 @@ cargo build --locked -p bulwark-experiment-e7 --features servo
 python3 experiments/run_e7.py --servo
 ```
 
+For native window wakeups and shutdown assertions, run:
+
+```sh
+cargo build --locked -p bulwark-experiment-e7 --features servo
+python3 experiments/run_e7_native.py
+python3 experiments/run_e7.py --native --interactive
+```
+
+The six native cases passed on macOS, including completion, intentional close, error, panic, and unresponsive-call shutdown.
+The final native workflow completed 119 requests and presented 20 frames during a 200 ms runtime stall.
+The [native bridge report](../docs/native-async-bridge.md) records the contract, timing limits, and pending manual E7 input inspection.
+
 The runtime owns a continuously driven LocalSet on its dedicated thread.
 Native operations return futures backed by bounded requests and one-shot replies.
 The main thread owns Servo and sends lifecycle events through a bounded queue.
 The [user example](e7-async-bridge/user.cljrs) runs browser helpers with `^:async` and `await`.
-The [separate stall probe](e7-async-bridge/stall.cljrs) deliberately blocks the runtime for 200 ms.
+The [separate stall probe](e7-async-bridge/stall.cljrs) uses a raw Rust call that blocks the runtime for 200 ms.
+`Thread/sleep` now parks a native Clojure fiber, so it no longer supplies this deliberate stall.
 
 The real Servo run passed its async assertions, advanced page timers, and painted six frames during that stall.
 The mock also completes batches in reverse order to exercise reply correlation.
 The [async bridge report](../docs/async-bridge.md) records the protocol, measurements, and limits.
 
-The keyword-await command is a diagnostic for a pinned upstream limitation.
-It terminates a blocked child after three seconds.
-Idle await polling also consumes CPU. The probe does not claim efficient idle suspension or support for every await expression.
+At `c6199fae`, native `go` and `^:async` bodies use stackful fibers on the Tokio LocalSet.
+The strict keyword-await regression passes 11 callable and promise cases with a concurrent heartbeat.
+The old diagnostic mode still terminates a blocked child after three seconds for comparisons with the previous pin.
+The strict mode uses the normal process deadline, which also permits large-binary startup on a cold cache.
+The new idle controls isolate a remaining busy GC service started by async initialization.
+The initialized executor used 1.054 CPU-seconds for a one-second Rust timer; the control without initialization used 0.098 CPU-seconds.
+The [gap register](../docs/clojurust-async-gaps.md) records current findings and historical results.
 All runner modes have a process deadline because cooperative cancellation cannot stop every blocking native wait.
 
 ## Local validation
 
 Rust formatting and Clippy passed for the workspace and the Servo probe.
 The workspace test command passed, including two E1 schedule tests and five E7 bridge tests.
+E4's Servo integration assertions passed on macOS, including its 5 ms trivial-call p50 target.
 The experiment programs provide the current integration assertions.
 Python syntax checks and the five-second concurrent nREPL smoke run passed.
 The CI workflow remains unverified on remote runners.

@@ -4,6 +4,17 @@ Status: historical shared-thread evidence, 2026-10-27.
 The owner now requested investigation of separate engine and runtime threads.
 The [E7 async bridge report](async-bridge.md) describes that direction and its results.
 
+## Update at c6199fae, 2026-11-06
+
+Native `go` and `^:async` bodies now run on stackful fibers.
+`Thread/sleep` parks inside those fibers, so the old blocking-slice measurements no longer describe this operation.
+The E6 repeat recorded a 2.087 ms maximum LocalSet slice instead of approximately 200 ms.
+Interruption and session recovery passed, with 0.251 ms interrupt latency.
+The legacy nREPL poll still drained a burst of jobs and reached 246.686 ms.
+E1 still uses `poll_timeout`; the new `spawn_pending` API needs host integration and admission limits.
+The [gap register](clojurust-async-gaps.md) records these changes and the remaining idle GC busy loop.
+All measurements and policy statements after this section describe the older runtime.
+
 ## Measurements
 
 The E1 driver now reports separate clocks for runtime work and native redraw callbacks.
