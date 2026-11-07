@@ -63,8 +63,8 @@ def probe(port):
                             code="(do (swap! bulwark.experiment/nrepl-evals inc) (+ 20 22))")
         if not any(r.get("value") == "42" for r in recovered):
             raise RuntimeError(f"Session did not recover: {recovered}")
-        # A go block only yields at an await. A blocking native call inside it
-        # must appear in max_slice rather than being mistaken for a bounded slice.
+        # On the current pin, Thread/sleep parks a go fiber. Compare max_slice
+        # with the older runtime, where this same operation blocked the carrier.
         started = time.monotonic()
         request(evaluator, eval_stream, "go-stall", op="eval", session=session,
                 code="(clojure.core.async/go (Thread/sleep 200) "
@@ -98,7 +98,7 @@ def probe(port):
         if after_ticks <= before_ticks:
             raise RuntimeError("Async loop did not recover")
         return {"interrupt_latency_ms": latency_ms, "burst_round_trip_ms": burst_ms,
-                "blocking_go_round_trip_ms": go_ms,
+                "fiber_sleep_round_trip_ms": go_ms,
                 "async_ticks_before": before_ticks, "async_ticks_after": after_ticks,
                 "session_recovered": True}
 

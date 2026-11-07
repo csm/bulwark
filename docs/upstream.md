@@ -1,13 +1,13 @@
 # Upstream dependencies
 
-Last inspection: 2026-11-02.
+Last inspection: 2026-11-06.
 
 ## Pins
 
 | Dependency | Pin | Source |
 |---|---|---|
 | Servo | `=0.7.0`, published 2026-10-05 | [Published crate](https://crates.io/crates/servo/0.7.0) |
-| Clojurust | `4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b`, release 0.2.34 | [Pinned commit](https://github.com/csm/clojurust/commit/4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b) |
+| Clojurust | `c6199faea544e029db7222aa3e9f5c9f64952773` | [Pinned commit](https://github.com/csm/clojurust/commit/c6199faea544e029db7222aa3e9f5c9f64952773) |
 
 `Cargo.toml` records direct pins. `Cargo.lock` records the complete dependency graph.
 Clojurust packages use one git revision. No dependency points at a local checkout.
@@ -32,7 +32,7 @@ This function roots its callee and arguments before its GC safepoint.
 The runtime also exposes `env::gc_roots::force_collect` and `root_value`.
 Its `tiered::invoke` helper requires an active evaluation context, so the host uses `apply_value`.
 
-Source: [apply.rs](https://github.com/csm/clojurust/blob/4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b/crates/cljrs-runtime/src/env/apply.rs).
+Source: [apply.rs](https://github.com/csm/clojurust/blob/c6199faea544e029db7222aa3e9f5c9f64952773/crates/cljrs-runtime/src/env/apply.rs).
 
 Release 0.2.34 adds stackful fibers (virtual threads) on native targets.
 See the upstream [virtual threads plan](https://github.com/csm/clojurust/blob/4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b/docs/virtual-threads-plan.md).
@@ -56,9 +56,16 @@ Experiments must establish each gap before a change is necessary.
 Prepare upstream patches with regression coverage under D10's contribution policy.
 
 The [Clojurust async gap register](clojurust-async-gaps.md) defines the required fixes, reproducers, and acceptance criteria.
-CLJ-ASYNC-001 and CLJ-ASYNC-002 must be fixed upstream before product adoption of general async user code.
-CLJ-ASYNC-003 covers bounded polling before runtime-thread nREPL integration.
+The new pin uses native stackful fibers and notification-based future and promise waits.
+CLJ-ASYNC-002 no longer reproduces. E7 passes the expanded nested-await regression and real Servo workflow.
+CLJ-ASYNC-001's await mechanism is corrected, but CLJ-ASYNC-004 records a remaining busy GC service.
+E7's `spawn_pending` integration now passes its finite-load concurrency and shutdown probes.
+CLJ-ASYNC-003 still requires admission and pending-work limits in the upstream API.
 Temporary probe workarounds do not close these items.
+
+The table below preserves evidence from the earlier pins, including release 0.2.34.
+The [gap register](clojurust-async-gaps.md) supplies the current status and new measurements.
+In particular, the current E7 probes demonstrate parked interruption and non-blocking nREPL evaluation admission.
 
 | Area | Evidence | Next action |
 |---|---|---|
@@ -79,4 +86,4 @@ Temporary probe workarounds do not close these items.
 | Servo process model | Q5 selects a single-process baseline | Compare multiprocess after E3 works, including E4's JavaScript and interception paths. |
 
 The bootstrap opened no upstream issue. The fiber experiments opened #445, #446, and #447 on 2026-11-02.
-No upstream pull request is open yet.
+That historical experiment did not prepare an upstream pull request.

@@ -1,11 +1,37 @@
-;; Known upstream gap. Run through run_e7.py --probe-keyword-await so the
-;; parent process can terminate a blocked synchronous await.
+;; Regression for nested waits and ordinary callable semantics on fibers.
+;; The parent process terminates this program if the runtime blocks.
 (ns bulwark.experiment.await-keyword
   (:require [clojure.core.async :refer [go timeout]]))
+(defn pending! [value] (go (Thread/sleep 10) value))
+(defn ordinary-helper! [pending] (:value (await pending)))
+(def ticks (atom 0))
+(def running (atom true))
 (defn ^:async reproduce!
-  "Exercise await under a non-symbol call head in the pinned async evaluator."
+  "Exercise awaited callees, arguments, native higher-order calls, and promises."
   []
   (println "E7-await-keyword-started")
-  (let [pending (go (await (timeout 100)) {:value :async-bridge-passed})]
-    (:value (await pending))))
+  (let [heartbeat (go (loop [] (when @running (Thread/sleep 2) (swap! ticks inc) (recur))))
+        state (atom nil)
+        actual [(:value (await (pending! {:value :done})))
+                ({:done :done} (:value (await (pending! {:value :done}))))
+                (#{:done} (:value (await (pending! {:value :done}))))
+                ([:done] (do (await (pending! nil)) 0))
+                ((fn [reply] (:value reply)) (await (pending! {:value :done})))
+                ((await (pending! (fn [reply] (:value reply))))
+                 (await (pending! {:value :done})))
+                (apply (fn [reply] (:value reply)) [(await (pending! {:value :done}))])
+                (reset! state (:value (await (pending! {:value :done}))))
+                (swap! state (fn [_ reply] (:value reply)) (await (pending! {:value :done})))
+                (ordinary-helper! (pending! {:value :done}))
+                (let [p (promise)]
+                  (go (Thread/sleep 10) (deliver p :done))
+                  (await p))]]
+    (when-not (= actual (vec (repeat 11 :done)))
+      (throw (ex-info "Async call matrix returned incorrect values" {:actual actual})))
+    (when-not (> @ticks 0)
+      (throw (ex-info "Async call matrix blocked the heartbeat" {})))
+    (reset! running false)
+    (await heartbeat)
+    (println "E7-await-matrix-passed" @ticks)
+    :async-bridge-passed))
 (reproduce!)

@@ -6,13 +6,15 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
     sync::Arc,
-    thread::Thread,
     time::{Duration, Instant},
 };
 use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 
 pub const CAPACITY: usize = 2;
 pub const IN_FLIGHT: usize = 8;
+
+/// The headless driver unparks its thread; the native driver wakes winit.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Debug)]
 pub enum Command {
@@ -139,7 +141,7 @@ fn response(id: u64, result: Result<Data, Fault>) -> Value {
 
 struct Bridge {
     sender: mpsc::Sender<Request>,
-    engine_thread: Thread,
+    wake: Wake,
     next: Cell<u64>,
     permits: Arc<Semaphore>,
     latencies: Rc<RefCell<Vec<Duration>>>,
@@ -151,7 +153,7 @@ impl Bridge {
         self.next.set(id + 1);
         let permit = self.permits.clone().try_acquire_owned();
         let sender = self.sender.clone();
-        let wake = self.engine_thread.clone();
+        let wake = self.wake.clone();
         let latencies = self.latencies.clone();
         let timeout = self.timeout;
         cljrs_async::spawn_future(async move {
@@ -166,7 +168,7 @@ impl Bridge {
                     .send(request)
                     .await
                     .map_err(|_| Fault::Disconnected)?;
-                wake.unpark();
+                wake();
                 result.await.map_err(|_| Fault::ReplyDropped)?
             };
             let result = tokio::time::timeout(timeout, operation)
@@ -183,13 +185,13 @@ pub fn install(
     globals: &Arc<GlobalEnv>,
     sender: mpsc::Sender<Request>,
     events: mpsc::Receiver<Event>,
-    engine_thread: Thread,
+    wake: Wake,
     latencies: Rc<RefCell<Vec<Duration>>>,
     real_servo: bool,
 ) {
     let bridge = Rc::new(Bridge {
         sender,
-        engine_thread,
+        wake,
         next: Cell::new(1),
         permits: Arc::new(Semaphore::new(IN_FLIGHT)),
         latencies,
@@ -243,7 +245,21 @@ pub fn install(
             }))
         },
     );
-    for (name, native) in [("request", request), ("next-event", next_event)] {
+    // Probe-only misuse: unlike Clojurust's fiber-aware sleep, raw native
+    // blocking cannot park or yield its carrier thread.
+    let block_runtime = NativeFn::with_closure(
+        "bulwark.experiment.native/block-runtime!",
+        Arity::Fixed(0),
+        |_| {
+            std::thread::sleep(Duration::from_millis(200));
+            Ok(Value::Nil)
+        },
+    );
+    for (name, native) in [
+        ("request", request),
+        ("next-event", next_event),
+        ("block-runtime!", block_runtime),
+    ] {
         globals.intern(
             "bulwark.experiment.native",
             name.into(),
@@ -286,7 +302,7 @@ mod tests {
                 let (sender, receiver) = mpsc::channel(1);
                 let bridge = Bridge {
                     sender,
-                    engine_thread: std::thread::current(),
+                    wake: Arc::new(|| {}),
                     next: Cell::new(1),
                     permits: Arc::new(Semaphore::new(IN_FLIGHT)),
                     latencies: Rc::default(),
@@ -318,7 +334,7 @@ mod tests {
                 let (sender, _receiver) = mpsc::channel(IN_FLIGHT);
                 let bridge = Bridge {
                     sender,
-                    engine_thread: std::thread::current(),
+                    wake: Arc::new(|| {}),
                     next: Cell::new(1),
                     permits: Arc::new(Semaphore::new(IN_FLIGHT)),
                     latencies: Rc::default(),
@@ -343,7 +359,7 @@ mod tests {
                 let (sender, mut receiver) = mpsc::channel(1);
                 let bridge = Bridge {
                     sender,
-                    engine_thread: std::thread::current(),
+                    wake: Arc::new(|| {}),
                     next: Cell::new(1),
                     permits: Arc::new(Semaphore::new(IN_FLIGHT)),
                     latencies: Rc::default(),
