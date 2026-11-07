@@ -1,5 +1,10 @@
 # Clojurust upstream comparison
 
+Historical review: the findings below describe `8ef4a4c`, before the upstream fixes.
+Bulwark now adopts `b847a29b46e2b6b3fbe624f6d2394cb656ea5882`.
+The [current gap register](clojurust-async-gaps.md) records the passing idle and overload regressions.
+The old results remain evidence for the original defects.
+
 Review date: 2026-11-07 UTC (2026-11-06 in America/Los_Angeles).
 Bulwark baseline: `7c88979` after the requested pull from `main`.
 

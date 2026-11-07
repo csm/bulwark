@@ -11,17 +11,29 @@ use tokio::{
     time::{Interval, MissedTickBehavior},
 };
 
+const ADMISSION_BUDGET: usize = 4;
+const LIMITS: cljrs_nrepl::Limits = cljrs_nrepl::Limits {
+    max_pending_jobs: 32,
+    max_session_jobs: 24,
+    max_request_bytes: 64 * 1024,
+    max_output_bytes: 256 * 1024,
+};
+
 pub struct Driver {
     poller: cljrs_nrepl::Poller,
     interval: Interval,
     calls: u64,
     max_admission: Duration,
+    max_jobs: usize,
+    max_pending: usize,
+    exhausted: u64,
 }
 impl Driver {
     pub fn start(globals: Arc<GlobalEnv>, port_file: Option<PathBuf>) -> Result<Self> {
         let server = cljrs_nrepl::start(
             cljrs_nrepl::Config {
                 port_file,
+                limits: LIMITS,
                 ..Default::default()
             },
             globals,
@@ -35,19 +47,28 @@ impl Driver {
             interval,
             calls: 0,
             max_admission: Duration::ZERO,
+            max_jobs: 0,
+            max_pending: 0,
+            exhausted: 0,
         })
     }
     pub fn admit(&mut self, local: &LocalSet) -> Result<()> {
         let started = Instant::now();
-        // Upstream still drains admission without a budget. This probe measures
-        // that call under finite load; the timer is not a work or queue bound.
-        let status = self
-            .poller
-            .spawn_pending(local, cljrs_runtime::tiered::eval);
+        // Yield back to the LocalSet between batches, including under overload.
+        let batch =
+            self.poller
+                .spawn_pending_budget(local, cljrs_runtime::tiered::eval, ADMISSION_BUDGET);
         self.calls += 1;
         self.max_admission = self.max_admission.max(started.elapsed());
+        self.max_jobs = self.max_jobs.max(batch.jobs);
+        self.max_pending = self.max_pending.max(self.poller.pending_jobs());
+        self.exhausted += u64::from(batch.budget_exhausted);
         ensure!(
-            status == cljrs_nrepl::PollStatus::Open,
+            batch.jobs <= ADMISSION_BUDGET && self.max_pending <= LIMITS.max_pending_jobs,
+            "nREPL exceeded its admission limits"
+        );
+        ensure!(
+            batch.status == cljrs_nrepl::PollStatus::Open,
             "nREPL network thread disconnected"
         );
         Ok(())
@@ -56,8 +77,8 @@ impl Driver {
 impl Drop for Driver {
     fn drop(&mut self) {
         println!(
-            "E7 nREPL: admission_calls={}, max_admission={:?}",
-            self.calls, self.max_admission
+            "E7 nREPL: admission_calls={}, max_admission={:?}, max_jobs={}, max_pending={}, budget_exhausted={}",
+            self.calls, self.max_admission, self.max_jobs, self.max_pending, self.exhausted
         );
         // Poller drops on this runtime thread, stops its network thread, and
         // removes the port file. The LocalSet then drops its remaining fibers.

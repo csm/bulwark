@@ -966,7 +966,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 [[package]]
 name = "cljrs-async"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "cljrs-gc",
  "cljrs-reader",
@@ -983,7 +983,7 @@ dependencies = [
 [[package]]
 name = "cljrs-gc"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "bigdecimal",
  "inventory",
@@ -996,7 +996,7 @@ dependencies = [
 [[package]]
 name = "cljrs-ir"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "cljrs-reader",
  "cljrs-types",
@@ -1007,7 +1007,7 @@ dependencies = [
 [[package]]
 name = "cljrs-nrepl"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "cljrs-async",
  "cljrs-gc",
@@ -1022,7 +1022,7 @@ dependencies = [
 [[package]]
 name = "cljrs-project"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "cljrs-gc",
  "cljrs-reader",
@@ -1033,7 +1033,7 @@ dependencies = [
 [[package]]
 name = "cljrs-reader"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "cljrs-types",
  "miette",
@@ -1042,7 +1042,7 @@ dependencies = [
 [[package]]
 name = "cljrs-runtime"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "bigdecimal",
  "cljrs-gc",
@@ -1065,7 +1065,7 @@ dependencies = [
 [[package]]
 name = "cljrs-stdlib"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "chrono",
  "cljrs-gc",
@@ -1079,7 +1079,7 @@ dependencies = [
 [[package]]
 name = "cljrs-types"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "miette",
  "serde",
@@ -1089,7 +1089,7 @@ dependencies = [
 [[package]]
 name = "cljrs-value"
 version = "0.1.0"
-source = "git+https://github.com/csm/clojurust?rev=c6199faea544e029db7222aa3e9f5c9f64952773#c6199faea544e029db7222aa3e9f5c9f64952773"
+source = "git+https://github.com/csm/clojurust?rev=b847a29b46e2b6b3fbe624f6d2394cb656ea5882#b847a29b46e2b6b3fbe624f6d2394cb656ea5882"
 dependencies = [
  "arc-swap",
  "bigdecimal",

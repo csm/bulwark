@@ -1,7 +1,8 @@
 # Phase 0 experiments
 
 These programs exercise integration assumptions before product implementation.
-Promote their code only after the Phase 0 review.
+The [Phase 0 exit review](../docs/phase-0-exit.md) is complete.
+Phase 1 can promote these mechanisms under the accepted ADRs. The experiments remain reproducible evidence.
 
 ## E2: Rust calls Clojurust
 
@@ -146,7 +147,7 @@ On Clojurust 0.2.34 (Linux x86_64, debug), the probe still passes: interrupt lat
 ## E6: Clojure time budgeting with fibers
 
 This probe entered through `main` with its release 0.2.34 findings.
-The commands now use the workspace's current `c6199fae` pin.
+The commands now use the workspace's current `b847a29b` pin.
 The recorded 0.2.34 timings and defects below remain historical evidence.
 Current parked-interrupt and cross-session behavior also has coverage in `run_e7_nrepl.py`.
 
@@ -227,7 +228,7 @@ Findings:
 E6's pass criterion requires an interrupt that works from a second nREPL connection.
 It passes for running evaluations and fails for parked evaluations until #446 is fixed.
 
-This failure describes release 0.2.34. The current E7 integration passes parked interruption at `c6199fae`.
+This failure describes release 0.2.34. The later E7 integration passes parked interruption at both `c6199fae` and `b847a29b`.
 
 After the main merge, the full E6 fiber probe passed its assertions on macOS arm64 at `c6199fae`.
 Its parked-evaluation interrupt completed in 0.755 ms, and its busy-evaluation interrupt completed in 0.201 ms.
@@ -353,8 +354,8 @@ python3 experiments/run_e7_nrepl.py --native --close-window
 
 The mock command needs the default E7 build. The remaining commands need `--features servo`.
 All four modes passed on macOS.
-The probes assert cross-session engine calls, same-session order, interruption, redefinition, and shutdown with a parked evaluation.
-The [nREPL report](../docs/nrepl-runtime.md) records finite-load measurements and the remaining upstream admission requirements.
+The probes assert overload refusal, capacity recovery, cross-session engine calls, session order, interruption, redefinition, and shutdown with a parked evaluation.
+The [nREPL report](../docs/nrepl-runtime.md) records admission limits, overload assertions, and measured durations.
 
 The runtime owns a continuously driven LocalSet on its dedicated thread.
 Native operations return futures backed by bounded requests and one-shot replies.
@@ -373,8 +374,9 @@ At `c6199fae`, native `go` and `^:async` bodies use stackful fibers on the Tokio
 The strict keyword-await regression passes 11 callable and promise cases with a concurrent heartbeat.
 The old diagnostic mode still terminates a blocked child after three seconds for comparisons with the previous pin.
 The strict mode uses the normal process deadline, which also permits large-binary startup on a cold cache.
-The new idle controls isolate a remaining busy GC service started by async initialization.
-The initialized executor used 1.054 CPU-seconds for a one-second Rust timer; the control without initialization used 0.098 CPU-seconds.
+The current `b847a29b` pin supplies an idle GC service and bounded nREPL admission.
+The initialized idle control used 0.035 CPU-seconds for a one-second Rust timer.
+The earlier `c6199fae` control used 1.054 CPU-seconds.
 The [gap register](../docs/clojurust-async-gaps.md) records current findings and historical results.
 
 The bounded idle diagnostic counts LocalSet self-wakes without a CPU threshold:
@@ -384,9 +386,10 @@ cargo run --locked -p bulwark-experiment-e7 --example gc_idle -- --baseline
 cargo run --locked -p bulwark-experiment-e7 --example gc_idle
 ```
 
-The control reports zero self-waking polls. Async initialization currently reports sixteen out of sixteen.
+Both the control and async initialization report zero self-waking polls at the current pin.
 The `--require-idle` flag fails if the executor continues to wake itself.
-The [upstream comparison](../docs/clojurust-upstream-review.md) reproduces this result at the pin and upstream `8ef4a4c`.
+CI requires idle suspension in both modes.
+The [historical upstream comparison](../docs/clojurust-upstream-review.md) preserves the earlier failure at `c6199fae` and `8ef4a4c`.
 
 All runner modes have a process deadline because cooperative cancellation cannot stop every blocking native wait.
 

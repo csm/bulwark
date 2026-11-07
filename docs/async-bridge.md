@@ -1,6 +1,8 @@
 # Separate engine and async runtime threads
 
-Status: Phase 0 investigation, updated 2026-11-06. E7 implements the mechanism as an experiment.
+Status: historical E7 report at `c6199fae`, updated 2026-11-06.
+The [Phase 0 exit review](phase-0-exit.md) now accepts this mechanism at `b847a29b`.
+The [gap register](clojurust-async-gaps.md) records the later idle GC and bounded nREPL results.
 The product crates still contain the original bootstrap.
 
 The [native bridge continuation](native-async-bridge.md) now runs this protocol in a winit window.
@@ -9,11 +11,11 @@ Six native lifecycle cases passed, including the two-second shutdown limit for a
 
 The [nREPL continuation](nrepl-runtime.md) now runs `spawn_pending` on the dedicated runtime thread.
 It passed cross-session browser calls, session order, interruption, live redefinition, and shutdown with parked evaluations.
-The upstream API still lacks admission and pending-work bounds.
+That revision lacked admission and pending-work bounds. The current upstream pin supplies those mechanisms.
 
-## Current pin and execution model
+## Pin and execution model at this report
 
-Bulwark now pins Clojurust `c6199faea544e029db7222aa3e9f5c9f64952773`.
+This report uses Clojurust `c6199faea544e029db7222aa3e9f5c9f64952773`.
 Native `go` bodies and `^:async` calls use stackful fibers scheduled on the existing Tokio LocalSet.
 Ordinary helpers inside a fiber can park through nested calls.
 The Rust command bridge still uses ordinary async futures and channels.

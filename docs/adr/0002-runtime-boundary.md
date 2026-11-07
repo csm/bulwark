@@ -1,13 +1,13 @@
 # D2: Data and host callbacks
 
-Status: accepted for Phase 0, 2026-10-27.
+Status: accepted for Phase 1, reviewed 2026-11-07.
 
 The engine sends owned Rust messages to the Clojurust thread.
 Only that thread creates GC values from replies and events.
 Browser operations return futures, and an async Clojure event loop routes events to one dispatcher.
 The engine never waits for a Clojure callback on its own thread.
 
-E7 implements this direction as an experiment. Its contract remains provisional.
+E7 implements this direction as an experiment. D1 and the Phase 0 exit review accept the contract for product implementation.
 The [async bridge report](../async-bridge.md) records the channel and future semantics.
 
 E2 established a separate, local host callback path:

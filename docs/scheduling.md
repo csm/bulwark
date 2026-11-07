@@ -1,8 +1,8 @@
 # Phase 0 scheduling evidence and policy
 
 Status: historical shared-thread evidence, 2026-10-27.
-The owner now requested investigation of separate engine and runtime threads.
-The [E7 async bridge report](async-bridge.md) describes that direction and its results.
+The [Phase 0 exit review](phase-0-exit.md) accepts separate engine and runtime threads.
+D1 and the exit review define the current E6 policy. The measurements and earlier decisions below remain historical evidence.
 
 ## Update at c6199fae, 2026-11-06
 
@@ -100,5 +100,5 @@ That experiment must measure callback ordering, request latency, shutdown, and r
 E3 still needs interactive input observation. Automated redraw counters do not satisfy that check.
 
 E7 now implements the command/event queue experiment with real Servo.
-The [D1 ADR](adr/0001-shell-thread.md) records the current direction and remaining review.
+The [D1 ADR](adr/0001-shell-thread.md) records the accepted ownership and product queue contract.
 The measurements on this page remain historical evidence, not the acceptance gate for the separate-thread design.

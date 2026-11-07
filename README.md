@@ -1,7 +1,8 @@
 # Bulwark
 
 Bulwark is a programmable browser built with Rust, Servo, and Clojurust.
-The project is in Phase 0: experiments for the native host and runtime integration.
+Phase 0 is complete. The native host and runtime experiments now have an accepted architecture.
+Phase 1 product implementation is next. See the [exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
 ## Start development
@@ -68,7 +69,7 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    python3 experiments/run_e7_nrepl.py --native
    ```
 
-   The native command needs the Servo build. The [nREPL report](docs/nrepl-runtime.md) records coverage and remaining admission limits.
+   The native command needs the Servo build. The [nREPL report](docs/nrepl-runtime.md) records bounded admission, overload coverage, and remaining resource limits.
 
 7. Run the DOM channel experiment:
 
@@ -85,6 +86,7 @@ The default workspace build excludes Servo compilation.
 
 ## Project references
 
+- [Phase 0 exit review](docs/phase-0-exit.md)
 - [Development handoff and next steps](docs/handoff.md)
 - [Vision](docs/bulwark.md)
 - [Development plan and current progress](docs/development-plan.md)

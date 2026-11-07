@@ -62,7 +62,7 @@ The build took 2m 31s with cached dependencies and an empty target directory.
 
 E3 now satisfies the initial macOS rendering and input milestone.
 The [native E7 continuation](native-async-bridge.md) now implements native wakeups and explicit failure and shutdown behavior.
-The upstream async gaps remain adoption gates before product runtime integration.
+The upstream async adoption checks now pass. The [Phase 0 exit review](phase-0-exit.md) records product entry and remaining limits.
 
 The initial app can use one visible webview per window.
 E5 remains necessary before web content splits, but does not block this initial layout.

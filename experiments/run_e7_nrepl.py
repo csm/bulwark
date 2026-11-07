@@ -31,18 +31,20 @@ class Client:
         self.socket.sendall(encode({"id": request_id,
                                    **({"session": self.session} if self.session else {}), **fields}))
 
-    def collect(self, request_id, interrupted=False):
+    def collect(self, request_id, interrupted=False, overloaded=False):
         replies = []
         while True:
             reply = decode(self.stream)
             if reply.get("id") != request_id:
                 raise RuntimeError(f"Out-of-order response: {reply}, expected {request_id}")
-            if reply.get("err") or "eval-error" in reply.get("status", []):
+            if not overloaded and (reply.get("err") or "eval-error" in reply.get("status", [])):
                 raise RuntimeError(reply)
             replies.append(reply)
             if "done" in reply.get("status", []):
                 if interrupted and not any("interrupted" in r.get("status", []) for r in replies):
                     raise RuntimeError(f"Evaluation was not interrupted: {replies}")
+                if overloaded and not any("overloaded" in r.get("status", []) for r in replies):
+                    raise RuntimeError(f"Request was not refused under overload: {replies}")
                 return replies
 
     def request(self, **fields):
@@ -84,7 +86,40 @@ def parked_eval(client, request_id):
     client.started(request_id, "E7-parked")
 
 
-def probe(a, b, real_servo):
+def overload_probe(a, b, controller):
+    # Parked and queued jobs must retain their slots, even after host admission.
+    parked_eval(a, "overload-a")
+    parked_eval(b, "overload-b")
+    for index in range(23):
+        a.send(f"queued-a-{index}", op="eval", code=f"(swap! {NS}/order conj -1)")
+    a.send("session-overflow", op="eval", code="42")
+    a.collect("session-overflow", overloaded=True)
+    # A different session still reaches the engine with the first session full.
+    controller.expect(f'({NS}/eval-js! "\\\"overload-peer\\\"")', '"overload-peer"')
+    for index in range(7):
+        b.send(f"queued-b-{index}", op="eval", code=f"(swap! {NS}/order conj -1)")
+    # This response is a network-order barrier after b's seven submissions.
+    b.request(op="describe")
+    controller.send("global-overflow", op="eval", code="42")
+    controller.collect("global-overflow", overloaded=True)
+    controller.request(op="describe")
+    controller.request(op="interrupt", session=a.session)
+    a.collect("overload-a", interrupted=True)
+    for index in range(23):
+        a.collect(f"queued-a-{index}", interrupted=True)
+    controller.request(op="interrupt", session=b.session)
+    b.collect("overload-b", interrupted=True)
+    for index in range(7):
+        b.collect(f"queued-b-{index}", interrupted=True)
+    a.expect("(+ 20 22)", "42")
+    b.expect("(+ 20 22)", "42")
+    controller.expect(f"@{NS}/order", "[]")
+    return {"session_overload_refused": True, "global_overload_refused": True,
+            "interrupt_under_overload": True, "capacity_recovered": True}
+
+
+def probe(a, b, controller, real_servo):
+    overload = overload_probe(a, b, controller)
     # One session retains its queue while another session serves browser commands.
     parked_eval(a, "parked")
     a.send("after-parked", op="eval", code="(+ 20 22)")
@@ -116,7 +151,7 @@ def probe(a, b, real_servo):
     if turns <= 0:
         raise RuntimeError("Engine did not advance during the busy evaluation")
 
-    # Finite queued load proves order and progress, not a bound on upstream admission.
+    # An accepted burst retains session order while other sessions make progress.
     count = 20
     a.socket.sendall(b"".join(encode({
         "id": f"burst-{index}", "op": "eval", "session": a.session,
@@ -137,7 +172,7 @@ def probe(a, b, real_servo):
     a.expect("(probe-label)", '"before"')
     b.evaluate('(defn probe-label [] "after")')
     a.expect("(probe-label)", '"after"')
-    return {"parked_interrupt_ms": parked_ms, "busy_interrupt_ms": busy_ms,
+    return {**overload, "parked_interrupt_ms": parked_ms, "busy_interrupt_ms": busy_ms,
             "engine_turns_during_busy_eval": turns, "ordered_burst": count,
             "cross_session_browser_calls": True, "live_redefinition": True}
 
@@ -198,10 +233,10 @@ def main():
             if port_file.read_text().strip() != str(port):
                 raise RuntimeError("nREPL port file does not match the listener")
             with ExitStack() as stack:
-                a, b = Client(stack, port), Client(stack, port)
+                a, b, controller = Client(stack, port), Client(stack, port), Client(stack, port)
                 while b.evaluate(f"@{NS}/ready") != "true":
                     time.sleep(0.01)
-                result = {} if args.close_window else probe(a, b, args.native or args.servo)
+                result = {} if args.close_window else probe(a, b, controller, args.native or args.servo)
                 parked_eval(a, "shutdown-parked")
                 if not args.close_window:
                     # The server can close before this final eval's reply drains.
@@ -227,6 +262,9 @@ def main():
             output = "".join(lines)
             if "E7 nREPL: admission_calls=" not in output:
                 raise RuntimeError("Missing nREPL admission measurements")
+            limits = re.search(r"max_jobs=(\d+), max_pending=(\d+), budget_exhausted=(\d+)", output)
+            if not limits or int(limits[1]) > 4 or int(limits[2]) > 32:
+                raise RuntimeError("nREPL exceeded its admission limits or omitted measurements")
             if args.native:
                 if "shutdown=joined" not in output:
                     raise RuntimeError("Native host did not join the runtime")

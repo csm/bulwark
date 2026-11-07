@@ -12,13 +12,13 @@ publish = false
 anyhow = "1"
 bulwark-engine = { path = "crates/bulwark-engine" }
 bulwark-runtime = { path = "crates/bulwark-runtime" }
-cljrs-runtime = { git = "https://github.com/csm/clojurust", rev = "c6199faea544e029db7222aa3e9f5c9f64952773", default-features = false, features = ["regex-full"] }
-cljrs-stdlib = { git = "https://github.com/csm/clojurust", rev = "c6199faea544e029db7222aa3e9f5c9f64952773", default-features = false, features = ["regex-full"] }
-cljrs-reader = { git = "https://github.com/csm/clojurust", rev = "c6199faea544e029db7222aa3e9f5c9f64952773" }
-cljrs-value = { git = "https://github.com/csm/clojurust", rev = "c6199faea544e029db7222aa3e9f5c9f64952773", default-features = false, features = ["regex-full"] }
-cljrs-gc = { git = "https://github.com/csm/clojurust", rev = "c6199faea544e029db7222aa3e9f5c9f64952773" }
-cljrs-async = { git = "https://github.com/csm/clojurust", rev = "c6199faea544e029db7222aa3e9f5c9f64952773", default-features = false }
-cljrs-nrepl = { git = "https://github.com/csm/clojurust", rev = "c6199faea544e029db7222aa3e9f5c9f64952773", default-features = false }
+cljrs-runtime = { git = "https://github.com/csm/clojurust", rev = "b847a29b46e2b6b3fbe624f6d2394cb656ea5882", default-features = false, features = ["regex-full"] }
+cljrs-stdlib = { git = "https://github.com/csm/clojurust", rev = "b847a29b46e2b6b3fbe624f6d2394cb656ea5882", default-features = false, features = ["regex-full"] }
+cljrs-reader = { git = "https://github.com/csm/clojurust", rev = "b847a29b46e2b6b3fbe624f6d2394cb656ea5882" }
+cljrs-value = { git = "https://github.com/csm/clojurust", rev = "b847a29b46e2b6b3fbe624f6d2394cb656ea5882", default-features = false, features = ["regex-full"] }
+cljrs-gc = { git = "https://github.com/csm/clojurust", rev = "b847a29b46e2b6b3fbe624f6d2394cb656ea5882" }
+cljrs-async = { git = "https://github.com/csm/clojurust", rev = "b847a29b46e2b6b3fbe624f6d2394cb656ea5882", default-features = false }
+cljrs-nrepl = { git = "https://github.com/csm/clojurust", rev = "b847a29b46e2b6b3fbe624f6d2394cb656ea5882", default-features = false }
 servo = { version = "=0.7.0", default-features = false, features = ["bundled", "js_jit"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 winit = "0.30.13"

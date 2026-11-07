@@ -109,13 +109,14 @@ Computer Use inspection timed out, so this continuation does not claim manual E7
 The earlier [E3 native input results](native-macos.md) remain separate evidence.
 The existing GL texture warning still appears.
 
-## Remaining integration work
+## Current disposition
 
-The runtime's background GC service still spins while idle.
-The native wakeup path does not correct that upstream issue or claim efficient whole-process idle operation.
-The [async gap register](clojurust-async-gaps.md) records its reproducer.
+The observations above describe the earlier `c6199fae` run.
+At `b847a29b`, all six native lifecycle cases passed again, with 19 presentations during the raw runtime stall.
+The [nREPL continuation](nrepl-runtime.md) passes bounded admission, overload, interruption, and shutdown assertions with real Servo.
+The [gap register](clojurust-async-gaps.md) records passing idle GC and upstream admission checks.
 
-The [nREPL continuation](nrepl-runtime.md) now passes its runtime-thread integration probes.
-Next work includes upstream admission and pending-work bounds, idle GC scheduling, and product event queue policies.
-The ownership review must also settle payload limits and shutdown behavior for application state persistence.
-These requirements still gate promotion into the product crates.
+The [Phase 0 exit review](phase-0-exit.md) accepts this mechanism for promotion.
+D1 defines the product queue, payload, overload, and shutdown contract.
+Phase 1 must implement those policies in the product crates.
+Application persistence and other later product behavior do not exist in this experiment.

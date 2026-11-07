@@ -1,114 +1,113 @@
 # Development handoff
 
-Snapshot: `main` pulled through `7c88979`, followed by the upstream comparison on 2026-11-07 UTC.
-The current worktree has a detached HEAD. Earlier integration work used `codex/native-async-bridge`.
+Snapshot: Bulwark `main` at `744acac`, followed by upstream adoption and Phase 0 exit on 2026-11-07.
+The requested pull reported that this detached worktree was already up to date.
+Checkpoint branch: `codex/phase-0-exit`. This checkpoint includes upstream adoption and the completed Phase 0 review.
+No pull request or remote push is part of this checkpoint.
 
 ## Current state
 
-Bulwark remains in Phase 0. The default executable prints the embedded namespace status and exits.
-The product shell does not yet open a browser window.
-The completed integration work lives in standalone experiments.
+Phase 0 is complete. The [exit review](phase-0-exit.md) accepts the architecture and records all gate dispositions.
+Phase 1 product implementation is next. The default executable still prints the embedded namespace status and exits.
+The product shell does not open a browser window yet.
+The proven integration mechanisms remain in standalone experiments.
 
-Earlier integration work pushed two feature commits to origin:
+Clojurust fixes are now on upstream `main` at `b847a29b46e2b6b3fbe624f6d2394cb656ea5882`.
+The workspace dependency pin and lockfile now use that revision for all ten Clojurust packages.
+No dependency patch or local checkout supplies the fixes.
+Servo remains `=0.7.0`, single process, with `bundled` and `js_jit`.
+The local platform remains macOS 26.5.2 arm64 with Rust 1.97.1.
 
-- `649c654`: DOM channel probe, native E7 window, bounded shutdown, and the Clojurust dependency update.
-- `50f6540`: runtime-thread nREPL integration, protocol probes, and CI coverage for the portable nREPL probe.
+## Completed in this continuation
 
-The [development plan](development-plan.md) remains the phase checklist.
-The [async gap register](clojurust-async-gaps.md) is the canonical source for remaining upstream requirements.
+CLJ-ASYNC-004 now passes the deterministic idle acceptance assertion.
+Both baseline and initialized controls produce zero self-wakes across sixteen sampled polls.
+The initialized one-second control used 0.035 CPU-seconds, compared with the earlier 1.054 CPU-seconds.
+The baseline used 0.026 CPU-seconds. The Clojure timer used 0.039 CPU-seconds.
+These are whole-process measurements, including startup and the mock engine driver.
 
-The main merge preserves the requested `c6199fae` dependency pin and imports E1's root-fiber driver and the E6 fiber probe.
-Both E4 and E6 belong to the merged workspace.
-The deterministic E7 in-flight-limit test from main uses the branch's wake callback API.
-Imported release 0.2.34 findings remain historical evidence, separate from the current E7 results.
+CLJ-ASYNC-003 now has upstream mechanisms and E7 host integration.
+The driver uses `spawn_pending_budget` with four jobs per turn.
+Its server accepts at most 32 unfinished jobs globally and 24 per session, including parked and queued work.
+It limits request frames to 64 KiB and queued output to 256 KiB per connection.
+The driver records batch size, sampled pending count, budget exhaustion, and admission duration.
+A later one-millisecond timer tick supplies each subsequent admission turn.
 
-## Architecture and constraints
+The expanded nREPL probe fills session capacity and global capacity with parked and queued evaluations.
+It requires overload refusal, protocol interrupts under overload, capacity recovery, and no side effects from cancelled queued forms.
+Mock, software Servo, and native Servo pass these assertions and the existing concurrency and shutdown checks.
+The native close case still joins the runtime with an evaluation parked, closes the listener, and removes the port file.
 
-The main thread owns winit, Servo, webviews, rendering contexts, and native windows.
-A dedicated thread owns Clojurust, its GC values, Tokio current-thread executor, and LocalSet.
-Only owned Rust requests, replies, and events cross this boundary.
+The focused upstream suites pass: seven `gc_service` tests and five nREPL `limits` tests.
+GC coverage includes suspension, collection requests, parked roots, configuration cancellation, repeated initialization, and shutdown.
+The nREPL suite includes request size and output pressure.
+These suites ran from the fetched upstream source with its own lockfile and no default features, with `regex-full` enabled.
+Their build output is in `/private/tmp/bulwark-upstream-tests`.
+The complete upstream suite did not run.
 
-Native Clojurust `go` and `^:async` bodies now run on stackful fibers through `corosensei`.
-Ordinary helpers inside those fibers can await or dereference browser futures.
-`Thread/sleep` parks a fiber. Raw blocking Rust code can still stall the runtime thread.
-The Rust bridge continues to use ordinary async futures and channels.
-`go` returns a result channel, while `^:async` returns a future.
+The [D1 ADR](adr/0001-shell-thread.md) now records the ownership review and the initial product queue contract.
+It defines queue capacities, payload limits, event overload, admission turns, cancellation, and shutdown.
+These product policies require Phase 1 implementation. The small E7 transport remains an experiment.
+The exit review records E5 deferral with one visible webview per native window and the final E6 scheduling policy.
+All six ADRs now exist, including D4. D3 selects monotonic process-wide identifiers with an explicit exhaustion error.
+The [development plan](development-plan.md) and [gap register](clojurust-async-gaps.md) now reflect upstream adoption.
+The previous [upstream comparison](clojurust-upstream-review.md) remains historical evidence.
 
-The native bridge uses `EventLoopProxy` for requests, Servo wakeups, worker completion, and worker panic.
-Both drivers allow two seconds for worker shutdown before they abandon a join and fail the process.
-A forced process exit does not establish successful runtime cleanup or cancellation of browser side effects.
-The Python runners add independent process deadlines.
+## Validation
 
-The native probe supports one live webview at a time.
-Initial product development can keep one visible webview per window and defer web content splits until E5.
-The initial chrome choice remains egui. Browser behavior belongs in Clojure.
-Permanent local dependency patches and language restrictions do not satisfy the upstream adoption gates.
-
-Pins and local platform:
-
-| Item | Value |
+| Check | Result |
 |---|---|
-| Clojurust | `c6199faea544e029db7222aa3e9f5c9f64952773` |
-| Servo | `=0.7.0`, single process, `bundled` and `js_jit` |
-| Rust | 1.97.1 |
-| Local platform | macOS 26.5.2 arm64 |
+| Workspace formatting, Clippy, and unit tests | Passed, eight unit tests |
+| E7 Clippy with Servo and all targets | Passed |
+| E1 five-second concurrent nREPL smoke | Passed progress assertions, historical frame skips remain |
+| E2 tree-walk and tiered callbacks | Passed 10,000 ordered callbacks per mode, 200 collections, errors, and redefinition |
+| E6 fiber probe and protocol probe | Passed, including parked interruption and session recovery |
+| E7 mock and nested-await matrix | Passed |
+| E7 deterministic idle controls and CPU controls | Passed |
+| Focused upstream GC and nREPL limit suites | Passed, twelve tests |
+| E4 Servo DOM channel | Passed, trivial p50 56.125 microseconds, subtree p50 27.058 ms |
+| E7 software Servo bridge | Passed, 119 completed requests and 18 painted frames during the raw runtime stall |
+| E7 native lifecycle suite | All six cases passed, 19 presentations during the raw runtime stall |
+| E7 nREPL with mock, software Servo, and native Servo | Passed overload, interruption, recovery, concurrency, order, redefinition, and shutdown |
+| E7 native close with parked nREPL evaluation | Passed worker join, listener close, and port-file removal |
 
-## Evidence already established
+Native nREPL presented 16 frames during CPU-bound Clojure evaluation.
+The native overload run reached a sampled pending count of 32, with at most four jobs per admission turn.
+Its maximum admission call was 16.666 microseconds.
+Measured durations are observations, not latency or display frame-rate guarantees.
+The E6 timing run overlapped Servo Clippy compilation and does not supply an isolated performance comparison.
+The exit continuation rebuilt E3, E4, and E7 with the final locked dependency graph.
+Workspace formatting, Clippy, all eight unit tests, and the default bootstrap passed again.
+All six native lifecycle cases and both native nREPL modes passed again.
+The final lifecycle run presented 18 frames during the raw stall.
+The final native nREPL run presented 16 frames, admitted at most four jobs per turn, and reported twelve budget exhaustions.
+Its maximum admission duration was 25.084 microseconds. Both idle controls again reported zero self-wakes.
+All local Markdown links in the README, experiment guide, reports, and ADRs resolve.
+Remote CI results remain uninspected. CI now requires both deterministic idle acceptance controls.
 
-| Area | Result | Details |
-|---|---|---|
-| E2 host callbacks | 10,000 ordered callbacks per mode, stable live objects, errors and redefinition passed | [Experiment guide](../experiments/README.md) |
-| E3 macOS baseline | Fixture input, scroll, resize, close, and navigation on Servo.org and Wikipedia passed | [Native input report](native-macos.md) |
-| E4 DOM channel | Injected agent, JSON subtree, and intercepted page message passed | [DOM report](dom-channel.md) |
-| E7 native bridge | 119 requests completed and 20 presentations during a raw 200 ms runtime stall | [Native bridge report](native-async-bridge.md) |
-| E7 lifecycle | Six cases passed, including panic and an unresponsive native call | [Native bridge report](native-async-bridge.md) |
-| E7 nested awaits | Eleven callable and promise cases passed with concurrent heartbeat progress | [Gap register](clojurust-async-gaps.md) |
-| E7 nREPL | Session order, concurrent browser calls, interruption, redefinition, and shutdown passed across mock and Servo backends | [nREPL report](nrepl-runtime.md) |
-
-The native nREPL run presented 17 frames during CPU-bound Clojure evaluation in another session.
-Native close with a parked evaluation joined the runtime, closed the listener, and removed the port file.
-These are finite-load results. They do not establish admission bounds, bounded memory use, or display frame-rate guarantees.
-
-Eight workspace unit tests now include main's deterministic in-flight-limit assertion.
-The merged workspace passed formatting, workspace Clippy, and all unit tests.
-E1, both E6 probes, E2, the E7 mock, nested awaits, and the portable nREPL integration also passed after the merge.
-The imported E6 fiber probe now interrupts parked evaluations promptly with the retained pin.
-The merged DOM probe, six native lifecycle cases, native nREPL integration, and Servo Clippy checks also passed.
-The portable nREPL probe now appears in the macOS/Linux CI workflow.
-Remote CI results were not inspected during these continuations.
-The complete upstream Clojurust test suite was not run here.
+The existing GL texture warning remains.
+The cold Servo build also emitted a linker warning about a large `__eh_frame` section.
+The lifecycle suite intentionally emits errors and a panic message in its expected-failure cases.
 
 ## Next work, in order
 
-The [upstream comparison](clojurust-upstream-review.md) completed the previous first step.
-Upstream `main` at `8ef4a4c17c6e320318425de5a9b75adc017df83b` is two commits ahead of the retained pin.
-Its fiber optimization leaves the GC service and complete nREPL crate unchanged.
-Both remaining findings still apply.
-The bounded `gc_idle` example reproduces idle self-wakes at both revisions without a CPU threshold.
-This continuation passed formatting, E7 Clippy with all targets, and all six E7 unit tests.
-Both revisions produced the expected control results and the expected failure with `--require-idle` after initialization.
+1. Promote the proven mechanisms into the product crates and begin Phase 1 deliverables 1–3.
+2. Implement D1's product queue and payload limits with overload and cancellation coverage.
+3. Add the remaining Phase 1 command, keymap, hooks, chrome, and browser behavior.
+4. Preserve budgeted nREPL admission and overload regressions in the product integration.
+5. Run the Phase 1 acceptance checks against the product executable.
 
-1. Prepare the CLJ-ASYNC-004 upstream fix for idle GC scheduling, with deterministic suspension and GC-root coverage.
-2. Prepare the CLJ-ASYNC-003 upstream mechanisms for bounded nREPL admission and accepted pending work.
-3. After upstream merge, update the dependency pin and lockfile deliberately and repeat the integration probes.
-4. Complete D1's ownership review and product queue policies, including event overload, payload limits, and shutdown.
-5. After the Phase 0 review, promote the proven mechanisms into the product crates and begin Phase 1 deliverables 1–3.
+D1 accepts separate ownership. It does not claim that product queue policies already exist in the skeleton.
+The upstream output limit permits one oversized reply when its connection queue is empty.
+Connection count, session count, retained values, active language tasks, and the language heap remain outside these bounds.
+A disconnected client can leave its evaluation active until completion or interruption.
+Neither upstream limits nor product payload limits imply a bound on total process memory.
 
-CLJ-ASYNC-004 remains a measured idle CPU defect.
-`cljrs_async::init` starts a GC service that repeatedly yields and collects without an idle wait.
-The initialized executor control used 1.054 CPU-seconds during a one-second timer.
-The control without initialization used 0.098 CPU-seconds.
-Future and promise waiters themselves now use notifications.
-The previous nested-await defect no longer reproduces on native targets.
-
-CLJ-ASYNC-003 remains a missing admission mechanism.
-`spawn_pending` admits every queued job in one call, and the upstream queues remain unbounded.
-E7's one-millisecond admission timer does not bound the work inside that call.
-An upstream batch API needs a job budget and a result that identifies budget exhaustion.
-Pending-work limits must include session queues and running or parked evaluations.
-Interrupts must remain available under overload. Request size and output buffering need separate limits.
-
-These continuations did not prepare upstream patches or pull requests for those remaining findings.
+E1 and E6 preserve the historical shared-thread comparison. Their old frame deadlines do not gate the separate-thread design.
+Raw blocking Rust calls can still stop the runtime thread. Evaluator safepoints cannot preempt arbitrary native code.
+Forced process exit does not establish runtime cleanup or rollback of browser side effects.
+IME, clipboard, display-scale transitions, Linux native behavior, and multiprocess Servo remain follow-up work.
+The initial product uses one visible webview per window until E5 passes.
 
 ## Resume commands
 
@@ -127,29 +126,16 @@ cargo test --locked --workspace
 cargo build --locked -p bulwark-experiment-e1 -p bulwark-experiment-e2 -p bulwark-experiment-e6 -p bulwark-experiment-e7
 cargo run --locked -p bulwark-experiment-e2
 cargo run --locked -p bulwark-experiment-e6
+python3 experiments/run_e1.py --seconds 5
+python3 experiments/run_e6.py
 python3 experiments/run_e7.py
 python3 experiments/run_e7.py --require-keyword-await
 python3 experiments/run_e7_nrepl.py
+cargo run --locked -p bulwark-experiment-e7 --example gc_idle -- --baseline --require-idle
+cargo run --locked -p bulwark-experiment-e7 --example gc_idle -- --require-idle
 ```
 
-The nREPL probe needs permission to bind a loopback listener.
-
-Reproduce the idle CPU defect:
-
-```sh
-python3 experiments/run_e7.py --idle-baseline
-python3 experiments/run_e7.py --idle-executor
-python3 experiments/run_e7.py --idle
-```
-
-Run the bounded idle wake diagnostic:
-
-```sh
-cargo run --locked -p bulwark-experiment-e7 --example gc_idle -- --baseline
-cargo run --locked -p bulwark-experiment-e7 --example gc_idle
-```
-
-The `--require-idle` flag adds the future acceptance assertion. It currently fails at the retained pin.
+The nREPL probes need loopback listener access.
 
 Run the Servo and native checks:
 
@@ -166,22 +152,16 @@ python3 experiments/run_e7_nrepl.py --native --close-window
 
 On macOS, Servo needs graphics access outside the Codex filesystem sandbox.
 The first executable start can take several seconds with a cold cache.
-The native lifecycle suite deliberately emits errors and a panic message in its expected-failure cases.
+The Python runners impose independent process deadlines.
 
-## Code entry points and remaining limits
+## Code entry points
 
 - `experiments/e7-async-bridge/src/main.rs`: runtime ownership, worker lifetime, program selection, and headless driver.
 - `experiments/e7-async-bridge/src/bridge.rs`: bounded browser requests, one-shot replies, native functions, and event queue.
-- `experiments/e7-async-bridge/src/engine.rs`: mock and real Servo backends.
+- `experiments/e7-async-bridge/src/engine.rs`: mock and Servo backends.
 - `experiments/e7-async-bridge/src/native.rs`: winit host, proxy wakeups, and shutdown.
-- `experiments/e7-async-bridge/src/nrepl.rs`: runtime-thread nREPL admission and duration measurements.
-- `experiments/e7-async-bridge/nrepl.cljrs`: browser fixture and synchronous helpers that park their caller's fiber.
-- `experiments/run_e7_nrepl.py`: two-session protocol assertions and shutdown checks.
-- `experiments/e6-fibers/src/main.rs`: the imported shared-thread fiber scheduling and nREPL comparison.
-- `crates/bulwark-runtime/src/lib.rs`: the existing embedded runtime host.
-- `crates/bulwark-shell/src/main.rs`: the product bootstrap, which still exits without a window.
-
-E1 and E6 preserve the earlier shared-thread scheduling comparison. Their old frame deadlines do not gate the separate-thread design.
-Manual E7 input inspection timed out. E3's earlier native input observations remain separate evidence.
-Wikipedia still shows black squares for some icons, and the probes emit an existing GL texture warning.
-IME, clipboard integration, display-scale transitions, Linux native behavior, and multiprocess behavior remain follow-up checks.
+- `experiments/e7-async-bridge/src/nrepl.rs`: budgeted admission, explicit limits, and measurements.
+- `experiments/run_e7_nrepl.py`: overload, protocol, concurrency, and shutdown assertions.
+- `experiments/e7-async-bridge/examples/gc_idle.rs`: deterministic idle suspension diagnostic.
+- `crates/bulwark-runtime/src/lib.rs`: existing embedded runtime host.
+- `crates/bulwark-shell/src/main.rs`: product bootstrap, which still exits without a window.
