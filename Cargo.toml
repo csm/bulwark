@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "experiments/e1-shell-loop", "experiments/e2-callback", "experiments/e3-servo", "experiments/e4-dom-channel", "experiments/e7-async-bridge"]
+members = ["crates/*", "experiments/e1-shell-loop", "experiments/e2-callback", "experiments/e3-servo", "experiments/e4-dom-channel", "experiments/e6-fibers", "experiments/e7-async-bridge"]
 default-members = ["crates/bulwark-engine", "crates/bulwark-runtime", "crates/bulwark-shell"]
 
 [workspace.package]

@@ -135,3 +135,7 @@ The original keyword lookup blocked until the parent terminated it after three s
 The old E6 poll reached 237.554 ms, and its blocking `go` task reached a 202.183 ms LocalSet slice.
 The new fiber model changes those scheduling assumptions.
 The [async bridge report](async-bridge.md) preserves the earlier transport measurements.
+
+The imported Linux report at release 0.2.34 (`4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b`) also found approximately one CPU-second per idle second.
+Its keyword-await probe completed. These observations precede the current notification-wait inspection and GC-service diagnosis.
+The imported E6 fiber probe and its historical findings remain in [the experiment guide](../experiments/README.md).

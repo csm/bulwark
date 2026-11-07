@@ -641,8 +641,11 @@ dependencies = [
  "anyhow",
  "bulwark-runtime",
  "cljrs-async",
+ "cljrs-gc",
  "cljrs-nrepl",
+ "cljrs-reader",
  "cljrs-runtime",
+ "cljrs-value",
  "tokio",
  "winit",
 ]
@@ -679,6 +682,21 @@ dependencies = [
  "serde_json",
  "servo",
  "url",
+]
+
+[[package]]
+name = "bulwark-experiment-e6"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "bulwark-runtime",
+ "cljrs-async",
+ "cljrs-gc",
+ "cljrs-nrepl",
+ "cljrs-reader",
+ "cljrs-runtime",
+ "cljrs-value",
+ "tokio",
 ]
 
 [[package]]

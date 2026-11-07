@@ -139,8 +139,9 @@ interface for a Servo-powered browser, and nothing in this plan depends on Coriu
 5. Bulwark will exercise Clojurust embedding paths that require experiments.
    E2 uses an existing public API without an upstream patch.
    E6 confirms mid-form nREPL interruption and recovery. Cooperative scheduling still permits unbounded synchronous work.
-   E7 establishes two more gaps: idle awaits repeatedly poll, and some nested await expressions block the runtime.
-   These async gaps take priority over bounded nREPL polling under the separate-thread direction.
+   E7's original await gaps now have updated findings at `c6199fae`.
+   Notification waits and native nested awaits work, while the background GC service still spins during idle waits.
+   Idle GC scheduling and bounded nREPL admission remain adoption requirements.
    The owner approved preparation of required upstream Clojurust fixes under Q4.
 
 ---
@@ -314,7 +315,8 @@ Clojurust capabilities each phase relies on:
 |---|---|---|
 | 1 | embed runtime, native fns, `builtin_source`, nREPL poller | documented |
 | 1 | Rust → Clojure dispatcher call | public API, E2 passed in tree-walk and tiered modes |
-| 1 | core.async on an independent runtime thread | E7 works with real Servo; idle CPU and nested-await gaps remain |
+| 1 | core.async on host-driven `LocalSet`, fiber-backed since 0.2.34 | headless host integration verified (E1, E6) |
+| 1 | core.async on an independent runtime thread | E7 works with real Servo and nREPL; idle GC and admission limits remain |
 | 2 | dynamic vars, protocols, multimethods, metadata/docstrings for introspection | implemented |
 | 2 | `require` of embedded and on-disk namespaces, reload | implemented |
 | 3 | JSON/EDN conversion at scale, `NativeObject` for node handles | implemented |
@@ -344,9 +346,13 @@ Native 60-second runs now report runtime ticks, redraw callbacks, and skipped de
 The full native criterion remains open. The dedicated-thread fallback exists as an experiment.
 Current measurements separate window startup from the interval between redraw callbacks.
 The [scheduling report](scheduling.md) records its limits and the remaining D1 decisions.
-The pinned async API uses `(await (timeout 100))`
-inside `go`, rather than the assumed `<!` syntax.
+Before 0.2.34 the async API required `(await (timeout 100))` inside `go`.
 This experiment now serves as the historical comparison for D1. E7 investigates the separate-thread direction.
+
+
+Fiber status (2026-11-02): the Clojurust 0.2.34 pin adds virtual threads. E1 now uses `(<! (timeout 100))`.
+Startup and nREPL forms run on root fibers. A 60-second Linux headless run had 497 nREPL evaluations
+and 2 gaps over 25 ms. A parked nREPL form still blocks the frame (csm/clojurust#447).
 
 **E2. Rust → Clojure callback.** From Rust, look up a var (e.g. `bulwark.core/dispatch!`) and
 invoke it with a map argument, 10,000 times, with the GC active, without leaks or crashes.
@@ -414,6 +420,16 @@ Both exceed the host's nominal time slice.
 The [scheduling report](scheduling.md) defines the provisional policy.
 Bounded polling and enforcement between event callbacks remain open. E6 is not complete.
 Under D1's separate-thread direction, these limits affect runtime responsiveness rather than Servo frame scheduling.
+
+Fiber status (2026-11-02): `experiments/e6-fibers` measures the 0.2.34 fiber runtime on a 60 Hz loop.
+Parked waits and offloaded Rust calls do not delay frames. Slice yields bound CPU-bound fibers.
+Carrier work, root-fiber work, and thread-blocking Rust calls still freeze the loop.
+Interrupts from a second connection stop running evaluations but not parked ones (csm/clojurust#446).
+The fiber policy is in [D1](adr/0001-shell-thread.md). The interrupt criterion remains open for parked evaluations until #446 is fixed.
+
+These 0.2.34 results are historical. The current E7 integration at `c6199fae` passes parked interruption and cross-session progress.
+The E6 fiber probe remains available as the shared-thread comparison.
+
 
 **E7. Async user code across a thread boundary.** Run Servo on the main thread and Clojurust on a dedicated LocalSet thread.
 Use bounded owned requests, one-shot replies, ordered events, and async Clojure browser helpers.
@@ -706,6 +722,8 @@ than its author, without changes to Rust.
    The initial app will use one visible webview per window until E5 passes.
    E6 confirms interruption and recovery with the existing upstream API.
    Its blocking and queue probes remain evidence for runtime scheduling limits.
+   Preserve the imported E6 fiber probe and its release 0.2.34 findings as historical evidence.
+   The current E7 probes pass the parked-interrupt and non-blocking integration checks that motivated #446 and #447.
    Complete the E6 policy and the admission and pending-work bounds under CLJ-ASYNC-003.
    Hold the Phase 0 exit review and amend this plan.
 6. Begin Phase 1 with deliverables 1–3 after the D1 ownership review, E2, and E3 pass. The current skeleton does
@@ -727,7 +745,7 @@ Implemented:
 - E6 mid-form interruption, session recovery, async recovery, and blocking-work probes, with headless CI coverage.
 - A provisional [scheduling policy](scheduling.md) and E3 clean/debug and release build measurements.
 - E7's bounded request/reply/event bridge, pure async user example, real Servo backend, and process-bounded diagnostics.
-- Five E7 tests for transport types, overload, disconnect, deadlines, and pending-evaluation invalidation.
+- Six E7 tests for transport types, request and event overload, disconnect, deadlines, and pending-evaluation invalidation.
 - A local HTML input fixture, development instructions, and a runtime CI workflow.
 - Owner decisions Q2–Q5: macOS first, egui for initial chrome, preparation of upstream Clojurust
   fixes, and a single-process Servo baseline followed by a multiprocess comparison.
@@ -750,6 +768,9 @@ Measured locally on macOS arm64, Rust 1.97.1, debug builds:
 | E3 builds | Clean debug target 2m 30s, first release build 194.83 s, release executable 131,904,848 bytes | Build measurements recorded, release fixture screenshot passed |
 | E7 Servo | 119 accepted requests, 62.5 microseconds median transport duration, six painted frames during a 200 ms runtime stall | Initial async bridge mechanism passed |
 | E7 async limits | One-second idle wait used about one CPU-second; await under keyword lookup blocked until process termination | Upstream gaps reproduced |
+| E1 fibers, Linux headless, 60 s | 3,596 ticks, 538 async ticks, 497 nREPL evaluations, 2 gaps over 25 ms | Headless check passed on Clojurust 0.2.34 |
+| E6 fibers, Linux release | Parked waits and offloads keep frames under 25 ms; parked nREPL evaluation ignores interrupt | Policy recorded; interrupt criterion open (csm/clojurust#446) |
+| E7 mock, Linux debug, Clojurust 0.2.34 | Bridge assertions pass; idle wait still used about one CPU-second; keyword-await probe completed | CLJ-ASYNC-001 remains; CLJ-ASYNC-002 no longer reproduces |
 
 The initial E1 run overlapped Servo compilation. The repeat ran after the main build.
 The Mac was locked during initial UI inspection, and a later inspection timed out.
@@ -759,6 +780,6 @@ The later timing runs separate startup from scheduled redraws and run after comp
 The [scheduling report](scheduling.md) records their measurement limits and the dedicated-thread comparison.
 The CI workflow exists locally. No remote CI result is available yet.
 Local formatting, workspace Clippy, Servo-probe Clippy, and Python syntax checks passed.
-The workspace test command passed, including two E1 schedule tests and five E7 bridge tests.
+The workspace test command passed, including two E1 schedule tests and six E7 bridge tests.
 The experiment programs provide the current integration assertions.
 Full instructions and measurement limits live in [experiments/README.md](../experiments/README.md).

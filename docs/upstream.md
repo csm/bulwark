@@ -32,10 +32,22 @@ This function roots its callee and arguments before its GC safepoint.
 The runtime also exposes `env::gc_roots::force_collect` and `root_value`.
 Its `tiered::invoke` helper requires an active evaluation context, so the host uses `apply_value`.
 
-Source: [apply.rs](https://github.com/csm/clojurust/blob/c74e54df68185a3852dcd6d6682af5f0f98c1d61/crates/cljrs-runtime/src/env/apply.rs).
+Source: [apply.rs](https://github.com/csm/clojurust/blob/c6199faea544e029db7222aa3e9f5c9f64952773/crates/cljrs-runtime/src/env/apply.rs).
 
-The pinned async namespace uses `(await (timeout 100))` inside `go`.
-The E1 source uses that syntax instead of the plan's assumed `<!` form.
+Release 0.2.34 adds stackful fibers (virtual threads) on native targets.
+See the upstream [virtual threads plan](https://github.com/csm/clojurust/blob/4e9dfd0516b9fd7623c6a8fa1a20e39e80f3e30b/docs/virtual-threads-plan.md).
+`go`, `future`, `thread`, and `io-thread` bodies run on fibers. `<!`, `<!!`, `deref`, and `Thread/sleep` park inside a fiber.
+Safepoints yield when a fiber's time slice expires (`CLJRS_FIBER_SLICE_US`, default 10 ms).
+The host API used by E1 and E6:
+
+- `cljrs_async::fiber::run_root(rt, local, carrier, body)` evaluates on a root fiber. The host keeps one `MutatorState` carrier per LocalSet.
+- `fiber::spawn_rooted(roots, body)` starts a fiber from Rust and roots the captured values.
+- `fiber::park_on(future)` parks the current fiber. A root that parks on a timer gives the LocalSet a bounded slice.
+- `fiber::drop_local_with_carrier` destroys the LocalSet with its carrier state installed.
+- `cljrs_value::parking::blocking(job)` moves owned Rust work to the worker pool and parks the caller.
+
+The earlier pin required `(await (timeout 100))` inside `go`. E1 now uses the plan's `<!` form.
+The upgrade needed no source change in E2 or the bootstrap.
 
 ## Gaps and follow-up
 
@@ -51,20 +63,27 @@ E7's `spawn_pending` integration now passes its finite-load concurrency and shut
 CLJ-ASYNC-003 still requires admission and pending-work limits in the upstream API.
 Temporary probe workarounds do not close these items.
 
-The table below preserves evidence from the earlier pin.
+The table below preserves evidence from the earlier pins, including release 0.2.34.
 The [gap register](clojurust-async-gaps.md) supplies the current status and new measurements.
+In particular, the current E7 probes demonstrate parked interruption and non-blocking nREPL evaluation admission.
 
 | Area | Evidence | Next action |
 |---|---|---|
-| Host callbacks | E2 passed with stable live-object counts in two execution modes | Use the existing API. No upstream patch is necessary for this probe. |
-| Host async loop | E1 native async, nREPL, and redraw callbacks advance together, but deadlines can expire | Compare the dedicated-thread fallback before settling D1. |
+| Host callbacks | E2 passed with stable live-object counts in two execution modes, at both pins | Use the existing API. No upstream patch is necessary for this probe. |
+| Host async loop | E1 on fibers: 60 s headless, 497 nREPL evaluations, 2 gaps over 25 ms. Native runs report runtime ticks, redraw callbacks, and skipped deadlines; deadlines can expire | Compare the dedicated-thread fallback before settling D1. |
 | nREPL budget | E6 queues twenty 10 ms calls. One zero-timeout poll spends more than 200 ms on them. | Prepare bounded polling with a limit between jobs and regression coverage under Q4. |
-| Cooperative tasks | E6's blocking `go` task spends about 200 ms in a nominal one-millisecond LocalSet slice | Keep blocking work off the shell thread. See [scheduling policy](scheduling.md). |
+| nREPL parked eval | E6: a parked nREPL evaluation blocks the frame loop until it completes | [csm/clojurust#447](https://github.com/csm/clojurust/issues/447) requests a non-blocking poller. |
 | nREPL interruption | E6 interrupts an active infinite loop from a second connection. The session and async loop recover. | Use the existing interrupt support. No upstream patch is necessary for this path. |
+| nREPL interrupt | E6: interrupts stop running evaluations, not parked ones | [csm/clojurust#446](https://github.com/csm/clojurust/issues/446). Bug. |
+| Cooperative tasks, pre-fiber | E6's blocking `go` task spends about 200 ms in a nominal one-millisecond LocalSet slice | Keep blocking work off the shell thread. See [scheduling policy](scheduling.md). |
+| Cooperative tasks, fibers | E6: slice yields bound CPU-bound fibers to about one slice per drive | Run Bulwark with a 1–2 ms slice. Keep long work off the carrier and out of root fibers. |
+| Stall diagnostics | E6: the watchdog missed a 300 ms block beside a yielded fiber | [csm/clojurust#445](https://github.com/csm/clojurust/issues/445). Bug. |
+| GC pauses | E6: automatic collection inside fibers is correct but stops the shell thread for 200 ms or more on large heaps | Measure with Bulwark's real heap. Consider collection at frame boundaries. |
 | Async thread bridge | E7 passes pure async user code against real Servo on the main thread, with owned messages and continuous runtime execution. | Continue the separate-thread investigation. See [E7 report](async-bridge.md). |
-| Idle async waits | `await_value` repeatedly checks state and yields. E7's one-second idle timer used about one CPU-second. | Prepare notification-based future and promise waits, with completion, cancellation, lost-wakeup, and GC coverage. |
-| Async call evaluation | E7 reproduces a blocked `(:value (await pending))` inside `^:async`. Binding the reply first works. | Prepare async evaluation for non-symbol call heads and arguments, with regression coverage. |
+| Idle async waits | `await_value` repeatedly checks state and yields. E7's one-second idle timer used about one CPU-second, before and after the 0.2.34 pin. | Prepare notification-based future and promise waits, with completion, cancellation, lost-wakeup, and GC coverage. |
+| Async call evaluation | Before 0.2.34, E7 reproduced a blocked `(:value (await pending))` inside `^:async`. On 0.2.34 the probe completes. | Confirm the fix upstream and add regression coverage. |
 | Servo build | The clean debug target built in 2m 30s. The release build took 194.83 s and produced a 126 MiB executable. | Complete E3 input observation. Build timings used cached sources and include concurrent runtime checks. |
 | Servo process model | Q5 selects a single-process baseline | Compare multiprocess after E3 works, including E4's JavaScript and interception paths. |
 
-No upstream issue or pull request was opened during this bootstrap.
+The bootstrap opened no upstream issue. The fiber experiments opened #445, #446, and #447 on 2026-11-02.
+That historical experiment did not prepare an upstream pull request.

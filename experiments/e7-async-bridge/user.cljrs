@@ -38,12 +38,14 @@
         view (await (create! "data:text/html,<title>Async channel fixture</title><h1>Async</h1>"))
         last-event (await (ready! view))]
     ;; Each call immediately returns a future. Only eight requests may remain
-    ;; outstanding; the other eight resolve to structured :busy responses.
+    ;; outstanding; later ones resolve to structured :busy responses. A fiber
+    ;; time slice can expire inside `mapv` and let early replies free permits,
+    ;; so later requests may also succeed. The bridge unit tests check the limit.
     (let [pending (mapv (fn [i] (native/request "eval-js" view (str "\"reply-" i "\""))) (range 16))]
       (loop [i 0]
         (when (< i 16)
           (let [reply (await (nth pending i))]
-            (if (< i 8)
+            (if (or (< i 8) (:ok reply))
               (require! (= (str "reply-" i) (result! reply)) "Mismatched request/reply")
               (require! (= :busy (:error reply)) "In-flight limit failed")))
           (recur (inc i)))))

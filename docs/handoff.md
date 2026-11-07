@@ -1,6 +1,6 @@
 # Development handoff
 
-Snapshot: 2026-11-06, implementation through `50f6540`.
+Snapshot: implementation through `50f6540`, plus integration of `main` at `abef846`.
 Branch: `codex/native-async-bridge`.
 
 ## Current state
@@ -16,6 +16,11 @@ Two feature commits were pushed to origin during this continuation:
 
 The [development plan](development-plan.md) remains the phase checklist.
 The [async gap register](clojurust-async-gaps.md) is the canonical source for remaining upstream requirements.
+
+The main merge preserves the requested `c6199fae` dependency pin and imports E1's root-fiber driver and the E6 fiber probe.
+Both E4 and E6 belong to the merged workspace.
+The deterministic E7 in-flight-limit test from main uses the branch's wake callback API.
+Imported release 0.2.34 findings remain historical evidence, separate from the current E7 results.
 
 ## Architecture and constraints
 
@@ -64,7 +69,11 @@ The native nREPL run presented 17 frames during CPU-bound Clojure evaluation in 
 Native close with a parked evaluation joined the runtime, closed the listener, and removed the port file.
 These are finite-load results. They do not establish admission bounds, bounded memory use, or display frame-rate guarantees.
 
-Seven workspace unit tests, formatting, workspace Clippy, and E7 Servo Clippy passed locally.
+Eight workspace unit tests now include main's deterministic in-flight-limit assertion.
+The merged workspace passed formatting, workspace Clippy, and all unit tests.
+E1, both E6 probes, E2, the E7 mock, nested awaits, and the portable nREPL integration also passed after the merge.
+The imported E6 fiber probe now interrupts parked evaluations promptly with the retained pin.
+The merged DOM probe, six native lifecycle cases, native nREPL integration, and Servo Clippy checks also passed.
 The portable nREPL probe now appears in the macOS/Linux CI workflow.
 Remote CI results were not inspected during these continuations.
 The complete upstream Clojurust test suite was not run here.
@@ -108,8 +117,9 @@ Run the portable checks:
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
-cargo build --locked -p bulwark-experiment-e1 -p bulwark-experiment-e2 -p bulwark-experiment-e7
+cargo build --locked -p bulwark-experiment-e1 -p bulwark-experiment-e2 -p bulwark-experiment-e6 -p bulwark-experiment-e7
 cargo run --locked -p bulwark-experiment-e2
+cargo run --locked -p bulwark-experiment-e6
 python3 experiments/run_e7.py
 python3 experiments/run_e7.py --require-keyword-await
 python3 experiments/run_e7_nrepl.py
@@ -151,6 +161,7 @@ The native lifecycle suite deliberately emits errors and a panic message in its 
 - `experiments/e7-async-bridge/src/nrepl.rs`: runtime-thread nREPL admission and duration measurements.
 - `experiments/e7-async-bridge/nrepl.cljrs`: browser fixture and synchronous helpers that park their caller's fiber.
 - `experiments/run_e7_nrepl.py`: two-session protocol assertions and shutdown checks.
+- `experiments/e6-fibers/src/main.rs`: the imported shared-thread fiber scheduling and nREPL comparison.
 - `crates/bulwark-runtime/src/lib.rs`: the existing embedded runtime host.
 - `crates/bulwark-shell/src/main.rs`: the product bootstrap, which still exits without a window.
 

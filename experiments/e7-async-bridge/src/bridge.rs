@@ -328,6 +328,31 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn requests_beyond_the_in_flight_limit_are_busy() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (sender, _receiver) = mpsc::channel(IN_FLIGHT);
+                let bridge = Bridge {
+                    sender,
+                    wake: Arc::new(|| {}),
+                    next: Cell::new(1),
+                    permits: Arc::new(Semaphore::new(IN_FLIGHT)),
+                    latencies: Rc::default(),
+                    timeout: Duration::from_secs(5),
+                };
+                // Permits are taken when the request is made, before any task runs.
+                let _held: Vec<_> = (0..IN_FLIGHT)
+                    .map(|_| bridge.request(Command::Close(1)))
+                    .collect();
+                let result = cljrs_async::await_value(bridge.request(Command::Close(1)))
+                    .await
+                    .unwrap();
+                assert!(result.to_string().contains(":busy"));
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn a_timeout_revokes_a_queued_request_before_execution() {
         tokio::task::LocalSet::new()
             .run_until(async {

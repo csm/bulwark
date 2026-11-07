@@ -31,13 +31,19 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    python3 experiments/run_e1.py
    ```
 
-4. Run the Servo window experiment:
+4. Run the fiber time-budget experiment:
+
+   ```sh
+   cargo run --locked -p bulwark-experiment-e6
+   ```
+
+5. Run the Servo window experiment:
 
    ```sh
    cargo run --locked -p bulwark-experiment-e3 --features servo -- https://servo.org
    ```
 
-5. Run the async channel bridge experiment:
+6. Run the async channel bridge experiment:
 
    ```sh
    cargo build --locked -p bulwark-experiment-e7
@@ -64,7 +70,7 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
 
    The native command needs the Servo build. The [nREPL report](docs/nrepl-runtime.md) records coverage and remaining admission limits.
 
-6. Run the DOM channel experiment:
+7. Run the DOM channel experiment:
 
    ```sh
    cargo build --locked -p bulwark-experiment-e4 --features servo
@@ -98,6 +104,7 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo run --locked -p bulwark-experiment-e2
 python3 experiments/run_e1.py --seconds 5
+cargo run --locked -p bulwark-experiment-e6
 ```
 
 The E1 command needs the experiment binary from step 3.

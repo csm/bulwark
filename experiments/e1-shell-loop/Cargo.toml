@@ -12,3 +12,6 @@ cljrs-async.workspace = true
 cljrs-nrepl.workspace = true
 tokio.workspace = true
 winit.workspace = true
+cljrs-gc.workspace = true
+cljrs-reader.workspace = true
+cljrs-value.workspace = true
