@@ -55,16 +55,27 @@ The owner approved preparation of required Clojurust fixes under Q4 on 2026-10-2
 Experiments must establish each gap before a change is necessary.
 Prepare upstream patches with regression coverage under D10's contribution policy.
 
+The [Clojurust async gap register](clojurust-async-gaps.md) defines the required fixes, reproducers, and acceptance criteria.
+CLJ-ASYNC-001 and CLJ-ASYNC-002 must be fixed upstream before product adoption of general async user code.
+CLJ-ASYNC-003 covers bounded polling before runtime-thread nREPL integration.
+Temporary probe workarounds do not close these items.
+
 | Area | Evidence | Next action |
 |---|---|---|
 | Host callbacks | E2 passed with stable live-object counts in two execution modes, at both pins | Use the existing API. No upstream patch is necessary for this probe. |
-| Host async loop | E1 on fibers: 60 s headless, 497 nREPL evaluations, 2 gaps over 25 ms | Measure native redraw timing on macOS. |
-| Cooperative tasks | E6: slice yields bound CPU-bound fibers to about one slice per drive | Run Bulwark with a 1–2 ms slice. Keep long work off the carrier and out of root fibers. |
-| nREPL budget | E6: a parked nREPL evaluation blocks the frame loop until it completes | [csm/clojurust#447](https://github.com/csm/clojurust/issues/447) requests a non-blocking poller. |
+| Host async loop | E1 on fibers: 60 s headless, 497 nREPL evaluations, 2 gaps over 25 ms. Native runs report runtime ticks, redraw callbacks, and skipped deadlines; deadlines can expire | Compare the dedicated-thread fallback before settling D1. |
+| nREPL budget | E6 queues twenty 10 ms calls. One zero-timeout poll spends more than 200 ms on them. | Prepare bounded polling with a limit between jobs and regression coverage under Q4. |
+| nREPL parked eval | E6: a parked nREPL evaluation blocks the frame loop until it completes | [csm/clojurust#447](https://github.com/csm/clojurust/issues/447) requests a non-blocking poller. |
+| nREPL interruption | E6 interrupts an active infinite loop from a second connection. The session and async loop recover. | Use the existing interrupt support. No upstream patch is necessary for this path. |
 | nREPL interrupt | E6: interrupts stop running evaluations, not parked ones | [csm/clojurust#446](https://github.com/csm/clojurust/issues/446). Bug. |
+| Cooperative tasks, pre-fiber | E6's blocking `go` task spends about 200 ms in a nominal one-millisecond LocalSet slice | Keep blocking work off the shell thread. See [scheduling policy](scheduling.md). |
+| Cooperative tasks, fibers | E6: slice yields bound CPU-bound fibers to about one slice per drive | Run Bulwark with a 1–2 ms slice. Keep long work off the carrier and out of root fibers. |
 | Stall diagnostics | E6: the watchdog missed a 300 ms block beside a yielded fiber | [csm/clojurust#445](https://github.com/csm/clojurust/issues/445). Bug. |
 | GC pauses | E6: automatic collection inside fibers is correct but stops the shell thread for 200 ms or more on large heaps | Measure with Bulwark's real heap. Consider collection at frame boundaries. |
-| Servo build | Debug link emits an oversized `__eh_frame` warning on macOS | Record release build size and clean build time during E3. |
+| Async thread bridge | E7 passes pure async user code against real Servo on the main thread, with owned messages and continuous runtime execution. | Continue the separate-thread investigation. See [E7 report](async-bridge.md). |
+| Idle async waits | `await_value` repeatedly checks state and yields. E7's one-second idle timer used about one CPU-second, before and after the 0.2.34 pin. | Prepare notification-based future and promise waits, with completion, cancellation, lost-wakeup, and GC coverage. |
+| Async call evaluation | Before 0.2.34, E7 reproduced a blocked `(:value (await pending))` inside `^:async`. On 0.2.34 the probe completes. | Confirm the fix upstream and add regression coverage. |
+| Servo build | The clean debug target built in 2m 30s. The release build took 194.83 s and produced a 126 MiB executable. | Complete E3 input observation. Build timings used cached sources and include concurrent runtime checks. |
 | Servo process model | Q5 selects a single-process baseline | Compare multiprocess after E3 works, including E4's JavaScript and interception paths. |
 
 The bootstrap opened no upstream issue. The fiber experiments opened #445, #446, and #447 on 2026-11-02.

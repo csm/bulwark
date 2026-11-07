@@ -1,0 +1,11 @@
+;; Known upstream gap. Run through run_e7.py --probe-keyword-await so the
+;; parent process can terminate a blocked synchronous await.
+(ns bulwark.experiment.await-keyword
+  (:require [clojure.core.async :refer [go timeout]]))
+(defn ^:async reproduce!
+  "Exercise await under a non-symbol call head in the pinned async evaluator."
+  []
+  (println "E7-await-keyword-started")
+  (let [pending (go (await (timeout 100)) {:value :async-bridge-passed})]
+    (:value (await pending))))
+(reproduce!)
