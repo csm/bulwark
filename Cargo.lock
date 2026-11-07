@@ -634,7 +634,10 @@ name = "bulwark-engine-servo"
 version = "0.0.0"
 dependencies = [
  "bulwark-engine",
+ "rustls",
  "servo",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -742,8 +745,10 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "bulwark-engine",
+ "bulwark-engine-servo",
  "bulwark-runtime",
  "cljrs-runtime",
+ "url",
 ]
 
 [[package]]

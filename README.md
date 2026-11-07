@@ -2,7 +2,7 @@
 
 Bulwark is a programmable browser built with Rust, Servo, and Clojurust.
 Phase 0 is complete. The native host and runtime experiments now have an accepted architecture.
-Phase 1 is in progress. The product now has a bounded engine/runtime bridge and a headless integration check.
+Phase 1 is in progress. The product now has a bounded engine/runtime bridge, a Servo adapter, and headless integration checks.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -28,7 +28,17 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
 
    This runs Clojure assertions against the product bridge and a mock engine.
    It checks native calls, ordered events, live dispatcher redefinition, and worker shutdown.
-   Servo rendering and egui chrome remain the next integration step.
+   Run the product Servo check against a local HTML file:
+
+   ```sh
+   cargo run --locked --features servo -- --servo-smoke
+   ```
+
+   This uses `SoftwareRenderingContext` and the same product bridge and runtime worker.
+   Clojure assertions cover real JavaScript, title events, navigation history, and stale handles.
+   The host also requires a painted frame and a joined worker.
+   The adapter currently accepts one live webview per context.
+   Native window integration and egui chrome remain the next steps.
 
 2. Run the callback and GC experiment:
 

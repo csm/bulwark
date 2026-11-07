@@ -1,6 +1,8 @@
 # Bulwark Development Plan
 
-Status: active v0.12 (2026-11-07), Phase 0 complete. Phase 1 foundation is implemented; native shell integration is next. Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
+Status: active v0.13 (2026-11-07), Phase 0 complete.
+Phase 1 includes the foundation and Servo adapter. Native shell integration is next.
+Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
 This document is the working plan. `docs/bulwark.md` remains the statement of vision and
@@ -491,7 +493,8 @@ Progress: the [foundation checkpoint](phase-1-foundation.md) begins deliverables
 The product crates now provide the owned engine contract, D1 request/event limits, revocable handles,
 the native API registry, and a dedicated runtime worker with a Clojure event loop.
 The headless product check exercises these mechanisms against a mock engine.
-Servo adapter promotion, native window/input integration, egui chrome, and deliverables 4–6 remain open.
+The product Servo adapter now passes requests through the same contract with software rendering.
+Native window/input integration, egui chrome, and deliverables 4–6 remain open.
 No Phase 1 product acceptance criterion is marked complete by this checkpoint.
 
 Goal: validate that a useful browser shell can be written primarily in Clojurust with Rust
@@ -731,7 +734,7 @@ Phase 0 is complete. The [exit review](phase-0-exit.md) records evidence and acc
 4. Add opt-in loopback nREPL with budgeted admission and accepted-work limits.
    Preserve the overload, interruption, recovery, and shutdown regressions from E7.
 5. Run the Phase 1 acceptance checks against the product executable.
-   The current bootstrap does not implement the native browser API or satisfy those criteria.
+   The current bootstrap does not open a native browser window or satisfy those criteria.
 
 E5 remains mandatory for simultaneous web content splits.
 Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.

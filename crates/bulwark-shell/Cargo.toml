@@ -4,8 +4,13 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+servo = ["dep:bulwark-engine-servo", "bulwark-engine-servo/servo", "dep:url"]
+
 [dependencies]
 anyhow.workspace = true
 bulwark-engine.workspace = true
 bulwark-runtime.workspace = true
 cljrs-runtime.workspace = true
+bulwark-engine-servo = { path = "../bulwark-engine-servo", optional = true }
+url = { workspace = true, optional = true }

@@ -5,8 +5,18 @@ edition.workspace = true
 publish.workspace = true
 
 [features]
-servo = ["dep:servo"]
+servo = ["dep:servo", "dep:url", "dep:rustls"]
 
 [dependencies]
 bulwark-engine.workspace = true
 servo = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio.workspace = true
+
+[[test]]
+name = "contract"
+harness = false
+required-features = ["servo"]

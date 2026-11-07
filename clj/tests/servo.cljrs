@@ -1,0 +1,89 @@
+;; Product assertions against Servo's software surface and a local file.
+;; The host defines user/servo-fixture-url before evaluating this source.
+(ns bulwark.core
+  (:require [bulwark.native :as native]
+            [clojure.core.async :refer [timeout]]))
+
+(def received (atom []))
+(def last-sequence (atom 0))
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+(defn value! [reply]
+  (check! (:ok reply) (str "Native request failed: " reply))
+  (:value reply))
+(defn ^:async dispatch! [event]
+  (check! (= (inc @last-sequence) (:sequence event)) "Events arrived out of order")
+  (reset! last-sequence (:sequence event))
+  (swap! received conj event)
+  (when (= :page/title-changed (:event/type event))
+    ;; This await must park the dispatcher while the engine keeps progressing.
+    (value! (await (native/set-echo! "Servo title reached Clojure")))))
+
+(defn ^:async wait-title! [title]
+  (loop []
+    (when-not (some (fn [event] (= title (:title event))) @received)
+      (await (timeout 5))
+      (recur))))
+(defn ^:async wait-url! [view url]
+  (loop []
+    (when-not (= url (:url (value! (await (native/webview-info view)))))
+      (await (timeout 5))
+      (recur))))
+(defn ^:async wait-loaded! [view]
+  (loop []
+    (when-not (= :complete (:load-status (value! (await (native/webview-info view)))))
+      (await (timeout 5))
+      (recur))))
+(defn ^:async wait-closed! [view]
+  (loop []
+    (when-not (some (fn [event] (and (= view (:webview event))
+                                    (= :page/closed (:event/type event)))) @received)
+      (await (timeout 5))
+      (recur))))
+
+(defn ^:async servo-test! []
+  (check! (= :engine-error (:error (await (native/webview-create "not a URL")))) "Invalid URL accepted")
+  (let [view (value! (await (native/webview-create user/servo-fixture-url)))]
+    (await (wait-title! "Bulwark Servo fixture"))
+    (await (wait-loaded! view))
+    (let [info (value! (await (native/webview-info view)))]
+      (check! (= user/servo-fixture-url (:url info)) "Wrong fixture URL")
+      (check! (= "Bulwark Servo fixture" (:title info)) "Wrong fixture title"))
+    (check! (= :engine-error (:error (await (native/webview-create "about:blank")))) "Single-view fallback missing")
+    (let [a (native/eval-js view "document.querySelector('h1').textContent")
+          b (native/eval-js view "'second reply'")]
+      (check! (= "Product Servo integration" (value! (await a))) "DOM evaluation failed")
+      (check! (= "second reply" (value! (await b))) "Concurrent reply mismatched"))
+    (check! (= :engine-error (:error (await (native/eval-js view "throw new Error('expected')")))) "JavaScript exception lost")
+    (check! (= :engine-error (:error (await (native/eval-js view "42")))) "Non-string result silently converted")
+    (check! (= :payload-too-large (:error (await (native/eval-js view "'x'.repeat(1048577)")))) "Oversized JS result accepted")
+    (value! (await (native/eval-js view "document.title = 'Changed from JavaScript'")))
+    (await (wait-title! "Changed from JavaScript"))
+    ;; Same-document navigation provides deterministic history without network access.
+    (let [next-url (str user/servo-fixture-url "#next")]
+      (value! (await (native/navigate view next-url)))
+      (await (wait-url! view next-url))
+      (check! (:can-go-back (value! (await (native/webview-info view)))) "Back history missing")
+      (value! (await (native/back view)))
+      (await (wait-url! view user/servo-fixture-url))
+      (check! (:can-go-forward (value! (await (native/webview-info view)))) "Forward history missing")
+      (value! (await (native/forward view)))
+      (await (wait-url! view next-url)))
+    (reset! received [])
+    (value! (await (native/reload view)))
+    (await (wait-title! "Bulwark Servo fixture"))
+    (await (wait-loaded! view))
+    ;; Allow the software surface to paint before closing the view.
+    (await (timeout 100))
+    (value! (await (native/webview-close view)))
+    (await (wait-closed! view))
+    (check! (= :stale-handle (:error (await (native/webview-info view)))) "Closed handle remained valid")
+    (check! (= :stale-handle (:error (await (native/eval-js view "'stale'")))) "Stale eval accepted")
+    (let [replacement (value! (await (native/webview-create "about:blank")))]
+      (check! (> replacement view) "Replacement reused handle")
+      (value! (await (native/webview-close replacement)))
+      (await (wait-closed! replacement))))
+  (value! (await (native/log "Clojure Servo assertions passed")))
+  :servo-passed)
+
+(servo-test!)

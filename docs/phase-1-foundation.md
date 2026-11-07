@@ -2,11 +2,12 @@
 
 Status: implemented locally, 2026-11-07. Phase 1 remains in progress.
 Base: `main` at `67c8182`. Working branch: `codex/phase-1`.
+The Servo continuation starts from `main` at `15610d3`.
 Servo and Clojurust pins are unchanged from the Phase 0 exit review.
 
 This checkpoint begins deliverables 1–3 from the [development plan](development-plan.md).
 It promotes the data boundary, bounded transport, native registry, and runtime ownership into product crates.
-The Servo adapter, native window, and egui chrome remain the next integration work.
+The Servo adapter now implements this contract. The native window and egui chrome remain the next integration work.
 No Phase 1 browser acceptance criterion is complete yet.
 
 ## Run the product check
@@ -48,7 +49,7 @@ All functions live in `bulwark.native`; public Clojure helpers remain later work
 | `navigate` | Handle, URL string | `nil` |
 | `reload`, `back`, `forward` | Handle | `nil` |
 | `webview-info` | Handle | URL, title, load status, and history flags map |
-| `eval-js` | Handle, script string | Text in the current mock; Servo result conversion remains open |
+| `eval-js` | Handle, script string | Text from a JavaScript string result; other Servo result types return `:engine-error` |
 | `log` | Text | `nil` |
 | `set-echo!` | Text | `nil` |
 | `quit` | None | `nil`; requests host shutdown |
@@ -99,9 +100,48 @@ live dispatcher redefinition, ordered lifecycle events, and handle replacement.
 The worker forces a collection after rooting the program and event futures.
 CI includes the headless smoke in its Linux and macOS runtime jobs; remote results remain uninspected.
 
+## Servo adapter continuation
+
+The product now includes a Servo 0.7.0 adapter in `bulwark-engine-servo`.
+The `servo` feature enables it. The dependency pins remain unchanged.
+The adapter accepts one live webview per context, consistent with the initial single-view fallback.
+A second create request returns `:engine-error` until the first view closes.
+
+The adapter implements create, close, navigation, reload, history traversal, view information, and JavaScript evaluation.
+Servo delegates send URL, title, load status, history, close, and crash events through the bounded product queue.
+The host drives Servo after each admission turn and paints dirty frames separately.
+Navigation and history replies acknowledge the engine call. Lifecycle events report subsequent progress.
+
+Each deferred JavaScript evaluation retains its original request and capacity permit.
+Closing a view rejects pending evaluations with `:stale-handle` and suppresses late lifecycle callbacks.
+Each tick removes cancelled or expired requests. Shutdown rejects pending evaluations with `:shutting-down` before runtime cancellation.
+JavaScript string results become text. Other result types and JavaScript exceptions return `:engine-error`.
+The bridge applies its payload limit to JavaScript results.
+
+Run the software integration checks:
+
+```sh
+cargo test --locked -p bulwark-engine-servo --features servo
+cargo run --locked --features servo -- --servo-smoke
+```
+
+Local macOS validation passed the workspace tests, both Clippy configurations, the mock smoke, and the software Servo checks.
+The Servo smoke painted 11 frames and joined the runtime worker.
+The adapter also passed its late-callback unit test and main-thread contract executable.
+The existing GL texture warning and large `__eh_frame` linker warning remain.
+
+The Rust contract executable covers close during evaluation, stale handles, cancellation, deadline cleanup, and shutdown.
+The Clojure program loads `clj/tests/fixtures/servo.html` through a file URL.
+It covers DOM evaluation, concurrent replies, exceptions, result limits, title changes, ordered events, navigation history, reload, and replacement handles.
+The host requires a painted frame, a title handler response, and a joined runtime worker.
+On macOS, the software graphics context requires graphics access outside the filesystem sandbox.
+
+CI now includes a separate Linux Servo job with a software display.
+Remote CI results remain uninspected. A8 remains open until the required CI and interpreter checks pass.
+
 ## Next integration
 
-Implement the Servo adapter against this contract, then connect native window/input/presentation and egui chrome.
+Connect the native window, input, presentation, and egui chrome to the product adapter.
 Preserve the Phase 0 single-visible-view fallback and bounded worker shutdown.
 Add commands, keymaps, hooks, opt-in loopback nREPL, and the Clojure browser behavior after that connection.
 The product does not start an nREPL listener yet. Its budgeted admission remains proven in E7.

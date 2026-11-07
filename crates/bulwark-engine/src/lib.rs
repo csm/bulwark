@@ -35,9 +35,16 @@ impl<T> Default for Registry<T> {
 }
 impl<T> Registry<T> {
     pub fn insert(&mut self, resource: T) -> Result<Handle, Fault> {
+        self.insert_with(|_| resource)
+    }
+    /// Allocate the handle before constructing a resource that needs it in callbacks.
+    pub fn insert_with(&mut self, build: impl FnOnce(Handle) -> T) -> Result<Handle, Fault> {
         let id = Handle(HANDLES.next()?);
-        self.0.insert(id, resource);
+        self.0.insert(id, build(id));
         Ok(id)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (Handle, &T)> {
+        self.0.iter().map(|(id, resource)| (*id, resource))
     }
     pub fn get(&self, id: Handle) -> Result<&T, Fault> {
         self.0.get(&id).ok_or(Fault::StaleHandle)

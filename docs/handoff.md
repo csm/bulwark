@@ -1,6 +1,6 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `67c8182`, Phase 0 exit on 2026-11-07, followed by Phase 1 foundation work.
+Snapshot: Bulwark `main` at `15610d3`, followed by the Phase 1 Servo adapter continuation on 2026-11-07.
 Fetching `origin/main` and merging with `--ff-only` reported that this worktree was already up to date.
 Working branch: `codex/phase-1`. No remote push or pull request is part of this continuation.
 
@@ -11,7 +11,8 @@ Phase 1 foundation is implemented. The default executable prints `{:phase 1, :st
 The product shell does not open a browser window yet.
 The product bridge and dedicated runtime worker now run with a mock engine through `cargo run --locked -- --headless-smoke`.
 The [foundation report](phase-1-foundation.md) records the native API, coverage, and remaining integration work.
-Servo window, input, and rendering mechanisms remain in the standalone experiments.
+The product Servo adapter now supports software rendering through `cargo run --locked --features servo -- --servo-smoke`.
+Native window and input mechanisms remain in the standalone experiments.
 
 Clojurust fixes are now on upstream `main` at `b847a29b46e2b6b3fbe624f6d2394cb656ea5882`.
 The workspace dependency pin and lockfile now use that revision for all ten Clojurust packages.
@@ -32,6 +33,18 @@ Dispatchers can await browser calls and can be redefined without restarting the 
 The product smoke runs Clojure assertions for native calls, history, ordered events, redefinition, and stale handles.
 CI now runs that smoke on its Linux and macOS runtime jobs.
 The current local validation and reproduction commands are in the foundation report.
+
+## Phase 1 Servo continuation
+
+The product adapter implements view lifecycle, navigation, history, information, and deferred JavaScript evaluation.
+It accepts one live webview per context and sends lifecycle events through the existing bounded queue.
+Closing a view invalidates pending evaluations. Each tick removes cancelled or expired requests.
+Shutdown invalidates resources before the host cancels the runtime worker.
+
+The software smoke loads a local HTML file and requires a title event in Clojure and a painted frame.
+Local macOS validation passed with 11 painted frames and a joined worker.
+Workspace tests, workspace Clippy, Servo Clippy, adapter tests, and the mock smoke passed.
+CI includes the software smoke and adapter tests in a new Linux job. Remote results remain uninspected.
 
 ## Completed during Phase 0 exit
 
@@ -106,13 +119,14 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Implement the product Servo adapter against the new engine contract.
-2. Integrate the native window, input, presentation, and egui echo area with the product bridge.
+1. Run the product Servo contract tests and software smoke on Linux CI.
+2. Integrate the native window, input, presentation, and egui echo area with the product adapter and bridge.
 3. Add the remaining Phase 1 command, keymap, hooks, and browser behavior.
 4. Preserve budgeted nREPL admission and overload regressions in the product integration.
 5. Run the Phase 1 acceptance checks against the product executable.
 
-D1 accepts separate ownership. The foundation implements product transport policies; native adapter integration remains open.
+D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
+Native shell integration remains open.
 The upstream output limit permits one oversized reply when its connection queue is empty.
 Connection count, session count, retained values, active language tasks, and the language heap remain outside these bounds.
 A disconnected client can leave its evaluation active until completion or interruption.
@@ -184,4 +198,6 @@ The Python runners impose independent process deadlines.
 - `crates/bulwark-runtime/src/worker.rs`: dedicated runtime thread and event fiber lifecycle.
 - `clj/bulwark/bridge.cljrs`: ordered event loop calling the current dispatcher var.
 - `clj/tests/foundation.cljrs`: product integration assertions.
-- `crates/bulwark-shell/src/main.rs`: bootstrap and headless product driver; still no native window.
+- `crates/bulwark-engine-servo/src/engine.rs`: product Servo adapter, deferred evaluations, lifecycle events, and frame painting.
+- `clj/tests/servo.cljrs`: software Servo integration assertions against a local HTML fixture.
+- `crates/bulwark-shell/src/main.rs`: bootstrap, mock smoke, and software Servo driver. It still has no native window.
