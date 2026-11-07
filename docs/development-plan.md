@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: active v0.11 (2026-11-07), Phase 0 complete. Phase 1 implementation is next. Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
+Status: active v0.12 (2026-11-07), Phase 0 complete. Phase 1 foundation is implemented; native shell integration is next. Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
 This document is the working plan. `docs/bulwark.md` remains the statement of vision and
@@ -486,6 +486,13 @@ Each phase produces a working system. "Verifiable" means a person can check the 
 running the build and following written steps; where possible, it is also an automated test.
 
 ### Phase 1: Vertical slice (vision §8, "Initial Proof of Concept")
+
+Progress: the [foundation checkpoint](phase-1-foundation.md) begins deliverables 1–3.
+The product crates now provide the owned engine contract, D1 request/event limits, revocable handles,
+the native API registry, and a dedicated runtime worker with a Clojure event loop.
+The headless product check exercises these mechanisms against a mock engine.
+Servo adapter promotion, native window/input integration, egui chrome, and deliverables 4–6 remain open.
+No Phase 1 product acceptance criterion is marked complete by this checkpoint.
 
 Goal: validate that a useful browser shell can be written primarily in Clojurust with Rust
 and Servo providing mechanisms.

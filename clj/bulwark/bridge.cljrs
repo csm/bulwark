@@ -1,0 +1,11 @@
+(ns bulwark.bridge
+  (:require [bulwark.native :as native]
+            [bulwark.core :as core]))
+
+(defn ^:async run-events!
+  "Dispatches events in order on a fiber, where handlers can await native calls."
+  []
+  (loop []
+    (when-let [event (await (native/next-event))]
+      (await (core/dispatch! event))
+      (recur))))

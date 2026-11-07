@@ -1,16 +1,17 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `744acac`, followed by upstream adoption and Phase 0 exit on 2026-11-07.
-The requested pull reported that this detached worktree was already up to date.
-Checkpoint branch: `codex/phase-0-exit`. This checkpoint includes upstream adoption and the completed Phase 0 review.
-No pull request or remote push is part of this checkpoint.
+Snapshot: Bulwark `main` at `67c8182`, Phase 0 exit on 2026-11-07, followed by Phase 1 foundation work.
+Fetching `origin/main` and merging with `--ff-only` reported that this worktree was already up to date.
+Working branch: `codex/phase-1`. No remote push or pull request is part of this continuation.
 
 ## Current state
 
 Phase 0 is complete. The [exit review](phase-0-exit.md) accepts the architecture and records all gate dispositions.
-Phase 1 product implementation is next. The default executable still prints the embedded namespace status and exits.
+Phase 1 foundation is implemented. The default executable prints `{:phase 1, :status :foundation}` and exits.
 The product shell does not open a browser window yet.
-The proven integration mechanisms remain in standalone experiments.
+The product bridge and dedicated runtime worker now run with a mock engine through `cargo run --locked -- --headless-smoke`.
+The [foundation report](phase-1-foundation.md) records the native API, coverage, and remaining integration work.
+Servo window, input, and rendering mechanisms remain in the standalone experiments.
 
 Clojurust fixes are now on upstream `main` at `b847a29b46e2b6b3fbe624f6d2394cb656ea5882`.
 The workspace dependency pin and lockfile now use that revision for all ten Clojurust packages.
@@ -18,7 +19,21 @@ No dependency patch or local checkout supplies the fixes.
 Servo remains `=0.7.0`, single process, with `bundled` and `js_jit`.
 The local platform remains macOS 26.5.2 arm64 with Rust 1.97.1.
 
-## Completed in this continuation
+## Phase 1 foundation continuation
+
+Product crates now define owned requests, replies, lifecycle/key events, and the engine interface.
+The bridge enforces 32 queued requests, 64 unfinished requests, 256 events, payload limits, and per-turn admission.
+Completed replies retain capacity until consumption. Cancellation retains capacity until engine cleanup.
+Event overflow records the first fatal error outside the queue and wakes host shutdown.
+Resource registries use process-wide identifiers that never repeat or wrap.
+
+The runtime installs the v0 `bulwark.native` functions and drives a Clojure event loop on its dedicated LocalSet thread.
+Dispatchers can await browser calls and can be redefined without restarting the worker.
+The product smoke runs Clojure assertions for native calls, history, ordered events, redefinition, and stale handles.
+CI now runs that smoke on its Linux and macOS runtime jobs.
+The current local validation and reproduction commands are in the foundation report.
+
+## Completed during Phase 0 exit
 
 CLJ-ASYNC-004 now passes the deterministic idle acceptance assertion.
 Both baseline and initialized controls produce zero self-wakes across sixteen sampled polls.
@@ -91,13 +106,13 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Promote the proven mechanisms into the product crates and begin Phase 1 deliverables 1–3.
-2. Implement D1's product queue and payload limits with overload and cancellation coverage.
-3. Add the remaining Phase 1 command, keymap, hooks, chrome, and browser behavior.
+1. Implement the product Servo adapter against the new engine contract.
+2. Integrate the native window, input, presentation, and egui echo area with the product bridge.
+3. Add the remaining Phase 1 command, keymap, hooks, and browser behavior.
 4. Preserve budgeted nREPL admission and overload regressions in the product integration.
 5. Run the Phase 1 acceptance checks against the product executable.
 
-D1 accepts separate ownership. It does not claim that product queue policies already exist in the skeleton.
+D1 accepts separate ownership. The foundation implements product transport policies; native adapter integration remains open.
 The upstream output limit permits one oversized reply when its connection queue is empty.
 Connection count, session count, retained values, active language tasks, and the language heap remain outside these bounds.
 A disconnected client can leave its evaluation active until completion or interruption.
@@ -163,5 +178,10 @@ The Python runners impose independent process deadlines.
 - `experiments/e7-async-bridge/src/nrepl.rs`: budgeted admission, explicit limits, and measurements.
 - `experiments/run_e7_nrepl.py`: overload, protocol, concurrency, and shutdown assertions.
 - `experiments/e7-async-bridge/examples/gc_idle.rs`: deterministic idle suspension diagnostic.
-- `crates/bulwark-runtime/src/lib.rs`: existing embedded runtime host.
-- `crates/bulwark-shell/src/main.rs`: product bootstrap, which still exits without a window.
+- `crates/bulwark-engine/src/bridge.rs`: product queue, payload, admission, reply, and shutdown contracts.
+- `crates/bulwark-engine/src/mock.rs`: deterministic product test engine.
+- `crates/bulwark-runtime/src/native.rs`: native API registry and GC conversion.
+- `crates/bulwark-runtime/src/worker.rs`: dedicated runtime thread and event fiber lifecycle.
+- `clj/bulwark/bridge.cljrs`: ordered event loop calling the current dispatcher var.
+- `clj/tests/foundation.cljrs`: product integration assertions.
+- `crates/bulwark-shell/src/main.rs`: bootstrap and headless product driver; still no native window.

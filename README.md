@@ -2,7 +2,8 @@
 
 Bulwark is a programmable browser built with Rust, Servo, and Clojurust.
 Phase 0 is complete. The native host and runtime experiments now have an accepted architecture.
-Phase 1 product implementation is next. See the [exit review](docs/phase-0-exit.md).
+Phase 1 is in progress. The product now has a bounded engine/runtime bridge and a headless integration check.
+See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
 ## Start development
@@ -16,8 +17,18 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    cargo run --locked
    ```
 
-   This command prints `{:phase 0, :status :experiments}` and exits.
+   This command prints `{:phase 1, :status :foundation}` and exits.
    The product shell does not open a browser window yet.
+
+   Run the product foundation check without a native display:
+
+   ```sh
+   cargo run --locked -- --headless-smoke
+   ```
+
+   This runs Clojure assertions against the product bridge and a mock engine.
+   It checks native calls, ordered events, live dispatcher redefinition, and worker shutdown.
+   Servo rendering and egui chrome remain the next integration step.
 
 2. Run the callback and GC experiment:
 
@@ -87,6 +98,7 @@ The default workspace build excludes Servo compilation.
 ## Project references
 
 - [Phase 0 exit review](docs/phase-0-exit.md)
+- [Phase 1 foundation checkpoint and native API](docs/phase-1-foundation.md)
 - [Development handoff and next steps](docs/handoff.md)
 - [Vision](docs/bulwark.md)
 - [Development plan and current progress](docs/development-plan.md)
@@ -104,6 +116,7 @@ The default workspace build excludes Servo compilation.
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
+cargo run --locked -- --headless-smoke
 cargo run --locked -p bulwark-experiment-e2
 python3 experiments/run_e1.py --seconds 5
 cargo run --locked -p bulwark-experiment-e6

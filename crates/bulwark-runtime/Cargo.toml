@@ -6,6 +6,9 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bulwark-engine.workspace = true
+tokio.workspace = true
+cljrs-async.workspace = true
 cljrs-runtime.workspace = true
 cljrs-stdlib.workspace = true
 cljrs-reader.workspace = true

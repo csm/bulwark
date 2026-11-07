@@ -1,6 +1,11 @@
 (ns bulwark.core)
 
 (defn bootstrap-status
-  "Returns the current bootstrap stage. Browser mechanisms arrive after Phase 0."
+  "Returns the current product implementation stage."
   []
-  {:phase 0 :status :experiments})
+  {:phase 1 :status :foundation})
+
+(defn dispatch!
+  "Receives an ordered engine event. Redefinition takes effect on the next event."
+  [event]
+  nil)

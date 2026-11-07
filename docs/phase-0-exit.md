@@ -98,10 +98,12 @@ These limits remain explicit in D1 and the integration reports.
 ## Phase 1 entry
 
 Phase 0 ends with proven standalone mechanisms and accepted contracts.
-The current `cargo run --locked` bootstrap still prints `{:phase 0, :status :experiments}` and exits.
+At Phase 0 exit, the `cargo run --locked` bootstrap printed `{:phase 0, :status :experiments}` and exited.
 Promotion into product crates is the next implementation step.
 
 Phase 1 starts with deliverables 1–3: product crate boundaries, native API v0, and event delivery to `bulwark.core/dispatch!`.
 That implementation must preserve D1 ownership, queue limits, payload limits, and failure behavior.
 Subsequent work adds commands, keymaps, hooks, opt-in loopback nREPL, and one browser behavior written entirely in Clojure.
 The Phase 1 acceptance criteria remain open until those product behaviors exist and pass their checks.
+
+The subsequent [Phase 1 foundation checkpoint](phase-1-foundation.md) records implementation progress after this review.

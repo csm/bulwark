@@ -1,0 +1,68 @@
+;; Product integration assertions, run by --headless-smoke on Linux and macOS.
+(ns bulwark.core
+  (:require [bulwark.native :as native]
+            [clojure.core.async :refer [timeout]]))
+
+(def received (atom []))
+(def redefined (atom 0))
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+(defn value! [reply]
+  (check! (:ok reply) (str "Native request failed: " reply))
+  (:value reply))
+
+(defn ^:async dispatch! [event]
+  (swap! received conj event)
+  ;; Waiting in a handler must park its fiber while the engine processes the call.
+  (when (= :page/title-changed (:event/type event))
+    (value! (await (native/set-echo! (:title event))))))
+
+(defn ^:async wait-for-events! [target-count]
+  (loop []
+    (when (< (count @received) target-count)
+      (await (timeout 1))
+      (recur))))
+
+(defn ^:async foundation! []
+  (doseq [name '[webview-create webview-close navigate reload back forward
+                webview-info eval-js log quit set-echo! next-event]]
+    (check! (resolve (symbol "bulwark.native" (str name))) (str "Missing native function: " name)))
+  (let [view (value! (await (native/webview-create "https://example.com/first")))]
+    (await (wait-for-events! 4))
+    (let [info (value! (await (native/webview-info view)))]
+      (check! (= "https://example.com/first" (:url info)) "Wrong initial URL")
+      (check! (= :complete (:load-status info)) "Wrong load status"))
+    (value! (await (native/navigate view "https://example.com/second")))
+    (check! (:can-go-back (value! (await (native/webview-info view)))) "History missing")
+    (value! (await (native/back view)))
+    (let [info (value! (await (native/webview-info view)))]
+      (check! (= "https://example.com/first" (:url info)) "Back failed")
+      (check! (:can-go-forward info) "Forward history missing"))
+    (value! (await (native/forward view)))
+    (value! (await (native/reload view)))
+    (await (wait-for-events! 20))
+    ;; Concurrent replies deliberately complete in reverse order in the mock.
+    (let [a (native/eval-js view "\"first\"")
+          b (native/eval-js view "\"second\"")]
+      (check! (= "first" (value! (await a))) "First reply mismatched")
+      (check! (= "second" (value! (await b))) "Second reply mismatched"))
+    ;; Resolve the current var on every event rather than retaining the old function.
+    (defn ^:async dispatch! [event]
+      (swap! received conj event)
+      (swap! redefined inc)
+      (value! (await (native/set-echo! "redefined dispatcher"))))
+    (value! (await (native/reload view)))
+    (await (wait-for-events! 24))
+    (check! (= 4 @redefined) "Dispatcher redefinition did not take effect")
+    (value! (await (native/webview-close view)))
+    (await (wait-for-events! 25))
+    (check! (= :page/closed (:event/type (last @received))) "Missing close event")
+    (check! (= :stale-handle (:error (await (native/webview-info view)))) "Closed handle remained usable")
+    (check! (= (range 1 26) (map :sequence @received)) "Events arrived out of order")
+    (let [replacement (value! (await (native/webview-create "about:blank")))]
+      (check! (> replacement view) "Handle reused")
+      (value! (await (native/webview-close replacement)))))
+  (value! (await (native/log "Clojure foundation assertions passed")))
+  :foundation-passed)
+
+(foundation!)

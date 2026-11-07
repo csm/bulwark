@@ -1,4 +1,7 @@
-//! Single-thread Clojurust host for Phase 0. No browser policy belongs here.
+//! Thread-affine Clojurust host. No browser policy belongs here.
+
+pub mod native;
+pub mod worker;
 
 use anyhow::{Context, Result, anyhow};
 use cljrs_runtime::env::error::EvalResult;
@@ -15,11 +18,30 @@ pub struct RuntimeHost {
 impl RuntimeHost {
     /// Builds a runtime with the embedded Bulwark bootstrap namespace.
     pub fn new(mode: ExecutionMode) -> Result<Self> {
+        Self::build(mode, None)
+    }
+
+    /// Must run inside the owning thread's Tokio LocalSet.
+    pub fn with_bridge(
+        mode: ExecutionMode,
+        endpoint: bulwark_engine::bridge::RuntimeEndpoint,
+    ) -> Result<Self> {
+        Self::build(mode, Some(endpoint))
+    }
+
+    fn build(
+        mode: ExecutionMode,
+        endpoint: Option<bulwark_engine::bridge::RuntimeEndpoint>,
+    ) -> Result<Self> {
         let runtime = Runtime::builder()
             .execution_mode(mode)
             .builtin_source(
                 "bulwark.core",
                 include_str!("../../../clj/bulwark/core.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.bridge",
+                include_str!("../../../clj/bulwark/bridge.cljrs"),
             )
             .build()
             .map_err(|error| anyhow!("{error}"))?;
@@ -27,6 +49,10 @@ impl RuntimeHost {
         let mut host = Self {
             env: runtime.env("user"),
         };
+        if let Some(endpoint) = endpoint {
+            cljrs_async::init(&host.env.globals);
+            native::install(&host.env.globals, endpoint);
+        }
         host.eval("(require 'bulwark.core)")?;
         Ok(host)
     }
