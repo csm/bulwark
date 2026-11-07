@@ -79,6 +79,7 @@ The default workspace build excludes Servo compilation.
 
 ## Project references
 
+- [Development handoff and next steps](docs/handoff.md)
 - [Vision](docs/bulwark.md)
 - [Development plan and current progress](docs/development-plan.md)
 - [Experiment instructions and results](experiments/README.md)
