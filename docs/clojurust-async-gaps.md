@@ -4,6 +4,10 @@ Status: inspected and tested at `c6199faea544e029db7222aa3e9f5c9f64952773`, 2026
 Bulwark now pins this revision. The previous observations used `c74e54df68185a3852dcd6d6682af5f0f98c1d61`.
 The owner requires upstream fixes rather than permanent dependency patches or language restrictions.
 
+The [upstream comparison](clojurust-upstream-review.md) inspected `main` at `8ef4a4c17c6e320318425de5a9b75adc017df83b` on 2026-11-07 UTC.
+The GC service and complete nREPL crate match the pinned source exactly.
+Both remaining findings still apply. The dependency pin remains unchanged.
+
 ## Current findings
 
 | ID | Finding | Current status |
@@ -125,6 +129,11 @@ The upstream fix must retain GC progress while allowing an idle executor to susp
 It needs notification or bounded scheduling for collection requests, plus coverage for parked roots and shutdown.
 A deterministic pending-task test must accompany CPU measurements.
 Bulwark does not disable the service locally.
+
+The bounded `gc_idle` example now supplies a deterministic idle diagnostic.
+The control produced zero wakes across sixteen sampled polls at both the pin and current upstream.
+Async initialization produced sixteen wakes across those same sixteen polls at both revisions.
+The [upstream comparison](clojurust-upstream-review.md) records commands, scope, and remaining regression requirements.
 
 Source: [background GC service](https://github.com/csm/clojurust/blob/c6199faea544e029db7222aa3e9f5c9f64952773/crates/cljrs-async/src/runtime.rs#L172).
 

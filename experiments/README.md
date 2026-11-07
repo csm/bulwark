@@ -376,6 +376,18 @@ The strict mode uses the normal process deadline, which also permits large-binar
 The new idle controls isolate a remaining busy GC service started by async initialization.
 The initialized executor used 1.054 CPU-seconds for a one-second Rust timer; the control without initialization used 0.098 CPU-seconds.
 The [gap register](../docs/clojurust-async-gaps.md) records current findings and historical results.
+
+The bounded idle diagnostic counts LocalSet self-wakes without a CPU threshold:
+
+```sh
+cargo run --locked -p bulwark-experiment-e7 --example gc_idle -- --baseline
+cargo run --locked -p bulwark-experiment-e7 --example gc_idle
+```
+
+The control reports zero self-waking polls. Async initialization currently reports sixteen out of sixteen.
+The `--require-idle` flag fails if the executor continues to wake itself.
+The [upstream comparison](../docs/clojurust-upstream-review.md) reproduces this result at the pin and upstream `8ef4a4c`.
+
 All runner modes have a process deadline because cooperative cancellation cannot stop every blocking native wait.
 
 ## Local validation

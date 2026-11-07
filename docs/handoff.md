@@ -1,7 +1,7 @@
 # Development handoff
 
-Snapshot: implementation through `50f6540`, plus integration of `main` at `abef846`.
-Branch: `codex/native-async-bridge`.
+Snapshot: `main` pulled through `7c88979`, followed by the upstream comparison on 2026-11-07 UTC.
+The current worktree has a detached HEAD. Earlier integration work used `codex/native-async-bridge`.
 
 ## Current state
 
@@ -9,7 +9,7 @@ Bulwark remains in Phase 0. The default executable prints the embedded namespace
 The product shell does not yet open a browser window.
 The completed integration work lives in standalone experiments.
 
-Two feature commits were pushed to origin during this continuation:
+Earlier integration work pushed two feature commits to origin:
 
 - `649c654`: DOM channel probe, native E7 window, bounded shutdown, and the Clojurust dependency update.
 - `50f6540`: runtime-thread nREPL integration, protocol probes, and CI coverage for the portable nREPL probe.
@@ -80,12 +80,19 @@ The complete upstream Clojurust test suite was not run here.
 
 ## Next work, in order
 
-1. Compare the remaining findings with current upstream Clojurust before a patch or issue.
-2. Prepare the CLJ-ASYNC-004 upstream fix for idle GC scheduling, with deterministic suspension and GC-root coverage.
-3. Prepare the CLJ-ASYNC-003 upstream mechanisms for bounded nREPL admission and accepted pending work.
-4. After upstream merge, update the dependency pin and lockfile deliberately and repeat the integration probes.
-5. Complete D1's ownership review and product queue policies, including event overload, payload limits, and shutdown.
-6. After the Phase 0 review, promote the proven mechanisms into the product crates and begin Phase 1 deliverables 1–3.
+The [upstream comparison](clojurust-upstream-review.md) completed the previous first step.
+Upstream `main` at `8ef4a4c17c6e320318425de5a9b75adc017df83b` is two commits ahead of the retained pin.
+Its fiber optimization leaves the GC service and complete nREPL crate unchanged.
+Both remaining findings still apply.
+The bounded `gc_idle` example reproduces idle self-wakes at both revisions without a CPU threshold.
+This continuation passed formatting, E7 Clippy with all targets, and all six E7 unit tests.
+Both revisions produced the expected control results and the expected failure with `--require-idle` after initialization.
+
+1. Prepare the CLJ-ASYNC-004 upstream fix for idle GC scheduling, with deterministic suspension and GC-root coverage.
+2. Prepare the CLJ-ASYNC-003 upstream mechanisms for bounded nREPL admission and accepted pending work.
+3. After upstream merge, update the dependency pin and lockfile deliberately and repeat the integration probes.
+4. Complete D1's ownership review and product queue policies, including event overload, payload limits, and shutdown.
+5. After the Phase 0 review, promote the proven mechanisms into the product crates and begin Phase 1 deliverables 1–3.
 
 CLJ-ASYNC-004 remains a measured idle CPU defect.
 `cljrs_async::init` starts a GC service that repeatedly yields and collects without an idle wait.
@@ -134,6 +141,15 @@ python3 experiments/run_e7.py --idle-baseline
 python3 experiments/run_e7.py --idle-executor
 python3 experiments/run_e7.py --idle
 ```
+
+Run the bounded idle wake diagnostic:
+
+```sh
+cargo run --locked -p bulwark-experiment-e7 --example gc_idle -- --baseline
+cargo run --locked -p bulwark-experiment-e7 --example gc_idle
+```
+
+The `--require-idle` flag adds the future acceptance assertion. It currently fails at the retained pin.
 
 Run the Servo and native checks:
 
