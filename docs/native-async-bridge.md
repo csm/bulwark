@@ -115,6 +115,7 @@ The runtime's background GC service still spins while idle.
 The native wakeup path does not correct that upstream issue or claim efficient whole-process idle operation.
 The [async gap register](clojurust-async-gaps.md) records its reproducer.
 
-Next work includes runtime-thread nREPL integration through `spawn_pending`, bounded admission, and product event queue policies.
+The [nREPL continuation](nrepl-runtime.md) now passes its runtime-thread integration probes.
+Next work includes upstream admission and pending-work bounds, idle GC scheduling, and product event queue policies.
 The ownership review must also settle payload limits and shutdown behavior for application state persistence.
 These requirements still gate promotion into the product crates.

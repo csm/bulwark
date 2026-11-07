@@ -3,7 +3,7 @@
 mod input;
 
 use crate::{
-    Program, Report, Worker, WorkerPanic,
+    Program, Report, RuntimeConfig, Worker, WorkerPanic,
     bridge::{self, Command, Data, EventSink},
     engine::{Backend, real::ServoBackend},
 };
@@ -70,6 +70,7 @@ struct App {
     stall_started: Option<(u64, u64)>,
     stall_frames: u64,
     trace: bool,
+    port_file: Option<std::path::PathBuf>,
 }
 impl App {
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -107,8 +108,11 @@ impl App {
             Arc::new(move || {
                 let _ = proxy.send_event(());
             }),
-            self.program,
-            true,
+            RuntimeConfig {
+                program: self.program,
+                real_servo: true,
+                port_file: self.port_file.take(),
+            },
         )?);
         self.close_at = self.close_after.map(|after| Instant::now() + after);
         println!("E7 native: window-ready");
@@ -318,6 +322,7 @@ pub fn run(args: &[String]) -> Result<()> {
         ("--fail-runtime", Program::Fail),
         ("--panic-runtime", Program::Panic),
         ("--unresponsive-runtime", Program::Unresponsive),
+        ("--nrepl", Program::Nrepl),
     ];
     ensure!(
         modes
@@ -372,6 +377,7 @@ pub fn run(args: &[String]) -> Result<()> {
         stall_started: None,
         stall_frames: 0,
         trace: args.iter().any(|arg| arg == "--trace"),
+        port_file: crate::port_file(args)?,
     };
     event_loop.run_app(&mut app)?;
     println!(

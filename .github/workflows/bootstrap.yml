@@ -21,3 +21,4 @@ jobs:
       - run: python3 experiments/run_e6.py
       - run: python3 experiments/run_e7.py
       - run: python3 experiments/run_e7.py --require-keyword-await
+      - run: python3 experiments/run_e7_nrepl.py

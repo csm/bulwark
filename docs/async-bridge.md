@@ -7,6 +7,10 @@ The [native bridge continuation](native-async-bridge.md) now runs this protocol 
 Command and Servo wakeups use `EventLoopProxy`. Worker completion and panic also wake the window loop.
 Six native lifecycle cases passed, including the two-second shutdown limit for an unresponsive runtime.
 
+The [nREPL continuation](nrepl-runtime.md) now runs `spawn_pending` on the dedicated runtime thread.
+It passed cross-session browser calls, session order, interruption, live redefinition, and shutdown with parked evaluations.
+The upstream API still lacks admission and pending-work bounds.
+
 ## Current pin and execution model
 
 Bulwark now pins Clojurust `c6199faea544e029db7222aa3e9f5c9f64952773`.
@@ -193,5 +197,6 @@ The Rust loop's cooperative deadline cannot stop an interpreter thread blocked i
 E7 supports continued development of the separate-thread design.
 D1 remains provisional until idle GC scheduling and product queue policies are complete.
 The native wakeup path and failure shutdown probe passed.
-Next work includes nREPL integration on the runtime thread, bounded admission, and product event queue policies.
+Runtime-thread nREPL integration passed its finite-load probes.
+Next work includes upstream admission and pending-work bounds, idle GC scheduling, and product event queue policies.
 E3 macOS input and E4's DOM channel passed. E5 remains necessary before web content splits.

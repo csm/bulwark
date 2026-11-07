@@ -10,7 +10,7 @@ The owner requires upstream fixes rather than permanent dependency patches or la
 |---|---|---|
 | CLJ-ASYNC-001 | Future and promise awaits repeatedly polled | The wait implementation now uses notifications. Whole-runtime idle CPU remains high because of CLJ-ASYNC-004. |
 | CLJ-ASYNC-002 | Await under a non-symbol call blocked | The native fiber model removes this evaluator split. The original reproducer completes. |
-| CLJ-ASYNC-003 | Embedded nREPL work lacked a bounded host turn | Partially addressed by `spawn_pending`; admission remains unbounded, and E1 still uses the synchronous poll API. |
+| CLJ-ASYNC-003 | Embedded nREPL work lacked a bounded host turn | E7 now integrates `spawn_pending` and passes finite-load concurrency and shutdown probes. Admission and pending work remain unbounded upstream. |
 | CLJ-ASYNC-004 | The background GC service keeps the LocalSet runnable while idle | Confirmed in the current revision. Required upstream work before efficient idle operation. |
 
 These identifiers are local tracking labels, not GitHub issue numbers.
@@ -77,16 +77,22 @@ It also supports interruption of parked evaluations.
 
 However, `spawn_pending` still drains the incoming queue without a job or time budget.
 The existing `poll` and `poll_timeout` APIs still evaluate queued work synchronously.
-Bulwark's E1 comparison still calls `poll_timeout`; E7 does not yet integrate nREPL.
+Bulwark's E1 comparison still calls `poll_timeout`.
 The current E6 run recorded a 246.686 ms maximum poll during a burst of twenty 10 ms evaluations.
 Interruption and subsequent session recovery passed, with 0.251 ms measured interrupt latency.
 The maximum LocalSet slice fell to 2.087 ms because the `go` sleep now parks.
 
+E7 now uses `spawn_pending` on its dedicated runtime thread.
+Mock, software Servo, and native Servo probes passed cross-session browser calls, same-session ordering, interruption, redefinition, and shutdown.
+The native window presented 17 frames during an infinite Clojure evaluation in another session.
+Intentional close with a parked evaluation joined the runtime and removed the port file.
+The [integration report](nrepl-runtime.md) records the measured durations and finite-load limits.
+
 Required follow-up:
 
-1. Use `spawn_pending` for runtime-thread nREPL integration.
-2. Bound admission and pending work under a continuous request stream.
-3. Assert cross-session progress, same-session order, interruption, and shutdown in the embedded host.
+1. Add an upstream admission API with a job budget and a batch result that identifies budget exhaustion.
+2. Bound accepted pending work, including per-session queues and running or parked evaluations.
+3. Keep protocol interrupts available under overload and define separate request and output size limits.
 
 The admission bound remains a missing mechanism, rather than proof that the new API deadlocks.
 

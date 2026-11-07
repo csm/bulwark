@@ -689,6 +689,7 @@ dependencies = [
  "bulwark-runtime",
  "cljrs-async",
  "cljrs-gc",
+ "cljrs-nrepl",
  "cljrs-runtime",
  "cljrs-value",
  "euclid",

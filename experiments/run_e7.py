@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--servo", action="store_true")
     parser.add_argument("--native", action="store_true")
     parser.add_argument("--close-after-ms", type=int)
+    parser.add_argument("--nrepl-port-file")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--idle", action="store_true")
     mode.add_argument("--idle-executor", action="store_true")
@@ -24,6 +25,7 @@ def main():
     mode.add_argument("--fail-runtime", action="store_true")
     mode.add_argument("--panic-runtime", action="store_true")
     mode.add_argument("--unresponsive-runtime", action="store_true")
+    mode.add_argument("--nrepl", action="store_true")
     parser.add_argument("--timeout", type=float, default=35)
     args = parser.parse_args()
     if args.timeout <= 0:
@@ -32,11 +34,17 @@ def main():
         parser.error("native lifecycle options require --native")
     if args.close_after_ms is not None and args.close_after_ms <= 0:
         parser.error("--close-after-ms must be positive")
+    if args.nrepl_port_file and not args.nrepl:
+        parser.error("--nrepl-port-file requires --nrepl")
     command = [args.binary]
     if args.servo:
         command.append("--servo")
     if args.native:
         command.append("--native")
+    if args.nrepl:
+        command.append("--nrepl")
+    if args.nrepl_port_file:
+        command.extend(["--nrepl-port-file", args.nrepl_port_file])
     if args.close_after_ms is not None:
         command.extend(["--close-after-ms", str(args.close_after_ms)])
     if args.interactive:

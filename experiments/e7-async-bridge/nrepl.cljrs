@@ -1,0 +1,40 @@
+(ns bulwark.experiment.nrepl
+  (:require [bulwark.experiment.native :as native]))
+
+(def running (atom true))
+(def ready (atom false))
+(def ticks (atom 0))
+(def order (atom []))
+(def view (atom nil))
+
+(defn result! [reply]
+  (when-not (:ok reply) (throw (ex-info "Native request failed" reply)))
+  (:value reply))
+
+;; These ordinary helpers park the caller's fiber, including nREPL eval fibers.
+(defn eval-js! [script]
+  (result! (await (native/request "eval-js" @view script))))
+
+(defn engine-marker! [operation]
+  (result! (await (native/request operation 0 ""))))
+
+(defn ^:async run! []
+  (reset! view (result! (await (native/request "create" 0
+                  "data:text/html,<title>Async channel fixture</title><h1>E7 nREPL</h1>"))))
+  (loop []
+    (let [event (await (native/next-event))]
+      (when-not event (throw (ex-info "Event stream closed" {})))
+      (when-not (= :page/ready (:event/type event)) (recur))))
+  (when native/servo?
+    (eval-js! "window.__e7ticks = 0; setInterval(() => window.__e7ticks++, 10); function frame() { document.body.style.opacity = String(0.5 + Math.random() / 2); requestAnimationFrame(frame); } frame(); 'timer-started'"))
+  (reset! ready true)
+  (loop []
+    (when @running
+      (swap! ticks inc)
+      (Thread/sleep 5)
+      (recur)))
+  (result! (await (native/request "close" @view "")))
+  (await (native/next-event))
+  :async-bridge-passed)
+
+(run!)

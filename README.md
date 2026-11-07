@@ -55,6 +55,15 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
 
    The [native bridge report](docs/native-async-bridge.md) includes interactive commands and the shutdown contract.
 
+   To exercise runtime-thread nREPL sessions, run:
+
+   ```sh
+   python3 experiments/run_e7_nrepl.py
+   python3 experiments/run_e7_nrepl.py --native
+   ```
+
+   The native command needs the Servo build. The [nREPL report](docs/nrepl-runtime.md) records coverage and remaining admission limits.
+
 6. Run the DOM channel experiment:
 
    ```sh

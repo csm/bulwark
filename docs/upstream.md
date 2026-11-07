@@ -47,7 +47,8 @@ The [Clojurust async gap register](clojurust-async-gaps.md) defines the required
 The new pin uses native stackful fibers and notification-based future and promise waits.
 CLJ-ASYNC-002 no longer reproduces. E7 passes the expanded nested-await regression and real Servo workflow.
 CLJ-ASYNC-001's await mechanism is corrected, but CLJ-ASYNC-004 records a remaining busy GC service.
-CLJ-ASYNC-003 now includes `spawn_pending` integration and admission limits.
+E7's `spawn_pending` integration now passes its finite-load concurrency and shutdown probes.
+CLJ-ASYNC-003 still requires admission and pending-work limits in the upstream API.
 Temporary probe workarounds do not close these items.
 
 The table below preserves evidence from the earlier pin.

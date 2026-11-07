@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: active v0.8 (2026-11-06), Phase 0 experiments in progress. Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
+Status: active v0.9 (2026-11-06), Phase 0 experiments in progress. Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
 This document is the working plan. `docs/bulwark.md` remains the statement of vision and
@@ -127,7 +127,7 @@ interface for a Servo-powered browser, and nothing in this plan depends on Coriu
 
 1. Servo and Clojurust are both single-thread-affine, but they can own different threads.
    The current investigation puts `winit`, Servo, native resources, and rendering on the main thread.
-   A dedicated thread owns Clojurust, its Tokio `LocalSet`, and future nREPL integration.
+   A dedicated thread owns Clojurust, its Tokio `LocalSet`, and E7's nREPL integration.
    Owned requests, replies, and events cross channels. E7 validates this mechanism with real Servo.
 2. Native Clojure fibers park at supported waits and yield at evaluator safepoints.
    A raw blocking native call can still stop commands and hooks while Servo continues independently.
@@ -158,7 +158,8 @@ The dedicated Clojurust thread runs its own Tokio executor and LocalSet continuo
 Native browser calls return futures backed by bounded requests and one-shot replies.
 Engine events cross a bounded ordered queue and reach Clojure through an async event loop.
 Servo wakeups and command arrivals wake the main event loop. No engine callback evaluates Clojure on the main thread.
-E7 validates the mechanism. Native window integration, nREPL scheduling, and upstream async gaps remain open.
+E7 validates native window and runtime-thread nREPL integration under finite load.
+Admission limits, pending-work limits, idle GC scheduling, and product queue policies remain open.
 The [D1 ADR](adr/0001-shell-thread.md) and [async bridge report](async-bridge.md) record the revised direction.
 E1 remains the historical comparison for the earlier shared-thread proposal.
 
@@ -420,7 +421,8 @@ Pass: real Servo create/evaluate/close requests, reply correlation under concurr
 runtime async progress, and continued Servo painting during a deliberate runtime stall.
 Record idle CPU, request latency, shutdown behavior, and gaps in the pinned async evaluator.
 Time box: 2 days. Native `winit` integration now passes its workflow and lifecycle probes.
-nREPL integration remains a separate follow-up check.
+nREPL integration now passes finite-load concurrency and shutdown probes.
+Admission and pending-work bounds remain upstream requirements.
 
 Initial result: the real Servo probe passed its mechanism assertions.
 During a 200 ms runtime block, Servo completed 57 turns and painted six frames. The page timer also advanced.
@@ -439,6 +441,11 @@ The final native workflow completed 119 requests and presented 20 frames during 
 Six lifecycle cases passed, including intentional close, runtime error, panic, and unresponsive-call shutdown.
 Both drivers now bound the wait before a worker join.
 The [native bridge report](native-async-bridge.md) records the contract and process-exit fallback.
+
+The nREPL continuation uses `spawn_pending` on the runtime's existing LocalSet.
+Mock, software Servo, and native Servo passed cross-session browser calls, session order, interruption, redefinition, and shutdown.
+The native window presented 17 frames during an infinite Clojure evaluation in another session.
+The [nREPL report](nrepl-runtime.md) records finite-load measurements and the missing admission bounds.
 
 Phase 0 exit: D1 ownership review, E2, and E3 complete; E4, E5, E6 either passed or have a recorded fallback; the
 ADRs for D1–D6 written with final choices.
@@ -687,7 +694,8 @@ than its author, without changes to Rust.
    Compare multiprocess Servo under Q5. Repeat on Linux as follow-up work.
 3. **Initial mechanism passed:** E7 runs async user code across channels to real Servo on a separate thread.
    Native window wakeups and bounded shutdown probes now pass.
-   Complete runtime-thread nREPL integration, bounded admission, and product event policies.
+   Runtime-thread nREPL integration now passes finite-load probes.
+   Complete upstream admission and pending-work bounds, idle GC scheduling, and product event policies.
    The new pin corrects the nested-await defect and uses notification-based waits.
    Resolve the remaining busy GC service, CLJ-ASYNC-004, before efficient idle operation.
    Use the current [gap register](clojurust-async-gaps.md) for regression commands and measurements.
@@ -698,7 +706,7 @@ than its author, without changes to Rust.
    The initial app will use one visible webview per window until E5 passes.
    E6 confirms interruption and recovery with the existing upstream API.
    Its blocking and queue probes remain evidence for runtime scheduling limits.
-   Complete the E6 policy, integrate `spawn_pending`, and bound admission under CLJ-ASYNC-003.
+   Complete the E6 policy and the admission and pending-work bounds under CLJ-ASYNC-003.
    Hold the Phase 0 exit review and amend this plan.
 6. Begin Phase 1 with deliverables 1–3 after the D1 ownership review, E2, and E3 pass. The current skeleton does
    not implement the native browser API or claim the Phase 1 acceptance criteria.

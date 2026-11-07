@@ -3,6 +3,7 @@ mod bridge;
 mod engine;
 #[cfg(feature = "servo")]
 mod native;
+mod nrepl;
 
 use anyhow::{Result, ensure};
 use bridge::{Command, Data, EventSink};
@@ -13,6 +14,7 @@ use cljrs_runtime::{
 };
 use std::{
     cell::RefCell,
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     thread,
@@ -37,6 +39,33 @@ enum Program {
     Fail,
     Panic,
     Unresponsive,
+    Nrepl,
+}
+
+struct RuntimeConfig {
+    program: Program,
+    real_servo: bool,
+    port_file: Option<PathBuf>,
+}
+
+fn port_file(args: &[String]) -> Result<Option<PathBuf>> {
+    args.iter()
+        .position(|arg| arg == "--nrepl-port-file")
+        .map(|index| {
+            ensure!(
+                args.iter().any(|arg| arg == "--nrepl"),
+                "Port file requires --nrepl"
+            );
+            let path = args
+                .get(index + 1)
+                .ok_or_else(|| anyhow::anyhow!("Missing nREPL port file path"))?;
+            ensure!(
+                !path.is_empty() && !path.starts_with("--"),
+                "Missing nREPL port file path"
+            );
+            Ok(PathBuf::from(path))
+        })
+        .transpose()
 }
 
 fn runtime_thread(
@@ -45,13 +74,18 @@ fn runtime_thread(
     wake: bridge::Wake,
     cancel: oneshot::Receiver<()>,
     interrupted: Arc<InterruptFlag>,
-    program_mode: Program,
-    real_servo: bool,
+    config: RuntimeConfig,
 ) -> Result<Report> {
+    let RuntimeConfig {
+        program: program_mode,
+        real_servo,
+        port_file,
+    } = config;
     let executor = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()?;
     let local = tokio::task::LocalSet::new();
+    let local_ref = &local;
     executor.block_on(local.run_until(async move {
         let started = Instant::now();
         let mut host = RuntimeHost::new(ExecutionMode::Tiered)?;
@@ -61,40 +95,83 @@ fn runtime_thread(
         if matches!(program_mode, Program::IdleExecutor | Program::IdleBaseline) {
             // No Clojure future or fiber: isolate init's background service.
             tokio::time::sleep(Duration::from_secs(1)).await;
-            return Ok(Report { samples: Vec::new(), stall_turns: "not run".into(), elapsed: started.elapsed() });
+            return Ok(Report {
+                samples: Vec::new(),
+                stall_turns: "not run".into(),
+                elapsed: started.elapsed(),
+            });
         }
         let samples = Rc::new(RefCell::new(Vec::new()));
-        bridge::install(&host.env().globals, sender, events, wake, samples.clone(), real_servo);
+        bridge::install(
+            &host.env().globals,
+            sender,
+            events,
+            wake,
+            samples.clone(),
+            real_servo,
+        );
         let _interrupt = cljrs_runtime::env::gas::InterruptGuard::install(interrupted);
         let source = if program_mode == Program::Idle {
             "(require '[clojure.core.async :refer [timeout]])
              (defn ^:async idle! [] (await (timeout 1000)) :async-bridge-passed) (idle!)"
-        } else if program_mode == Program::AwaitKeyword { include_str!("../await-keyword.cljrs") }
-        else if program_mode == Program::Interactive { include_str!("../native.cljrs") }
-        else if program_mode == Program::Fail { "(throw (ex-info \"Injected runtime failure\" {}))" }
-        else if program_mode == Program::Panic { panic!("Injected runtime panic"); }
-        else if program_mode == Program::Unresponsive {
+        } else if program_mode == Program::AwaitKeyword {
+            include_str!("../await-keyword.cljrs")
+        } else if program_mode == Program::Interactive {
+            include_str!("../native.cljrs")
+        } else if program_mode == Program::Nrepl {
+            include_str!("../nrepl.cljrs")
+        } else if program_mode == Program::Fail {
+            "(throw (ex-info \"Injected runtime failure\" {}))"
+        } else if program_mode == Program::Panic {
+            panic!("Injected runtime panic");
+        } else if program_mode == Program::Unresponsive {
             // Probe an uncooperative native extension, not a fiber-aware sleep.
             std::thread::sleep(Duration::from_secs(5));
             return Err(anyhow::anyhow!("Unresponsive probe returned"));
-        }
-        else { include_str!("../user.cljrs") };
+        } else {
+            include_str!("../user.cljrs")
+        };
         let program = host.eval(source)?;
         let root = gc_roots::root_value(&program);
         host.collect();
-        let result = tokio::select! {
-            result = cljrs_async::await_value(program) => result.map_err(|error| anyhow::anyhow!("{error}"))?,
-            _ = cancel => anyhow::bail!("Engine stopped before the program completed"),
+        let mut nrepl = if program_mode == Program::Nrepl {
+            Some(nrepl::Driver::start(host.env().globals.clone(), port_file)?)
+        } else {
+            None
         };
-        ensure!(result.to_string() == ":async-bridge-passed", "Unexpected Clojure result: {result}");
+        let mut program = Box::pin(cljrs_async::await_value(program));
+        let mut cancel = cancel;
+        let result = loop {
+            tokio::select! {
+                result = &mut program => break result.map_err(|error| anyhow::anyhow!("{error}"))?,
+                _ = &mut cancel => anyhow::bail!("Engine stopped before the program completed"),
+                _ = nrepl::next_turn(&mut nrepl) => {
+                    if let Some(driver) = &mut nrepl { driver.admit(local_ref)?; }
+                }
+            }
+        };
+        ensure!(
+            result.to_string() == ":async-bridge-passed",
+            "Unexpected Clojure result: {result}"
+        );
+        drop(program);
         drop(root);
-        let stall_turns = if program_mode != Program::Example { "not run".into() } else {
+        let stall_turns = if program_mode != Program::Example {
+            "not run".into()
+        } else {
             let program = host.eval(include_str!("../stall.cljrs"))?;
             let _root = gc_roots::root_value(&program);
-            cljrs_async::await_value(program).await.map_err(|error| anyhow::anyhow!("{error}"))?.to_string()
+            cljrs_async::await_value(program)
+                .await
+                .map_err(|error| anyhow::anyhow!("{error}"))?
+                .to_string()
         };
         let samples = samples.borrow().clone();
-        Ok(Report { samples, stall_turns, elapsed: started.elapsed() })
+        Ok(Report {
+            samples,
+            stall_turns,
+            elapsed: started.elapsed(),
+        })
     }))
 }
 
@@ -118,8 +195,7 @@ impl Worker {
         sender: mpsc::Sender<bridge::Request>,
         events: mpsc::Receiver<bridge::Event>,
         wake: bridge::Wake,
-        program: Program,
-        real_servo: bool,
+        config: RuntimeConfig,
     ) -> Result<Self> {
         let (cancel, cancelled) = oneshot::channel();
         let interrupt = Arc::new(InterruptFlag::new(false));
@@ -136,15 +212,7 @@ impl Worker {
                     }
                 }
                 let _wake = WakeOnDrop(stopped);
-                runtime_thread(
-                    sender,
-                    events,
-                    wake,
-                    cancelled,
-                    worker_interrupt,
-                    program,
-                    real_servo,
-                )
+                runtime_thread(sender, events, wake, cancelled, worker_interrupt, config)
             })?;
         Ok(Self {
             thread: Some(thread),
@@ -191,8 +259,9 @@ fn main() -> Result<()> {
     let idle_executor = args.iter().any(|arg| arg == "--idle-executor");
     let idle_baseline = args.iter().any(|arg| arg == "--idle-baseline");
     let keyword_probe = args.iter().any(|arg| arg == "--await-keyword-probe");
+    let nrepl = args.iter().any(|arg| arg == "--nrepl");
     ensure!(
-        [idle, idle_executor, idle_baseline, keyword_probe]
+        [idle, idle_executor, idle_baseline, keyword_probe, nrepl]
             .iter()
             .filter(|&&enabled| enabled)
             .count()
@@ -207,6 +276,8 @@ fn main() -> Result<()> {
         Program::IdleBaseline
     } else if keyword_probe {
         Program::AwaitKeyword
+    } else if nrepl {
+        Program::Nrepl
     } else {
         Program::Example
     };
@@ -220,8 +291,11 @@ fn main() -> Result<()> {
         sender,
         receiver,
         Arc::new(move || engine_thread.unpark()),
-        program,
-        real_servo,
+        RuntimeConfig {
+            program,
+            real_servo,
+            port_file: port_file(&args)?,
+        },
     )?;
     let started = Instant::now();
     let mut turns = 0;

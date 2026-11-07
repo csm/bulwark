@@ -25,7 +25,9 @@ The [async gap register](../clojurust-async-gaps.md) defines the required change
 The native window probe now uses proxy wakeups and bounds shutdown before a worker join.
 Its six lifecycle cases cover completion, intentional close, runtime error, panic, and an unresponsive native call.
 The [native bridge report](../native-async-bridge.md) records the results and process-exit fallback.
-nREPL and product event overload policies remain open.
+E7 now admits nREPL evaluations onto runtime fibers and passes finite-load concurrency and shutdown probes.
+The [nREPL integration report](../nrepl-runtime.md) records those results.
+Admission limits, pending-work limits, and product event overload policies remain open.
 
 E1 and E6 remain evidence for the earlier shared-thread proposal.
 That proposal allowed synchronous user code to stop rendering.

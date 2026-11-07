@@ -235,6 +235,20 @@ The six native cases passed on macOS, including completion, intentional close, e
 The final native workflow completed 119 requests and presented 20 frames during a 200 ms runtime stall.
 The [native bridge report](../docs/native-async-bridge.md) records the contract, timing limits, and pending manual E7 input inspection.
 
+For runtime-thread nREPL concurrency and shutdown, run:
+
+```sh
+python3 experiments/run_e7_nrepl.py
+python3 experiments/run_e7_nrepl.py --servo
+python3 experiments/run_e7_nrepl.py --native
+python3 experiments/run_e7_nrepl.py --native --close-window
+```
+
+The mock command needs the default E7 build. The remaining commands need `--features servo`.
+All four modes passed on macOS.
+The probes assert cross-session engine calls, same-session order, interruption, redefinition, and shutdown with a parked evaluation.
+The [nREPL report](../docs/nrepl-runtime.md) records finite-load measurements and the remaining upstream admission requirements.
+
 The runtime owns a continuously driven LocalSet on its dedicated thread.
 Native operations return futures backed by bounded requests and one-shot replies.
 The main thread owns Servo and sends lifecycle events through a bounded queue.
