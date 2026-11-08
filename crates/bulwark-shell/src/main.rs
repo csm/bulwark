@@ -1,3 +1,6 @@
+#[cfg(feature = "native")]
+mod native;
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--headless-smoke"] {
@@ -9,9 +12,17 @@ fn main() -> anyhow::Result<()> {
         #[cfg(not(feature = "servo"))]
         anyhow::bail!("--servo-smoke requires --features servo");
     }
+    #[cfg(feature = "native")]
+    return native::run(&args);
+    #[cfg(not(feature = "native"))]
+    bootstrap(&args)
+}
+
+#[cfg(not(feature = "native"))]
+fn bootstrap(args: &[String]) -> anyhow::Result<()> {
     anyhow::ensure!(
         args.is_empty(),
-        "Usage: bulwark-shell [--headless-smoke | --servo-smoke]"
+        "Usage: bulwark-shell [--headless-smoke | --servo-smoke]; use --features native to open a window"
     );
     let mut host = bulwark_runtime::RuntimeHost::new(cljrs_runtime::ExecutionMode::Tiered)?;
     println!("{}", host.eval("(bulwark.core/bootstrap-status)")?);

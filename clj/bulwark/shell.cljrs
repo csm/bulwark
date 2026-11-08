@@ -1,0 +1,27 @@
+(ns bulwark.shell
+  (:require [bulwark.native :as native]
+            [clojure.core.async :refer [timeout]]))
+
+(defn value!
+  "Returns a successful native value, or raises an error containing the reply."
+  [reply]
+  (when-not (:ok reply) (throw (ex-info "Native browser operation failed" reply)))
+  (:value reply))
+
+(defn ^:async dispatch!
+  "Displays page titles and native key events in the echo area."
+  [event]
+  (case (:event/type event)
+    :page/title-changed (await (native/set-echo! (:title event)))
+    :page/crashed (await (native/set-echo! (str "Page crashed: " (:message event))))
+    :input/key (when (:pressed event)
+                 (await (native/set-echo! (str "Key: " (:key event)))))
+    nil))
+
+(defn ^:async run!
+  "Opens the initial page and keeps the runtime alive until native shutdown."
+  [url]
+  (alter-var-root #'bulwark.core/dispatch! (constantly dispatch!))
+  (value! (await (native/set-echo! "Bulwark")))
+  (value! (await (native/webview-create url)))
+  (loop [] (await (timeout 60000)) (recur)))

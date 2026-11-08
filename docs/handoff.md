@@ -1,18 +1,42 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `15610d3`, followed by the Phase 1 Servo adapter continuation on 2026-11-07.
+Snapshot: Bulwark `main` at `7660535`, followed by the Phase 1 native shell continuation on 2026-11-07.
 Fetching `origin/main` and merging with `--ff-only` reported that this worktree was already up to date.
-Working branch: `codex/phase-1`. No remote push or pull request is part of this continuation.
+This managed worktree has a detached HEAD. No remote push or pull request is part of this continuation.
 
 ## Current state
 
 Phase 0 is complete. The [exit review](phase-0-exit.md) accepts the architecture and records all gate dispositions.
 Phase 1 foundation is implemented. The default executable prints `{:phase 1, :status :foundation}` and exits.
-The product shell does not open a browser window yet.
+The `native` feature opens a browser window with Servo content and an egui echo area.
 The product bridge and dedicated runtime worker now run with a mock engine through `cargo run --locked -- --headless-smoke`.
 The [foundation report](phase-1-foundation.md) records the native API, coverage, and remaining integration work.
 The product Servo adapter now supports software rendering through `cargo run --locked --features servo -- --servo-smoke`.
-Native window and input mechanisms remain in the standalone experiments.
+The product shell now includes the native window and input mechanisms.
+The [native checkpoint](phase-1-native.md) records the implementation, commands, and remaining interactive checks.
+
+## Phase 1 native continuation
+
+Run `cargo run --locked --features native -- https://servo.org` to open the product window.
+The native shell uses one offscreen Servo surface above a 28-pixel logical echo area.
+It composites that surface and egui before one native presentation.
+The existing product bridge carries Clojure echo updates and ordered key events.
+The embedded `bulwark.shell` namespace owns initial view creation and echo policy.
+
+The shell handles pointer, button, wheel, key, resize, focus, and scale events.
+It preserves button ownership across the page/chrome boundary and coalesces repeated frame wakes.
+New views inherit scale and focus. Native exposure events can force a repaint.
+Shutdown retains the product admission, invalidation, cancellation, and two-second join contract.
+
+The five cases in `experiments/run_product_native.py` passed locally.
+The captured native frame showed the local page and the Clojure echo text together.
+The runner also covers parked close, runtime failure, dispatcher failure, and native quit.
+The Mac was locked, so interactive typing, clicking, scrolling, resize, and close checks remain pending.
+The smoke flushes a final diagnostic frame before teardown to handle suppressed macOS redraw callbacks.
+Its result does not establish interactive display behavior.
+
+CI now compiles the native feature and runs its unit tests and process runner under Xvfb.
+Remote CI results remain uninspected.
 
 Clojurust fixes are now on upstream `main` at `b847a29b46e2b6b3fbe624f6d2394cb656ea5882`.
 The workspace dependency pin and lockfile now use that revision for all ten Clojurust packages.
@@ -120,13 +144,13 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 ## Next work, in order
 
 1. Run the product Servo contract tests and software smoke on Linux CI.
-2. Integrate the native window, input, presentation, and egui echo area with the product adapter and bridge.
+2. Complete interactive native checks on an unlocked Mac.
 3. Add the remaining Phase 1 command, keymap, hooks, and browser behavior.
 4. Preserve budgeted nREPL admission and overload regressions in the product integration.
 5. Run the Phase 1 acceptance checks against the product executable.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
-Native shell integration remains open.
+The native shell is implemented. Interactive product checks remain open.
 The upstream output limit permits one oversized reply when its connection queue is empty.
 Connection count, session count, retained values, active language tasks, and the language heap remain outside these bounds.
 A disconnected client can leave its evaluation active until completion or interruption.
@@ -135,7 +159,7 @@ Neither upstream limits nor product payload limits imply a bound on total proces
 E1 and E6 preserve the historical shared-thread comparison. Their old frame deadlines do not gate the separate-thread design.
 Raw blocking Rust calls can still stop the runtime thread. Evaluator safepoints cannot preempt arbitrary native code.
 Forced process exit does not establish runtime cleanup or rollback of browser side effects.
-IME, clipboard, display-scale transitions, Linux native behavior, and multiprocess Servo remain follow-up work.
+IME, clipboard, interactive display-scale transitions, Linux native behavior, and multiprocess Servo remain follow-up work.
 The initial product uses one visible webview per window until E5 passes.
 
 ## Resume commands
@@ -200,4 +224,8 @@ The Python runners impose independent process deadlines.
 - `clj/tests/foundation.cljrs`: product integration assertions.
 - `crates/bulwark-engine-servo/src/engine.rs`: product Servo adapter, deferred evaluations, lifecycle events, and frame painting.
 - `clj/tests/servo.cljrs`: software Servo integration assertions against a local HTML fixture.
-- `crates/bulwark-shell/src/main.rs`: bootstrap, mock smoke, and software Servo driver. It still has no native window.
+- `crates/bulwark-shell/src/main.rs`: bootstrap, mock smoke, software Servo driver, and native feature entry point.
+- `crates/bulwark-shell/src/native/`: winit host, input routing, Servo/egui composition, and bounded shutdown.
+- `clj/bulwark/shell.cljrs`: initial view creation and default echo dispatcher.
+- `clj/tests/native.cljrs`: native smoke program.
+- `experiments/run_product_native.py`: process-bounded product rendering and lifecycle checks.

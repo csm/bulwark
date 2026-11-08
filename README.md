@@ -2,7 +2,7 @@
 
 Bulwark is a programmable browser built with Rust, Servo, and Clojurust.
 Phase 0 is complete. The native host and runtime experiments now have an accepted architecture.
-Phase 1 is in progress. The product now has a bounded engine/runtime bridge, a Servo adapter, and headless integration checks.
+Phase 1 is in progress. The product now has a bounded engine/runtime bridge, a native Servo window, and an egui echo area.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -38,7 +38,26 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    Clojure assertions cover real JavaScript, title events, navigation history, and stale handles.
    The host also requires a painted frame and a joined worker.
    The adapter currently accepts one live webview per context.
-   Native window integration and egui chrome remain the next steps.
+   Open a native browser window:
+
+   ```sh
+   cargo run --locked --features native -- https://servo.org
+   ```
+
+   Without a URL, the native shell opens `about:blank`.
+   Clojure displays page titles and key events in the egui echo area.
+   The native shell forwards pointer, wheel, and keyboard input to Servo.
+   It reserves the echo area outside the page viewport.
+
+   Run the native product checks:
+
+   ```sh
+   cargo build --locked --features native
+   python3 experiments/run_product_native.py
+   ```
+
+   The checks cover page rendering, echo updates, parked shutdown, runtime errors, dispatcher errors, and native quit.
+   The [native shell checkpoint](docs/phase-1-native.md) records the implementation and validation limits.
 
 2. Run the callback and GC experiment:
 
@@ -109,6 +128,7 @@ The default workspace build excludes Servo compilation.
 
 - [Phase 0 exit review](docs/phase-0-exit.md)
 - [Phase 1 foundation checkpoint and native API](docs/phase-1-foundation.md)
+- [Phase 1 native window and egui checkpoint](docs/phase-1-native.md)
 - [Development handoff and next steps](docs/handoff.md)
 - [Vision](docs/bulwark.md)
 - [Development plan and current progress](docs/development-plan.md)

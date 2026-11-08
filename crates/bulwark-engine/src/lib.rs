@@ -218,7 +218,7 @@ pub struct Event {
 
 /// Main-thread mechanism interface. Implementations settle requests immediately
 /// or retain them until a callback; tick must clean up cancelled operations.
-/// Window/input/presentation integration will extend this boundary with the native shell.
+/// The native shell uses the concrete adapter for thread-affine input and presentation.
 pub trait Engine {
     fn handle(&mut self, request: bridge::Request);
     fn tick(&mut self);

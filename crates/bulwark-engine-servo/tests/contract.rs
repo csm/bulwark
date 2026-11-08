@@ -24,6 +24,7 @@ fn main() {
         .unwrap();
     let (runtime, mut endpoint) = bridge::channel(Arc::new(|| {}));
     let mut engine = ServoEngine::software(endpoint.events.clone(), Arc::new(|| {})).unwrap();
+    engine.set_window_state(2.0, false);
     let client = runtime.client;
     let created = admit(
         &client,
@@ -36,6 +37,20 @@ fn main() {
     let Data::Handle(view) = executor.block_on(created.wait()).unwrap() else {
         panic!("Expected handle")
     };
+    assert_eq!(
+        engine
+            .active_webview()
+            .unwrap()
+            .1
+            .hidpi_scale_factor()
+            .get(),
+        2.0
+    );
+    assert!(!engine.active_webview().unwrap().1.focused());
+    assert!(
+        engine.needs_repaint(),
+        "A new native view needs an initial paint"
+    );
     let extra = admit(
         &client,
         &mut endpoint,
@@ -77,6 +92,22 @@ fn main() {
         panic!("Expected handle")
     };
     assert!(replacement > view);
+    assert_eq!(
+        engine
+            .active_webview()
+            .unwrap()
+            .1
+            .hidpi_scale_factor()
+            .get(),
+        2.0
+    );
+    engine.set_window_state(1.0, true);
+    let (_, native_view) = engine.active_webview().unwrap();
+    assert!(native_view.focused());
+    assert_eq!(native_view.hidpi_scale_factor().get(), 1.0);
+    native_view.resize((800, 500).into());
+    assert_eq!(native_view.size(), euclid::Size2D::new(800.0, 500.0));
+    drop(native_view);
 
     let cancelled = admit(
         &client,
@@ -117,6 +148,7 @@ fn main() {
         },
     );
     engine.shutdown();
+    assert!(engine.active_webview().is_none());
     assert_eq!(executor.block_on(pending.wait()), Err(Fault::ShuttingDown));
     assert_eq!(client.unfinished(), 0);
     let stopped = admit(

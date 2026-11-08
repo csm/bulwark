@@ -6,6 +6,7 @@ publish.workspace = true
 
 [features]
 servo = ["dep:bulwark-engine-servo", "bulwark-engine-servo/servo", "dep:url"]
+native = ["servo", "dep:servo", "dep:winit", "dep:euclid", "dep:egui", "dep:egui_glow"]
 
 [dependencies]
 anyhow.workspace = true
@@ -14,3 +15,8 @@ bulwark-runtime.workspace = true
 cljrs-runtime.workspace = true
 bulwark-engine-servo = { path = "../bulwark-engine-servo", optional = true }
 url = { workspace = true, optional = true }
+servo = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
+euclid = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+egui_glow = { workspace = true, optional = true }

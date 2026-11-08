@@ -149,3 +149,57 @@ fn dispatcher_error_stops_the_program_and_wakes_the_host() {
             .contains("handler failure")
     );
 }
+
+#[test]
+fn embedded_shell_opens_a_view_and_displays_native_key_events() {
+    use bulwark_engine::{Command, Data, EventKind, KeyInput};
+    let (runtime, mut endpoint) = bridge::channel(Arc::new(|| {}));
+    let mut engine = MockEngine::new(endpoint.events.clone());
+    let mut worker = Worker::spawn(
+        runtime,
+        "(require 'bulwark.shell) (bulwark.shell/run! \"about:blank\")".into(),
+    )
+    .unwrap();
+    let mut sent_key = false;
+    let mut opened = false;
+    let mut received_echo = false;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !received_echo && !worker.finished() && Instant::now() < deadline {
+        endpoint.admit(|request| match &request.command {
+            Command::SetEcho(text) => {
+                received_echo |= text == "Key: z";
+                request.complete(Ok(Data::Nil));
+            }
+            Command::Create { .. } => {
+                engine.handle(request);
+                opened = true;
+            }
+            _ => engine.handle(request),
+        });
+        engine.tick();
+        if opened && !sent_key {
+            endpoint
+                .events
+                .emit(
+                    bulwark_engine::Handle(7),
+                    EventKind::KeyInput(KeyInput {
+                        key: "z".into(),
+                        control: false,
+                        alt: false,
+                        shift: false,
+                        meta: false,
+                        pressed: true,
+                    }),
+                )
+                .unwrap();
+            sent_key = true;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    endpoint.stop_admission();
+    engine.shutdown();
+    worker.stop();
+    let result = wait(&mut worker);
+    assert!(opened, "Shell did not create a view: {result:?}");
+    assert!(received_echo, "Shell did not echo the key: {result:?}");
+}

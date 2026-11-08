@@ -7,7 +7,8 @@ Servo and Clojurust pins are unchanged from the Phase 0 exit review.
 
 This checkpoint begins deliverables 1–3 from the [development plan](development-plan.md).
 It promotes the data boundary, bounded transport, native registry, and runtime ownership into product crates.
-The Servo adapter now implements this contract. The native window and egui chrome remain the next integration work.
+The Servo adapter now implements this contract.
+The [native continuation](phase-1-native.md) adds the native window, input, presentation, and egui echo area.
 No Phase 1 browser acceptance criterion is complete yet.
 
 ## Run the product check
@@ -141,7 +142,7 @@ Remote CI results remain uninspected. A8 remains open until the required CI and 
 
 ## Next integration
 
-Connect the native window, input, presentation, and egui chrome to the product adapter.
+The [native continuation](phase-1-native.md) connects the window, input, presentation, and egui echo area to the product adapter.
 Preserve the Phase 0 single-visible-view fallback and bounded worker shutdown.
 Add commands, keymaps, hooks, opt-in loopback nREPL, and the Clojure browser behavior after that connection.
 The product does not start an nREPL listener yet. Its budgeted admission remains proven in E7.

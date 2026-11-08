@@ -1,0 +1,18 @@
+(ns bulwark.shell)
+
+(defn ^:async native-smoke! []
+  (alter-var-root #'bulwark.core/dispatch! (constantly dispatch!))
+  (let [view (value! (await (native/webview-create user/initial-url)))]
+    (loop []
+      (when-not (= :complete (:load-status (value! (await (native/webview-info view)))))
+        (await (timeout 10))
+        (recur)))
+    (when-not (= "Product Servo integration"
+                 (value! (await (native/eval-js view "document.querySelector('h1').textContent"))))
+      (throw (ex-info "Native fixture did not load" {})))
+    (value! (await (native/set-echo! "Native chrome smoke ready")))
+    ;; Keep the page and echo visible while the native host presents both.
+    (await (timeout 2000)))
+  :native-passed)
+
+(native-smoke!)

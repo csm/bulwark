@@ -50,6 +50,13 @@ impl Delegate {
         self.state.revoked.set(true);
         (self.wake)();
     }
+    fn frame_ready(&self) {
+        // Servo can repeat this callback until paint. Wake only on a transition
+        // so an occluded native window does not spin on duplicate proxy events.
+        if !self.state.revoked.get() && !self.state.dirty.replace(true) {
+            (self.wake)();
+        }
+    }
 }
 impl WebViewDelegate for Delegate {
     fn notify_url_changed(&self, _: WebView, url: url::Url) {
@@ -74,10 +81,7 @@ impl WebViewDelegate for Delegate {
         self.revoke(EventKind::Crashed(reason));
     }
     fn notify_new_frame_ready(&self, _: WebView) {
-        if !self.state.revoked.get() {
-            self.state.dirty.set(true);
-            (self.wake)();
-        }
+        self.frame_ready();
     }
 }
 
@@ -103,6 +107,8 @@ pub struct ServoEngine {
     wake: Wake,
     stopped: bool,
     frames: u64,
+    scale: f32,
+    focused: bool,
 }
 impl ServoEngine {
     /// Creates a software surface. The host must drive ticks and call paint.
@@ -134,6 +140,8 @@ impl ServoEngine {
             wake,
             stopped: false,
             frames: 0,
+            scale: 1.0,
+            focused: true,
         })
     }
 
@@ -155,9 +163,13 @@ impl ServoEngine {
             ));
         }
         let handle = self.views.insert_with(|handle| {
-            let state = Rc::new(ViewState::default());
+            let state = Rc::new(ViewState {
+                dirty: Cell::new(true),
+                ..Default::default()
+            });
             let webview = WebViewBuilder::new(&self.servo, self.context.clone())
                 .url(url)
+                .hidpi_scale_factor(euclid::Scale::new(self.scale))
                 .delegate(Rc::new(Delegate {
                     handle,
                     state: state.clone(),
@@ -166,7 +178,7 @@ impl ServoEngine {
                 }))
                 .build();
             webview.show();
-            webview.set_focused(true);
+            webview.set_focused(self.focused);
             View { webview, state }
         })?;
         Ok(Data::Handle(handle))
@@ -194,17 +206,57 @@ impl ServoEngine {
         }
     }
 
-    /// Paints only a dirty, live view; returns whether a frame was presented.
-    pub fn paint(&mut self) -> bool {
+    /// Native host access on the engine thread; no Servo value crosses the runtime bridge.
+    pub fn active_webview(&self) -> Option<(Handle, WebView)> {
+        self.views.iter().find_map(|(handle, view)| {
+            (!view.state.revoked.get()).then(|| (handle, view.webview.clone()))
+        })
+    }
+
+    /// Whether a live view needs a new frame, including its initial paint.
+    pub fn needs_repaint(&self) -> bool {
+        self.views
+            .iter()
+            .any(|(_, view)| !view.state.revoked.get() && view.state.dirty.get())
+    }
+
+    /// Persist native scale and focus so replacement views inherit the window state.
+    pub fn set_window_state(&mut self, scale: f32, focused: bool) {
+        if self.scale != scale {
+            self.scale = scale;
+            if let Some((_, view)) = self.active_webview() {
+                view.set_hidpi_scale_factor(euclid::Scale::new(scale));
+            }
+        }
+        if self.focused != focused {
+            self.focused = focused;
+            if let Some((_, view)) = self.active_webview() {
+                view.set_focused(focused);
+            }
+        }
+    }
+
+    /// Paint into the supplied context without presenting the native window.
+    /// The host can composite chrome before its single buffer swap.
+    /// Force repaint for native exposure events even if no new frame is pending.
+    pub fn paint_frame(&mut self, force: bool) -> bool {
         for (_, view) in self.views.iter() {
-            if !view.state.revoked.get() && view.state.dirty.replace(false) {
+            if !view.state.revoked.get() && (view.state.dirty.replace(false) || force) {
                 view.webview.paint();
-                self.context.present();
                 self.frames += 1;
                 return true;
             }
         }
         false
+    }
+
+    /// Paint and present a dirty frame for hosts without chrome.
+    pub fn paint(&mut self) -> bool {
+        let painted = self.paint_frame(false);
+        if painted {
+            self.context.present();
+        }
+        painted
     }
     pub fn frame_count(&self) -> u64 {
         self.frames
@@ -343,6 +395,33 @@ impl Drop for ServoEngine {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn repeated_frame_notifications_wake_once_until_paint_and_never_after_revocation() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (_, endpoint) = bulwark_engine::bridge::channel(Arc::new(|| {}));
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let count = wakes.clone();
+        let delegate = Delegate {
+            handle: Handle(1),
+            state: Rc::default(),
+            events: endpoint.events,
+            wake: Arc::new(move || {
+                count.fetch_add(1, Ordering::Relaxed);
+            }),
+        };
+        delegate.frame_ready();
+        delegate.frame_ready();
+        assert_eq!(wakes.load(Ordering::Relaxed), 1);
+        delegate.state.dirty.set(false);
+        delegate.frame_ready();
+        assert_eq!(wakes.load(Ordering::Relaxed), 2);
+        delegate.state.revoked.set(true);
+        delegate.state.dirty.set(false);
+        delegate.frame_ready();
+        assert_eq!(wakes.load(Ordering::Relaxed), 2);
+        assert!(!delegate.state.dirty.get());
+    }
 
     #[test]
     fn terminal_event_revokes_callbacks_and_suppresses_late_events() {

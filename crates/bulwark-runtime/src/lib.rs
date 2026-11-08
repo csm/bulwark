@@ -43,6 +43,10 @@ impl RuntimeHost {
                 "bulwark.bridge",
                 include_str!("../../../clj/bulwark/bridge.cljrs"),
             )
+            .builtin_source(
+                "bulwark.shell",
+                include_str!("../../../clj/bulwark/shell.cljrs"),
+            )
             .build()
             .map_err(|error| anyhow!("{error}"))?;
         cljrs_stdlib::install(&runtime);
