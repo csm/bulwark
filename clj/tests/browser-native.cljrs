@@ -11,30 +11,49 @@
 
 (def titles (atom []))
 (def reloads (atom 0))
+(def completed-loads (atom 0))
 
 (defn ^:async title-hook! [event]
   (swap! titles conj (:title event))
   (await (browser/set-echo! (:title event))))
 
-(defcommand ^:async reload-twice "Reloads the visible page twice." []
-  (await (browser/reload))
-  (await (browser/reload))
-  (swap! reloads inc))
-
 (defn check! [condition message]
   (when-not condition (throw (ex-info message {}))))
 
+(defn ^:async wait-for! [label predicate]
+  (await (native/log (str "Native browser: waiting for " label)))
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (when-not (predicate)
+        (when (>= (System/currentTimeMillis) deadline)
+          (throw (ex-info (str "Timed out waiting for " label)
+                         {:titles @titles :completed-loads @completed-loads})))
+        (await (timeout 5)) (recur)))))
+
 (defn ^:async wait-title! [title]
-  (loop []
-    (when-not (some (fn [seen] (= title seen)) @titles)
-      (await (timeout 5)) (recur))))
+  (await (wait-for! title (fn [] (some (fn [seen] (= title seen)) @titles)))))
+
+(defn ^:async wait-load! [label previous]
+  (await (wait-for! label (fn [] (> @completed-loads previous)))))
+
+(defcommand ^:async reload-twice "Reloads the visible page twice." []
+  ;; A native reply acknowledges the request, not completion of the new load.
+  ;; Serialize reloads using fresh completion events before editing the document.
+  (doseq [attempt [1 2]]
+    (let [previous @completed-loads]
+      (await (browser/reload))
+      (await (wait-load! (str "reload " attempt) previous))))
+  (swap! reloads inc))
 
 (defn ^:async program! []
   (browser/install!)
   (hooks/add-hook! :page/title-changed :test/title #'title-hook!)
+  (hooks/add-hook! :page/load-status-changed :test/load
+    (fn [event]
+      (when (= :complete (:load-status event)) (swap! completed-loads inc))))
   (let [shell-program (shell/run! user/initial-url)]
-    (loop []
-      (when-not @browser/active-view (await (timeout 5)) (recur)))
+    (await (wait-for! "active view" (fn [] @browser/active-view)))
+    (await (wait-load! "initial load" 0))
     (await (wait-title! "Bulwark Servo fixture"))
     (keymap/bind-key! "C-c r" 'reload-twice)
     (await (core/dispatch! {:event/type :input/key :webview @browser/active-view
@@ -43,19 +62,19 @@
                             :key "r" :pressed true}))
     (check! (= 1 @reloads) "Live command binding did not reload twice")
     (let [view @browser/active-view]
-      (loop []
-        (when-not (= :complete (:load-status (browser/value! (await (native/webview-info view)))))
-          (await (timeout 5)) (recur)))
       (browser/value! (await (native/eval-js view "document.title = 'Clojure history visit'; 'ok'")))
       (await (wait-title! "Clojure history visit"))
       (check! (some (fn [visit] (= "Clojure history visit" (:title visit))) @browser/history)
               "Title hook did not record Clojure history")
-      (await (browser/navigate! "about:blank"))
-      (await (browser/visit-history! 0))
-      (loop []
-        (when-not (= "Bulwark Servo fixture"
-                     (:title (browser/value! (await (native/webview-info view)))))
-          (await (timeout 5)) (recur))))
+      (let [previous @completed-loads]
+        (await (browser/navigate! "about:blank"))
+        (await (wait-load! "navigation away" previous)))
+      (let [previous @completed-loads]
+        (await (browser/visit-history! 0))
+        (await (wait-load! "history revisit" previous)))
+      (check! (= "Bulwark Servo fixture"
+                 (:title (browser/value! (await (native/webview-info view)))))
+              "History revisit did not restore the fixture title"))
     (await (browser/history-list))
     (await (native/log "Native Clojure commands and history passed"))
     (await (timeout 200)))

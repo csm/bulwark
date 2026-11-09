@@ -98,4 +98,9 @@ The [previous CI run](https://github.com/csm/bulwark/actions/runs/42580601137) p
 Its Servo job reached the 30-minute deadline during another SpiderMonkey compilation.
 The workflow now uses one native feature configuration for product Servo checks and a 60-minute job deadline.
 Both runtime jobs run the product nREPL suite. The Linux Servo job also runs the native nREPL suite.
-Remote results for these changes remain pending.
+The [first branch CI run](https://github.com/csm/bulwark/actions/runs/42675768819) passed both runtime jobs, including the mock nREPL suite.
+Linux Servo Clippy, native unit tests, the Servo contract, and the software smoke also passed.
+The native browser-history case timed out before the native nREPL suite ran.
+The browser-history test now waits for fresh load-completion events after reloads and navigations.
+Its waits report the unfinished phase, and the process runner retains captured diagnostics after a timeout.
+Linux confirmation of this fix remains pending.
