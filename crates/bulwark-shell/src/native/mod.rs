@@ -153,6 +153,7 @@ struct App {
     worker: Option<Worker>,
     proxy: EventLoopProxy<Wake>,
     source: String,
+    nrepl: Option<bulwark_runtime::nrepl::Config>,
     smoke: bool,
     deadline: Option<Instant>,
     close_after: Option<Duration>,
@@ -223,7 +224,12 @@ impl App {
             echo_presented: String::new(),
         });
         self.endpoint = Some(endpoint);
-        self.worker = Some(Worker::spawn(runtime, self.source.clone())?);
+        self.worker = Some(Worker::spawn_configured(
+            runtime,
+            self.source.clone(),
+            cljrs_runtime::ExecutionMode::Tiered,
+            self.nrepl.take(),
+        )?);
         self.close_at = self.close_after.map(|duration| Instant::now() + duration);
         println!("Bulwark native: window-ready");
         self.surface.as_mut().unwrap().layout();
@@ -457,7 +463,7 @@ impl ApplicationHandler<Wake> for App {
     }
 }
 
-pub fn run(args: &[String]) -> Result<()> {
+pub fn run(args: &[String], nrepl: Option<bulwark_runtime::nrepl::Config>) -> Result<()> {
     let smoke = args.iter().any(|arg| arg == "--native-smoke");
     let mut initial = None;
     let mut script = None;
@@ -526,6 +532,7 @@ pub fn run(args: &[String]) -> Result<()> {
         worker: None,
         proxy: event_loop.create_proxy(),
         source,
+        nrepl,
         smoke,
         deadline: smoke.then(|| Instant::now() + Duration::from_secs(30)),
         close_after,

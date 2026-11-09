@@ -86,18 +86,18 @@ def parked_eval(client, request_id):
     client.started(request_id, "E7-parked")
 
 
-def overload_probe(a, b, controller):
+def overload_probe(a, b, controller, namespace=NS):
     # Parked and queued jobs must retain their slots, even after host admission.
     parked_eval(a, "overload-a")
     parked_eval(b, "overload-b")
     for index in range(23):
-        a.send(f"queued-a-{index}", op="eval", code=f"(swap! {NS}/order conj -1)")
+        a.send(f"queued-a-{index}", op="eval", code=f"(swap! {namespace}/order conj -1)")
     a.send("session-overflow", op="eval", code="42")
     a.collect("session-overflow", overloaded=True)
     # A different session still reaches the engine with the first session full.
-    controller.expect(f'({NS}/eval-js! "\\\"overload-peer\\\"")', '"overload-peer"')
+    controller.expect(f'({namespace}/eval-js! "\\\"overload-peer\\\"")', '"overload-peer"')
     for index in range(7):
-        b.send(f"queued-b-{index}", op="eval", code=f"(swap! {NS}/order conj -1)")
+        b.send(f"queued-b-{index}", op="eval", code=f"(swap! {namespace}/order conj -1)")
     # This response is a network-order barrier after b's seven submissions.
     b.request(op="describe")
     controller.send("global-overflow", op="eval", code="42")
@@ -113,7 +113,7 @@ def overload_probe(a, b, controller):
         b.collect(f"queued-b-{index}", interrupted=True)
     a.expect("(+ 20 22)", "42")
     b.expect("(+ 20 22)", "42")
-    controller.expect(f"@{NS}/order", "[]")
+    controller.expect(f"@{namespace}/order", "[]")
     return {"session_overload_refused": True, "global_overload_refused": True,
             "interrupt_under_overload": True, "capacity_recovered": True}
 

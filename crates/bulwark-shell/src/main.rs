@@ -1,21 +1,50 @@
 #[cfg(feature = "native")]
 mod native;
+mod options;
 
 fn main() -> anyhow::Result<()> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
+    let (args, nrepl) = options::parse(std::env::args().skip(1))?;
+    if args == ["--nrepl-smoke"] {
+        anyhow::ensure!(nrepl.is_some(), "--nrepl-smoke requires --nrepl");
+        return nrepl_smoke(nrepl);
+    }
     if args == ["--headless-smoke"] {
+        anyhow::ensure!(nrepl.is_none(), "Use --nrepl-smoke for nREPL checks");
         return headless_smoke();
     }
     if args == ["--servo-smoke"] {
+        anyhow::ensure!(nrepl.is_none(), "Use the native shell for Servo nREPL");
         #[cfg(feature = "servo")]
         return servo_smoke();
         #[cfg(not(feature = "servo"))]
         anyhow::bail!("--servo-smoke requires --features servo");
     }
     #[cfg(feature = "native")]
-    return native::run(&args);
+    return native::run(&args, nrepl);
     #[cfg(not(feature = "native"))]
-    bootstrap(&args)
+    {
+        anyhow::ensure!(
+            nrepl.is_none(),
+            "--nrepl requires --features native or --nrepl-smoke"
+        );
+        bootstrap(&args)
+    }
+}
+
+fn nrepl_smoke(nrepl: Option<bulwark_runtime::nrepl::Config>) -> anyhow::Result<()> {
+    let report = run_headless(
+        include_str!("../../../clj/tests/nrepl.cljrs").into(),
+        |events, _| Ok(bulwark_engine::mock::MockEngine::new(events)),
+        |_| {},
+        nrepl,
+    )?;
+    anyhow::ensure!(
+        report.result == ":nrepl-passed",
+        "Unexpected nREPL smoke result: {}",
+        report.result
+    );
+    println!("Bulwark nREPL smoke: shutdown=joined");
+    Ok(())
 }
 
 #[cfg(not(feature = "native"))]
@@ -35,6 +64,7 @@ fn headless_smoke() -> anyhow::Result<()> {
         include_str!("../../../clj/tests/foundation.cljrs").into(),
         |events, _| Ok(bulwark_engine::mock::MockEngine::new(events)),
         |_| {},
+        None,
     )?;
     anyhow::ensure!(
         report.result == ":foundation-passed",
@@ -72,6 +102,7 @@ fn servo_smoke() -> anyhow::Result<()> {
             engine.paint();
             frames = engine.frame_count();
         },
+        None,
     )?;
     anyhow::ensure!(
         report.result == ":servo-passed",
@@ -102,6 +133,7 @@ fn run_headless<E: bulwark_engine::Engine>(
         bulwark_engine::bridge::Wake,
     ) -> anyhow::Result<E>,
     mut after_tick: impl FnMut(&mut E),
+    nrepl: Option<bulwark_runtime::nrepl::Config>,
 ) -> anyhow::Result<HeadlessReport> {
     use bulwark_engine::{Command, Data, Fault, bridge};
     use std::{
@@ -113,7 +145,12 @@ fn run_headless<E: bulwark_engine::Engine>(
     let wake: bridge::Wake = Arc::new(move || main_thread.unpark());
     let (runtime, mut endpoint) = bridge::channel(wake.clone());
     let mut engine = create(endpoint.events.clone(), wake)?;
-    let mut worker = bulwark_runtime::worker::Worker::spawn(runtime, source)?;
+    let mut worker = bulwark_runtime::worker::Worker::spawn_configured(
+        runtime,
+        source,
+        cljrs_runtime::ExecutionMode::Tiered,
+        nrepl,
+    )?;
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut echo = String::new();
     let host_control = endpoint.control.clone();

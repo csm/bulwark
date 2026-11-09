@@ -1,0 +1,28 @@
+(ns bulwark.test.nrepl
+  (:require [bulwark.shell :as shell]
+            [bulwark.browser :as browser]
+            [bulwark.native :as native]))
+
+(def running (atom true))
+(def ready (atom false))
+(def ticks (atom 0))
+(def order (atom []))
+(def shell-task (shell/run! "about:blank"))
+
+(defn eval-js! [script]
+  (shell/value! (await (native/eval-js @browser/active-view script))))
+
+(defn ^:async run! []
+  (loop []
+    (when-not @browser/active-view (Thread/sleep 5) (recur)))
+  (reset! ready true)
+  (loop []
+    (when (= true @running)
+      (swap! ticks inc)
+      (Thread/sleep 5)
+      (recur)))
+  (when (= :fail @running) (throw (ex-info "Injected nREPL runtime failure" {})))
+  :nrepl-passed)
+
+(in-ns 'user)
+(bulwark.test.nrepl/run!)
