@@ -1,8 +1,8 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `7660535`, followed by the Phase 1 native shell continuation on 2026-11-07.
-Fetching `origin/main` and merging with `--ff-only` reported that this worktree was already up to date.
-This managed worktree has a detached HEAD. No remote push or pull request is part of this continuation.
+Snapshot: Bulwark `main` at `d70e047`, followed by the interactive macOS continuation on 2026-11-08.
+The interactive continuation fixes egui input routing and records the passing native fixture checks.
+This managed worktree has a detached HEAD.
 
 ## Current state
 
@@ -13,7 +13,7 @@ The product bridge and dedicated runtime worker now run with a mock engine throu
 The [foundation report](phase-1-foundation.md) records the native API, coverage, and remaining integration work.
 The product Servo adapter now supports software rendering through `cargo run --locked --features servo -- --servo-smoke`.
 The product shell now includes the native window and input mechanisms.
-The [native checkpoint](phase-1-native.md) records the implementation, commands, and remaining interactive checks.
+The [native checkpoint](phase-1-native.md) records the implementation, commands, and interactive results.
 
 ## Phase 1 native continuation
 
@@ -31,7 +31,10 @@ Shutdown retains the product admission, invalidation, cancellation, and two-seco
 The five cases in `experiments/run_product_native.py` passed locally.
 The captured native frame showed the local page and the Clojure echo text together.
 The runner also covers parked close, runtime failure, dispatcher failure, and native quit.
-The Mac was locked, so interactive typing, clicking, scrolling, resize, and close checks remain pending.
+The interactive macOS checks passed on 2026-11-08 after a fix to egui input routing.
+The egui root previously consumed page clicks. Its input rectangle now covers only the echo strip.
+The regression test covers page and echo hit testing before and after resize.
+Native button clicks, text editing, scrolling, echo isolation, resize, key delivery, and close passed.
 The smoke flushes a final diagnostic frame before teardown to handle suppressed macOS redraw callbacks.
 Its result does not establish interactive display behavior.
 
@@ -144,13 +147,13 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 ## Next work, in order
 
 1. Run the product Servo contract tests and software smoke on Linux CI.
-2. Complete interactive native checks on an unlocked Mac.
+2. Preserve the completed interactive macOS checks while adding browser commands and chrome.
 3. Add the remaining Phase 1 command, keymap, hooks, and browser behavior.
 4. Preserve budgeted nREPL admission and overload regressions in the product integration.
 5. Run the Phase 1 acceptance checks against the product executable.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
-The native shell is implemented. Interactive product checks remain open.
+The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.
 The upstream output limit permits one oversized reply when its connection queue is empty.
 Connection count, session count, retained values, active language tasks, and the language heap remain outside these bounds.
 A disconnected client can leave its evaluation active until completion or interruption.

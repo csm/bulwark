@@ -85,17 +85,24 @@ impl Surface {
             );
             blit(&self.context.glow_gl_api(), target);
         }
-        let echo = &self.echo;
-        self.chrome.run(&self.window, |ui| {
-            egui::Panel::bottom("echo")
-                .exact_size(ECHO_HEIGHT)
-                .resizable(false)
-                .show_inside(ui, |ui| {
-                    ui.add(egui::Label::new(echo).truncate().selectable(false));
-                });
-        });
+        // EguiGlow::run gives the root UI the entire window, which makes egui
+        // claim page clicks as well as chrome clicks. Bound the root to chrome.
+        let input = self.chrome.egui_winit.take_egui_input(&self.window);
+        let output = draw_echo(&self.chrome.egui_ctx, input, &self.echo);
+        self.chrome
+            .egui_winit
+            .handle_platform_output(&self.window, output.platform_output);
+        let primitives = self
+            .chrome
+            .egui_ctx
+            .tessellate(output.shapes, output.pixels_per_point);
         self.context.prepare_for_rendering();
-        self.chrome.paint(&self.window);
+        self.chrome.painter.paint_and_update_textures(
+            size.into(),
+            output.pixels_per_point,
+            &primitives,
+            &output.textures_delta,
+        );
         if let Some(path) = capture {
             let rect = euclid::Box2D::from_origin_and_size(
                 euclid::point2(0, 0),
@@ -112,6 +119,21 @@ impl Surface {
         self.echo_presented.clone_from(&self.echo);
         Ok(())
     }
+}
+
+fn draw_echo(context: &egui::Context, mut input: egui::RawInput, text: &str) -> egui::FullOutput {
+    if let Some(mut rect) = input.screen_rect {
+        rect.min.y = (rect.max.y - ECHO_HEIGHT).max(rect.min.y);
+        input.screen_rect = Some(rect);
+    }
+    context.run_ui(input, |ui| {
+        egui::Panel::bottom("echo")
+            .exact_size(ECHO_HEIGHT)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                ui.add(egui::Label::new(text).truncate().selectable(false));
+            });
+    })
 }
 impl Drop for Surface {
     fn drop(&mut self) {
@@ -553,6 +575,31 @@ pub fn run(args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn egui_consumes_echo_pointer_input_but_leaves_page_input_available_after_resize() {
+        let context = egui::Context::default();
+        for (size, point, consumed) in [
+            ([1000.0, 760.0], [522.0, 138.0], false),
+            ([1000.0, 760.0], [10.0, 746.0], true),
+            ([650.0, 450.0], [300.0, 132.0], false),
+            ([650.0, 450.0], [10.0, 436.0], true),
+        ] {
+            // Run another pass to include egui's previous-frame hit-test state.
+            for _ in 0..2 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
+                    events: vec![egui::Event::PointerMoved(point.into())],
+                    ..Default::default()
+                };
+                let _ = draw_echo(&context, input, "Fixture title");
+            }
+            assert_eq!(
+                context.egui_wants_pointer_input(),
+                consumed,
+                "pointer {point:?} in {size:?}"
+            );
+        }
+    }
     #[test]
     fn page_reserves_physical_echo_pixels_at_each_scale_and_never_has_zero_size() {
         assert_eq!(content_size((1000, 760).into(), 1.0), (1000, 732).into());

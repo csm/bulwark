@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: active v0.14 (2026-11-07), Phase 0 complete.
+Status: active v0.15 (2026-11-08), Phase 0 complete.
 Phase 1 includes the foundation, Servo adapter, native window, and egui echo area.
 Clojure commands, keymaps, hooks, and product nREPL remain next.
 Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
@@ -496,7 +496,7 @@ the native API registry, and a dedicated runtime worker with a Clojure event loo
 The headless product check exercises these mechanisms against a mock engine.
 The product Servo adapter now passes requests through the same contract with software rendering.
 The [native checkpoint](phase-1-native.md) adds window/input integration and the egui echo area.
-Interactive native validation and deliverables 4–6 remain open.
+The local interactive macOS checks passed after the egui input routing fix. Deliverables 4–6 remain open.
 No Phase 1 product acceptance criterion is marked complete by this checkpoint.
 
 Goal: validate that a useful browser shell can be written primarily in Clojurust with Rust
@@ -732,7 +732,7 @@ Phase 0 is complete. The [exit review](phase-0-exit.md) records evidence and acc
    Preserve main-thread engine ownership, dedicated runtime ownership, and owned messages across the bridge.
 2. Implement Phase 1 native API v0 and event delivery to `bulwark.core/dispatch!`.
    Apply D1 queue, payload, overload, cancellation, and shutdown limits during promotion.
-3. Complete interactive native checks, then add Clojure commands, keymaps, hooks, and one end-to-end browser behavior.
+3. Add Clojure commands, keymaps, hooks, and one end-to-end browser behavior after the completed local native checks.
 4. Add opt-in loopback nREPL with budgeted admission and accepted-work limits.
    Preserve the overload, interruption, recovery, and shutdown regressions from E7.
 5. Run the Phase 1 acceptance checks against the product executable.

@@ -1,6 +1,6 @@
 # Phase 1 native shell checkpoint
 
-Status: implemented locally, 2026-11-07. Phase 1 remains in progress.
+Status: implemented 2026-11-07. Interactive macOS checks passed 2026-11-08 after the input routing fix. Phase 1 remains in progress.
 Base: `main` at `7660535`. The fast-forward pull reported that the worktree was up to date.
 
 ## Run the native shell
@@ -31,6 +31,9 @@ One Servo view uses its `OffscreenRenderingContext` above the echo area.
 The shell copies that surface into the window, draws egui, and presents the combined frame once.
 The echo area occupies 28 logical pixels at the bottom of the window.
 It displays the text from `bulwark.native/set-echo!`.
+The egui root uses only that bottom strip as its input rectangle.
+The full-window egui root previously consumed page mouse presses, even though the page remained visible.
+The interactive checks found this error. A regression test now covers page and echo hit testing before and after resize.
 
 The adapter paints each new view at least once.
 Native exposure events can force another paint even without a new Servo frame notification.
@@ -99,18 +102,44 @@ All five native runner cases passed.
 The captured frame showed the Servo fixture above the egui text `Native chrome smoke ready`.
 The native smoke flushes its final diagnostic frame before teardown because macOS can suppress redraw callbacks on a locked desktop.
 This proves composition and presentation calls, not interactive input or visible display behavior.
-The Mac was locked during this continuation, so interactive typing, clicking, scrolling, resize, and close checks remain pending.
+The initial Mac checks could not run while the desktop was locked.
+The interactive continuation on 2026-11-08 completed the checks in the next section.
 
 CI now compiles the native feature and runs its unit tests and process runner under Xvfb on Linux.
 Remote CI results remain uninspected.
 The existing GL texture warning and large `__eh_frame` linker warning remain.
 
+## Interactive macOS checks, 2026-11-08
+
+Platform: macOS 26.5.2 arm64, Rust 1.97.1, Servo 0.7.0, debug build.
+Computer Use sent native macOS input events to the product shell.
+The test used `experiments/fixtures/input.html` and a temporary app bundle for process identification.
+The bundle contained the product executable without wrapper code.
+
+| Action | Observation | Result |
+|---|---|---|
+| Click the fixture button | The egui echo displayed `Clicked`. | Passed |
+| Click the input and type | The field displayed `native test`, and the echo displayed `Typed: native test`. | Passed |
+| Backspace, Shift+Left, then replacement text | The field and title echo displayed `native tex`. | Passed |
+| Scroll over the page | The bottom `End marker` became visible. | Passed |
+| Scroll upward over the echo strip | The page stayed at the end marker. | Passed |
+| Resize the window | The frame changed from 1000×792 to 650×482 points, and the echo stayed at the bottom. | Passed |
+| Scroll upward after resize | The button moved to a separate line, and the edited text remained intact. | Passed |
+| Press Left after resize | The echo displayed `Key: ArrowLeft`. | Passed |
+| Click the button after resize | The echo displayed `Clicked`. | Passed |
+| Click the native close control | The process exited with status zero and reported `shutdown=joined`. | Passed |
+
+After the fix, formatting, native unit tests, Clippy, and all five native process cases passed again.
+The accessibility tree exposes native window controls but does not expose the page content.
+The page checks therefore used screenshot coordinates.
+IME, clipboard, display-scale transitions, other keyboard layouts, and Linux native interaction remain untested.
+The checks establish local fixture behavior, not general website compatibility.
+
 ## Next work
 
-1. Complete the native interactive checks on an unlocked Mac.
-2. Add the Phase 1 Clojure command registry, keymap, and hooks.
-3. Add opt-in loopback nREPL with the accepted admission limits.
-4. Add the Clojure browser behavior and run the remaining Phase 1 acceptance checks.
+1. Add the Phase 1 Clojure command registry, keymap, and hooks.
+2. Add opt-in loopback nREPL with the accepted admission limits.
+3. Add the Clojure browser behavior and run the remaining Phase 1 acceptance checks.
 
 The default executable still requires the `native` feature to open a window.
 This checkpoint does not complete Phase 1 or its full acceptance criteria.
