@@ -34,7 +34,10 @@ Local repetition reproduced the timeout after the history navigation request.
 The test now waits for fresh load-completion events after each reload and navigation.
 Each wait has a ten-second deadline with a named phase and event diagnostics.
 The process runner now preserves captured output when its independent deadline expires.
-The seven native process cases passed locally with this change. Linux confirmation remains pending.
+The seven native process cases passed locally with this change. The browser-history case also passed ten consecutive local runs.
+The [final branch CI run](https://github.com/csm/bulwark/actions/runs/42681801088) passed all three jobs at code commit `e9ecc8d`.
+Linux passed the seven native process cases and all four native nREPL cases, including shutdown with a parked evaluation.
+Both runtime jobs also passed the mock nREPL suite. Linux confirmation is complete.
 
 ## Phase 1 commands and browser continuation
 
@@ -226,9 +229,8 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Finish Linux CI with the shared native feature configuration, longer deadline, and product nREPL suites.
-2. Add key interception while preserving ordinary Servo input during runtime stalls.
-3. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage.
+1. Add key interception while preserving ordinary Servo input during runtime stalls.
+2. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.

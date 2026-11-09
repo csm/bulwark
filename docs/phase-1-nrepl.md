@@ -31,7 +31,7 @@ Define a command and bind its name:
 
 ```clojure
 (bulwark.commands/defcommand reload-from-repl "Reloads the active view." []
-  (bulwark.browser/reload!))
+  (bulwark.browser/reload))
 (bulwark.keymap/bind-key! "C-c t" 'reload-from-repl)
 ```
 
@@ -103,4 +103,7 @@ Linux Servo Clippy, native unit tests, the Servo contract, and the software smok
 The native browser-history case timed out before the native nREPL suite ran.
 The browser-history test now waits for fresh load-completion events after reloads and navigations.
 Its waits report the unfinished phase, and the process runner retains captured diagnostics after a timeout.
-Linux confirmation of this fix remains pending.
+The browser-history case passed ten consecutive local runs after the fix.
+The [final branch CI run](https://github.com/csm/bulwark/actions/runs/42681801088) passed all three jobs at code commit `e9ecc8d`.
+Linux passed all seven native process cases and all four native nREPL cases.
+Both runtime jobs passed the mock nREPL suite.
