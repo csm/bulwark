@@ -106,7 +106,10 @@ The initial Mac checks could not run while the desktop was locked.
 The interactive continuation on 2026-11-08 completed the checks in the next section.
 
 CI now compiles the native feature and runs its unit tests and process runner under Xvfb on Linux.
-Remote CI results remain uninspected.
+The [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation) records the remote results and CI dependency fixes.
+On 2026-11-08, Linux CI passed native unit tests and all five process cases with joined runtime workers.
+The page and chrome case painted eight frames and made nine presentations under Xvfb.
+Interactive Linux behavior remains untested.
 The existing GL texture warning and large `__eh_frame` linker warning remain.
 
 ## Interactive macOS checks, 2026-11-08

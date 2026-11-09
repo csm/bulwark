@@ -17,11 +17,19 @@ impl IdAllocator {
         Self(AtomicU64::new(1))
     }
     fn next(&self) -> Result<u64, Fault> {
-        self.0
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
-                (id <= i64::MAX as u64).then_some(id + 1)
-            })
-            .map_err(|_| Fault::IdExhausted)
+        let mut id = self.0.load(Ordering::Relaxed);
+        loop {
+            if id > i64::MAX as u64 {
+                return Err(Fault::IdExhausted);
+            }
+            match self
+                .0
+                .compare_exchange_weak(id, id + 1, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return Ok(id),
+                Err(current) => id = current,
+            }
+        }
     }
 }
 static HANDLES: IdAllocator = IdAllocator::new();
@@ -247,6 +255,36 @@ mod tests {
         let ids = IdAllocator(AtomicU64::new(i64::MAX as u64));
         assert_eq!(ids.next(), Ok(i64::MAX as u64));
         assert_eq!(ids.next(), Err(Fault::IdExhausted));
+        assert_eq!(ids.next(), Err(Fault::IdExhausted));
+    }
+
+    #[test]
+    fn concurrent_allocations_remain_unique_at_exhaustion() {
+        let first = i64::MAX as u64 - 63;
+        let ids = IdAllocator(AtomicU64::new(first));
+        let mut allocated = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut allocated = Vec::new();
+                        loop {
+                            match ids.next() {
+                                Ok(id) => allocated.push(id),
+                                Err(Fault::IdExhausted) => break,
+                                Err(error) => panic!("Unexpected allocation error: {error}"),
+                            }
+                        }
+                        allocated
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        allocated.sort_unstable();
+        assert_eq!(allocated, (first..=i64::MAX as u64).collect::<Vec<_>>());
         assert_eq!(ids.next(), Err(Fault::IdExhausted));
     }
 }

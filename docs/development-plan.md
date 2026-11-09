@@ -497,6 +497,8 @@ The headless product check exercises these mechanisms against a mock engine.
 The product Servo adapter now passes requests through the same contract with software rendering.
 The [native checkpoint](phase-1-native.md) adds window/input integration and the egui echo area.
 The local interactive macOS checks passed after the egui input routing fix. Deliverables 4–6 remain open.
+The [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation) passed the product Servo contract tests and software smoke.
+Explicit interpreter coverage remains open for A8.
 No Phase 1 product acceptance criterion is marked complete by this checkpoint.
 
 Goal: validate that a useful browser shell can be written primarily in Clojurust with Rust

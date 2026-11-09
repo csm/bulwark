@@ -1,8 +1,28 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `d70e047`, followed by the interactive macOS continuation on 2026-11-08.
-The interactive continuation fixes egui input routing and records the passing native fixture checks.
-This managed worktree has a detached HEAD.
+Snapshot: Bulwark `main` at `678fcf5`, followed by the Linux CI continuation on 2026-11-08.
+The fast-forward pull advanced this worktree from `7660535` to `678fcf5`.
+Working branch: `codex/phase-1-linux-validation`.
+
+## Phase 1 Linux CI continuation
+
+The [main CI run](https://github.com/csm/bulwark/actions/runs/42541318802) failed before the product Servo tests and software smoke.
+Rust 1.99.1 deprecated `AtomicU64::fetch_update`, and both Linux Clippy jobs rejected the warning.
+The macOS runtime job was cancelled after the Linux runtime failure.
+
+The allocator now uses a compare-and-exchange loop with the same relaxed ordering and exhaustion boundary.
+This implementation also supports the local Rust 1.97.1 toolchain.
+A concurrent allocation test requires every remaining identifier exactly once at exhaustion.
+Local formatting, workspace Clippy, all 28 workspace tests, and the headless product smoke passed.
+The [first branch CI run](https://github.com/csm/bulwark/actions/runs/42541766008) passed both runtime jobs, Servo Clippy, and native unit tests.
+The Linux Servo contract tests and software smoke also passed. The smoke painted 13 frames and joined the runtime worker.
+The native process runner then failed because `libxkbcommon-x11.so` was absent.
+The Linux dependency installation now includes `libxkbcommon-x11-dev`.
+The [final CI run](https://github.com/csm/bulwark/actions/runs/42542721292) passed all three jobs at code commit `93a0724`.
+The Linux software smoke painted 14 frames and joined the runtime worker.
+All five native process cases passed: page and chrome, parked close, runtime failure, dispatcher failure, and native quit.
+Every native case reported `shutdown=joined`. The page and chrome case painted eight frames and made nine presentations.
+These Xvfb checks establish automated Linux coverage. Interactive Linux behavior remains untested.
 
 ## Current state
 
@@ -38,8 +58,8 @@ Native button clicks, text editing, scrolling, echo isolation, resize, key deliv
 The smoke flushes a final diagnostic frame before teardown to handle suppressed macOS redraw callbacks.
 Its result does not establish interactive display behavior.
 
-CI now compiles the native feature and runs its unit tests and process runner under Xvfb.
-Remote CI results remain uninspected.
+CI compiles the native feature and runs its unit tests and process runner under Xvfb.
+The Linux CI continuation above records the current remote results.
 
 Clojurust fixes are now on upstream `main` at `b847a29b46e2b6b3fbe624f6d2394cb656ea5882`.
 The workspace dependency pin and lockfile now use that revision for all ten Clojurust packages.
@@ -71,7 +91,8 @@ Shutdown invalidates resources before the host cancels the runtime worker.
 The software smoke loads a local HTML file and requires a title event in Clojure and a painted frame.
 Local macOS validation passed with 11 painted frames and a joined worker.
 Workspace tests, workspace Clippy, Servo Clippy, adapter tests, and the mock smoke passed.
-CI includes the software smoke and adapter tests in a new Linux job. Remote results remain uninspected.
+CI includes the software smoke and adapter tests in a Linux job.
+Both passed in the Linux CI continuation above.
 
 ## Completed during Phase 0 exit
 
@@ -138,7 +159,8 @@ The final lifecycle run presented 18 frames during the raw stall.
 The final native nREPL run presented 16 frames, admitted at most four jobs per turn, and reported twelve budget exhaustions.
 Its maximum admission duration was 25.084 microseconds. Both idle controls again reported zero self-wakes.
 All local Markdown links in the README, experiment guide, reports, and ADRs resolve.
-Remote CI results remain uninspected. CI now requires both deterministic idle acceptance controls.
+Remote CI passed both runtime jobs in the Linux CI continuation above.
+CI requires both deterministic idle acceptance controls.
 
 The existing GL texture warning remains.
 The cold Servo build also emitted a linker warning about a large `__eh_frame` section.
@@ -146,11 +168,10 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Run the product Servo contract tests and software smoke on Linux CI.
-2. Preserve the completed interactive macOS checks while adding browser commands and chrome.
-3. Add the remaining Phase 1 command, keymap, hooks, and browser behavior.
-4. Preserve budgeted nREPL admission and overload regressions in the product integration.
-5. Run the Phase 1 acceptance checks against the product executable.
+1. Add the Phase 1 command registry, keymap, and hooks while preserving the interactive macOS checks.
+2. Add the Clojure browser behavior.
+3. Preserve budgeted nREPL admission and overload regressions in the product integration.
+4. Run the Phase 1 acceptance checks against the product executable, including explicit interpreter coverage.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.

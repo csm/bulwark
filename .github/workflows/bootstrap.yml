@@ -46,7 +46,7 @@ jobs:
             libfontconfig1-dev libfreetype-dev libglib2.0-dev libudev-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev libunwind-dev \
-            libwayland-dev libxkbcommon-dev
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev
       - run: cargo clippy --locked -p bulwark-shell -p bulwark-engine-servo --features native,servo --all-targets -- -D warnings
       - run: cargo test --locked -p bulwark-shell --features native
       - run: xvfb-run -a cargo test --locked -p bulwark-engine-servo --features servo
