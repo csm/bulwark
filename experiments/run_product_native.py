@@ -30,6 +30,7 @@ def main():
         parser.error("--timeout must be positive")
     with tempfile.TemporaryDirectory(prefix="bulwark-product-native-") as directory:
         directory = Path(directory)
+        root = Path(__file__).resolve().parent.parent
         screenshot = directory / "smoke.png"
         run_case(args.binary, "page-and-chrome", ["--native-smoke", "--screenshot", str(screenshot)],
                  True, ["Phase 1 native passed"], args.timeout)
@@ -39,6 +40,15 @@ def main():
         run_case(args.binary, "close-parked-runtime", ["--close-after-ms", "250"],
                  True, ["window-ready"], args.timeout)
         programs = [
+            ("clojure-browser", (root / "clj/tests/browser-native.cljrs").read_text(),
+             True, ["Native Clojure commands and history passed"]),
+            ("hook-failure", '''
+                (bulwark.hooks/add-hook! :page/url-changed :failure
+                  (fn [event] (throw (ex-info "Injected product hook failure" {}))))
+                (defn ^:async program! []
+                  (await (bulwark.native/webview-create "about:blank"))
+                  (await (clojure.core.async/timeout 60000)))
+                (program!)''', False, ["Injected product hook failure"]),
             ("runtime-failure", '(throw (ex-info "Injected product runtime failure" {}))',
              False, ["Injected product runtime failure"]),
             ("dispatcher-failure", '''
@@ -57,7 +67,10 @@ def main():
         for name, source, success, expected in programs:
             script = directory / f"{name}.cljrs"
             script.write_text(source)
-            run_case(args.binary, name, ["--script", str(script)], success, expected, args.timeout)
+            flags = ["--script", str(script)]
+            if name == "clojure-browser":
+                flags.append((root / "clj/tests/fixtures/servo.html").as_uri())
+            run_case(args.binary, name, flags, success, expected, args.timeout)
 
 
 if __name__ == "__main__":

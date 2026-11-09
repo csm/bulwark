@@ -140,9 +140,10 @@ The checks establish local fixture behavior, not general website compatibility.
 
 ## Next work
 
-1. Add the Phase 1 Clojure command registry, keymap, and hooks.
-2. Add opt-in loopback nREPL with the accepted admission limits.
-3. Add the Clojure browser behavior and run the remaining Phase 1 acceptance checks.
+The [command continuation](phase-1-commands.md) adds Clojure commands, keymaps, hooks, and title history.
+
+1. Add opt-in loopback nREPL with the accepted admission limits.
+2. Add key interception and run the remaining Phase 1 acceptance checks.
 
 The default executable still requires the `native` feature to open a window.
 This checkpoint does not complete Phase 1 or its full acceptance criteria.

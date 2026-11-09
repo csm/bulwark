@@ -34,6 +34,7 @@ impl Drop for OnExit {
 fn run(
     endpoint: RuntimeEndpoint,
     source: String,
+    mode: ExecutionMode,
     interrupt: Arc<InterruptFlag>,
     cancelled: oneshot::Receiver<()>,
 ) -> Result<String> {
@@ -44,7 +45,7 @@ fn run(
     let local = tokio::task::LocalSet::new();
     executor.block_on(local.run_until(async move {
         let _interrupt = InterruptGuard::install(interrupt);
-        let mut host = RuntimeHost::with_bridge(ExecutionMode::Tiered, endpoint)?;
+        let mut host = RuntimeHost::with_bridge(mode, endpoint)?;
         let events = host.eval("(require 'bulwark.bridge) (bulwark.bridge/run-events!)")?;
         let _events_root = gc_roots::root_value(&events);
         let program = host.eval(&source)?;
@@ -67,12 +68,21 @@ impl Worker {
     /// Run a Clojure program concurrently with the ordered event dispatcher.
     /// The program can return a plain value or a future; only its printed result crosses threads.
     pub fn spawn(endpoint: RuntimeEndpoint, source: String) -> Result<Self> {
+        Self::spawn_with_mode(endpoint, source, ExecutionMode::Tiered)
+    }
+
+    /// Selects an evaluator for interpreter checks without changing runtime ownership.
+    pub fn spawn_with_mode(
+        endpoint: RuntimeEndpoint,
+        source: String,
+        mode: ExecutionMode,
+    ) -> Result<Self> {
         let (cancel, cancelled) = oneshot::channel();
         let interrupt = Arc::new(InterruptFlag::new(false));
         let worker_interrupt = interrupt.clone();
         let thread = thread::Builder::new()
             .name("bulwark-runtime".into())
-            .spawn(move || run(endpoint, source, worker_interrupt, cancelled))?;
+            .spawn(move || run(endpoint, source, mode, worker_interrupt, cancelled))?;
         Ok(Self {
             thread: Some(thread),
             interrupt,

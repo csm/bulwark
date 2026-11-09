@@ -1,0 +1,38 @@
+(ns bulwark.commands)
+
+(def registry (atom {}))
+
+(defn register!
+  "Registers a command Var and its documentation under a qualified symbol."
+  [command doc command-var]
+  (when-not (and (symbol? command) (namespace command) (string? doc) (seq doc) (var? command-var))
+    (throw (ex-info "Commands require a qualified name, documentation, and a Var" {:command command})))
+  (swap! registry assoc command {:name command :doc doc :var command-var})
+  command-var)
+
+(defmacro defcommand
+  "Defines a documented function and registers its Var for live invocation."
+  [command doc args & body]
+  (let [qualified (symbol (str (ns-name *ns*)) (name command))]
+    `(do
+       (defn ~command ~doc ~args ~@body)
+       (bulwark.commands/register! '~qualified ~doc (resolve '~qualified)))))
+
+(defn command-info
+  "Finds a qualified command, or an unqualified name with exactly one match."
+  [command]
+  (when-not (symbol? command)
+    (throw (ex-info "Command name must be a symbol" {:command command})))
+  (if (namespace command)
+    (or (get @registry command)
+        (throw (ex-info "Unknown command" {:command command})))
+    (let [matches (filter (fn [entry] (= (name command) (name (:name entry))))
+                          (vals @registry))]
+      (when-not (= 1 (count matches))
+        (throw (ex-info "Command name is unknown or ambiguous" {:command command})))
+      (first matches))))
+
+(defn ^:async invoke!
+  "Calls the current command Var and awaits its result."
+  [command & args]
+  (await (apply (deref (:var (command-info command))) args)))

@@ -1,11 +1,17 @@
-(ns bulwark.core)
+(ns bulwark.core
+  (:require [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]))
 
 (defn bootstrap-status
   "Returns the current product implementation stage."
   []
   {:phase 1 :status :foundation})
 
-(defn dispatch!
+(defn ^:async dispatch!
   "Receives an ordered engine event. Redefinition takes effect on the next event."
   [event]
-  nil)
+  (let [routed (case (:event/type event)
+                 :input/key (assoc event :keymap/status (await (keymap/dispatch-key! event)))
+                 :page/closed (do (keymap/reset-prefix!) event)
+                 event)]
+    (await (hooks/run-hooks! routed))))

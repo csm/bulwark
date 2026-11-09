@@ -18,7 +18,7 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    ```
 
    This command prints `{:phase 1, :status :foundation}` and exits.
-   The product shell does not open a browser window yet.
+   The `native` feature opens a browser window, as described below.
 
    Run the product foundation check without a native display:
 
@@ -58,6 +58,9 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
 
    The checks cover page rendering, echo updates, parked shutdown, runtime errors, dispatcher errors, and native quit.
    The [native shell checkpoint](docs/phase-1-native.md) records the implementation and validation limits.
+   The [command checkpoint](docs/phase-1-commands.md) describes Clojure commands, keymaps, hooks, and title history.
+   Default keys include `C-c r` for reload and `C-x h` for recent page titles.
+   Command keys also reach the page until key interception is implemented.
 
 2. Run the callback and GC experiment:
 
@@ -129,6 +132,7 @@ The default workspace build excludes Servo compilation.
 - [Phase 0 exit review](docs/phase-0-exit.md)
 - [Phase 1 foundation checkpoint and native API](docs/phase-1-foundation.md)
 - [Phase 1 native window and egui checkpoint](docs/phase-1-native.md)
+- [Phase 1 commands, hooks, and browser behavior](docs/phase-1-commands.md)
 - [Development handoff and next steps](docs/handoff.md)
 - [Vision](docs/bulwark.md)
 - [Development plan and current progress](docs/development-plan.md)

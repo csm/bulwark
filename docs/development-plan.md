@@ -1,8 +1,9 @@
 # Bulwark Development Plan
 
-Status: active v0.15 (2026-11-08), Phase 0 complete.
+Status: active v0.16 (2026-11-08), Phase 0 complete.
 Phase 1 includes the foundation, Servo adapter, native window, and egui echo area.
-Clojure commands, keymaps, hooks, and product nREPL remain next.
+Clojure commands, keymaps, hooks, and title history are implemented locally.
+Product nREPL and key interception remain next.
 Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
@@ -496,7 +497,10 @@ the native API registry, and a dedicated runtime worker with a Clojure event loo
 The headless product check exercises these mechanisms against a mock engine.
 The product Servo adapter now passes requests through the same contract with software rendering.
 The [native checkpoint](phase-1-native.md) adds window/input integration and the egui echo area.
-The local interactive macOS checks passed after the egui input routing fix. Deliverables 4–6 remain open.
+The local interactive macOS checks passed after the egui input routing fix.
+The [command checkpoint](phase-1-commands.md) implements deliverable 4 and a title-history behavior for deliverable 6.
+Its command and browser tests run in both interpreter and tiered modes.
+Deliverable 5, key interception, and the full product acceptance review remain open.
 The [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation) passed the product Servo contract tests and software smoke.
 Explicit interpreter coverage remains open for A8.
 No Phase 1 product acceptance criterion is marked complete by this checkpoint.

@@ -1,0 +1,64 @@
+;; Exercise Clojure commands and history against the real native Servo host.
+(ns bulwark.tests.browser-native
+  (:require [bulwark.browser :as browser]
+            [bulwark.commands :refer [defcommand]]
+            [bulwark.core :as core]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.native :as native]
+            [bulwark.shell :as shell]
+            [clojure.core.async :refer [timeout]]))
+
+(def titles (atom []))
+(def reloads (atom 0))
+
+(defn ^:async title-hook! [event]
+  (swap! titles conj (:title event))
+  (await (browser/set-echo! (:title event))))
+
+(defcommand ^:async reload-twice "Reloads the visible page twice." []
+  (await (browser/reload))
+  (await (browser/reload))
+  (swap! reloads inc))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defn ^:async wait-title! [title]
+  (loop []
+    (when-not (some (fn [seen] (= title seen)) @titles)
+      (await (timeout 5)) (recur))))
+
+(defn ^:async program! []
+  (browser/install!)
+  (hooks/add-hook! :page/title-changed :test/title #'title-hook!)
+  (let [shell-program (shell/run! user/initial-url)]
+    (loop []
+      (when-not @browser/active-view (await (timeout 5)) (recur)))
+    (await (wait-title! "Bulwark Servo fixture"))
+    (keymap/bind-key! "C-c r" 'reload-twice)
+    (await (core/dispatch! {:event/type :input/key :webview @browser/active-view
+                            :key "c" :control true :pressed true}))
+    (await (core/dispatch! {:event/type :input/key :webview @browser/active-view
+                            :key "r" :pressed true}))
+    (check! (= 1 @reloads) "Live command binding did not reload twice")
+    (let [view @browser/active-view]
+      (loop []
+        (when-not (= :complete (:load-status (browser/value! (await (native/webview-info view)))))
+          (await (timeout 5)) (recur)))
+      (browser/value! (await (native/eval-js view "document.title = 'Clojure history visit'; 'ok'")))
+      (await (wait-title! "Clojure history visit"))
+      (check! (some (fn [visit] (= "Clojure history visit" (:title visit))) @browser/history)
+              "Title hook did not record Clojure history")
+      (await (browser/navigate! "about:blank"))
+      (await (browser/visit-history! 0))
+      (loop []
+        (when-not (= "Bulwark Servo fixture"
+                     (:title (browser/value! (await (native/webview-info view)))))
+          (await (timeout 5)) (recur))))
+    (await (browser/history-list))
+    (await (native/log "Native Clojure commands and history passed"))
+    (await (timeout 200)))
+  :browser-native-passed)
+
+(program!)

@@ -1,0 +1,87 @@
+(ns bulwark.keymap
+  (:require [clojure.string :as string]
+            [bulwark.commands :as commands]))
+
+(def bindings (atom {}))
+(def pending (atom {:webview nil :keys []}))
+
+(defn reset-prefix!
+  "Cancels the pending sequence."
+  []
+  (reset! pending {:webview nil :keys []})
+  nil)
+
+(defn canonical-stroke [key control alt shift meta]
+  (let [letter (and (= 1 (count key))
+                    (not= (string/lower-case key) (string/upper-case key)))
+        shifted (and letter (not= key (string/lower-case key)))
+        ;; Printable punctuation already includes the effect of Shift.
+        shift-modifier (or shifted (and shift (or letter (> (count key) 1))))]
+    (str (when control "C-") (when alt "M-")
+         (when shift-modifier "S-") (when meta "s-")
+         (if letter (string/lower-case key) key))))
+
+(defn parse-stroke [stroke]
+  (loop [tail stroke modifiers #{}]
+    (let [prefix (when (>= (count tail) 2) (subs tail 0 2))]
+      (if (contains? #{"C-" "M-" "S-" "s-"} prefix)
+        (do
+          (when (contains? modifiers prefix)
+            (throw (ex-info "Repeated key modifier" {:stroke stroke})))
+          (recur (subs tail 2) (conj modifiers prefix)))
+        (do
+          (when (or (empty? tail) (and (> (count tail) 1) (string/includes? tail "-")))
+            (throw (ex-info "Invalid key stroke" {:stroke stroke})))
+          (canonical-stroke
+            (get {"RET" "Enter" "SPC" " " "TAB" "Tab" "ESC" "Escape" "DEL" "Backspace"}
+                 tail tail)
+            (contains? modifiers "C-") (contains? modifiers "M-")
+            (contains? modifiers "S-") (contains? modifiers "s-")))))))
+
+(defn parse-keys
+  "Parses space-separated Emacs strokes. C, M, S, and s mean Ctrl, Alt, Shift, and Meta."
+  [keys]
+  (when-not (and (string? keys) (seq (string/trim keys)))
+    (throw (ex-info "Key sequence must be a nonempty string" {:keys keys})))
+  (mapv parse-stroke (string/split (string/trim keys) #"\s+")))
+
+(defn prefix? [prefix keys]
+  (and (< (count prefix) (count keys)) (= prefix (vec (take (count prefix) keys)))))
+
+(defn bind-key!
+  "Binds a sequence to a registered command. Conflicting prefixes are rejected."
+  [keys command]
+  (let [sequence (parse-keys keys) qualified (:name (commands/command-info command))]
+    (when (some (fn [existing] (or (prefix? sequence existing) (prefix? existing sequence)))
+                (clojure.core/keys @bindings))
+      (throw (ex-info "Key sequence conflicts with a command prefix" {:keys keys})))
+    (swap! bindings assoc sequence qualified)
+    (reset-prefix!)
+    qualified))
+
+(defn unbind-key!
+  "Removes a sequence and cancels any pending prefix."
+  [keys]
+  (swap! bindings dissoc (parse-keys keys))
+  (reset-prefix!))
+
+(defn ^:async dispatch-key!
+  "Runs a bound command, retains a prefix, or returns :unbound. Releases are ignored."
+  [event]
+  (if (or (not (:pressed event))
+          (contains? #{"Control" "Alt" "Shift" "Meta" "Super"} (:key event)))
+    :ignored
+    (let [stroke (canonical-stroke (:key event) (:control event) (:alt event)
+                                   (:shift event) (:meta event))
+          old (if (= (:webview event) (:webview @pending)) (:keys @pending) [])
+          sequence (conj old stroke)]
+      (cond
+        (contains? #{"C-g" "Escape"} stroke) (do (reset-prefix!) :cancelled)
+        (get @bindings sequence)
+        (let [command (get @bindings sequence)]
+          (reset-prefix!)
+          (await (commands/invoke! command))
+          :command)
+        (some (fn [keys] (prefix? sequence keys)) (keys @bindings))
+        (do (reset! pending {:webview (:webview event) :keys sequence}) :prefix)
+        :else (do (reset-prefix!) :unbound)))))

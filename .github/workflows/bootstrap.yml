@@ -42,7 +42,7 @@ jobs:
       - name: Install Servo build and software display dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config xvfb \
+          sudo apt-get install -y clang llvm cmake ninja-build pkg-config xvfb \
             libfontconfig1-dev libfreetype-dev libglib2.0-dev libudev-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev libunwind-dev \

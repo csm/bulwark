@@ -1,5 +1,7 @@
 # Default configuration
 
-The initial native browser policy lives in `bulwark.shell`.
-Its dispatcher displays page titles, crash messages, and key events in the egui echo area.
-The command registry, keymaps, hooks, and user configuration remain Phase 1 follow-up work.
+The native startup and echo hooks live in `bulwark.shell`.
+The browser commands and title history live in `bulwark.browser`.
+The default keys are `C-c r` for reload, `C-c b` for back, `C-c f` for forward, and `C-x h` for history.
+The [command checkpoint](../../../docs/phase-1-commands.md) describes the command registry, keymap, hooks, and startup scripts.
+User configuration files and product nREPL remain Phase 1 follow-up work.

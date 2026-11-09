@@ -1,0 +1,30 @@
+(ns bulwark.hooks)
+
+(def registry (atom {}))
+
+(defn add-hook!
+  "Adds a handler in registration order. An existing id replaces its handler."
+  ([event-type handler] (add-hook! event-type handler handler))
+  ([event-type id handler]
+   (when-not (and (keyword? event-type) (ifn? handler))
+     (throw (ex-info "Hooks require an event keyword and callable handler" {})))
+   (swap! registry update event-type
+          (fn [entries]
+            (if (some (fn [entry] (= id (first entry))) entries)
+              (mapv (fn [entry] (if (= id (first entry)) [id handler] entry)) entries)
+              (conj (vec entries) [id handler]))))
+   id))
+
+(defn remove-hook!
+  "Removes a handler by its registration id."
+  [event-type id]
+  (swap! registry update event-type
+         (fn [entries] (vec (remove (fn [entry] (= id (first entry))) entries))))
+  nil)
+
+(defn ^:async run-hooks!
+  "Awaits a snapshot of handlers in order. Errors reach the host dispatcher."
+  [event]
+  (let [handlers (get @registry (:event/type event))]
+    (doseq [entry handlers]
+      (await ((second entry) event)))))

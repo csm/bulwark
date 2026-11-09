@@ -1,8 +1,34 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `678fcf5`, followed by the Linux CI continuation on 2026-11-08.
-The fast-forward pull advanced this worktree from `7660535` to `678fcf5`.
-Working branch: `codex/phase-1-linux-validation`.
+Snapshot: Bulwark `main` at `fc68765`, followed by the command and browser continuation on 2026-11-08.
+The fast-forward pull advanced this worktree from `678fcf5` to `fc68765`.
+Working branch: `main`.
+
+## Phase 1 commands and browser continuation
+
+The [command checkpoint](phase-1-commands.md) adds the Clojure command registry, Emacs-style key sequences, event hooks, and browser commands.
+Commands retain Vars, so later definitions affect existing bindings.
+Hooks run in registration order, await returned futures, and use a snapshot for each event.
+The default dispatcher routes keys to commands and events to hooks.
+The native shell installs its echo policy as hooks instead of replacing the dispatcher.
+
+The Clojure browser layer tracks the active view and supplies navigation, reload, back, and forward helpers.
+Its title hooks retain the latest 256 visits and omit consecutive identical URL/title pairs.
+`C-x h` displays recent titles. `bulwark.browser/visit-history!` revisits an entry by index.
+The new command and browser suites pass against the product mock bridge in both TreeWalk and Tiered modes.
+All 30 workspace tests, workspace Clippy, and the headless smoke passed locally.
+All three native unit tests and native/Servo Clippy passed.
+All seven native process cases passed, including browser commands/history and hook-error shutdown.
+Every native case joined the runtime worker. The final browser case painted 21 frames and made 24 presentations.
+The Servo contract tests and software smoke passed. The software smoke painted 14 frames and joined the worker.
+
+Native input routing and echo geometry remain unchanged.
+Command keys still reach Servo before Clojure receives them. Key interception remains open.
+The product still requires `--features native` for a window and does not start nREPL.
+
+The [post-merge main CI run](https://github.com/csm/bulwark/actions/runs/42578603502) passed both runtime jobs but failed the Servo job.
+SpiderMonkey attempted a source build after its prebuilt archive failed, then stopped because `llvm-objdump` was absent.
+The workflow now installs `llvm`. That dependency change still requires Linux CI confirmation.
 
 ## Phase 1 Linux CI continuation
 
@@ -168,10 +194,10 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Add the Phase 1 command registry, keymap, and hooks while preserving the interactive macOS checks.
-2. Add the Clojure browser behavior.
-3. Preserve budgeted nREPL admission and overload regressions in the product integration.
-4. Run the Phase 1 acceptance checks against the product executable, including explicit interpreter coverage.
+1. Run Linux CI with the LLVM dependency and new Clojure integration suites.
+2. Add opt-in loopback nREPL and the profile port file, with budgeted admission and overload regressions.
+3. Add key interception while preserving ordinary Servo input during runtime stalls.
+4. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.
@@ -251,5 +277,10 @@ The Python runners impose independent process deadlines.
 - `crates/bulwark-shell/src/main.rs`: bootstrap, mock smoke, software Servo driver, and native feature entry point.
 - `crates/bulwark-shell/src/native/`: winit host, input routing, Servo/egui composition, and bounded shutdown.
 - `clj/bulwark/shell.cljrs`: initial view creation and default echo dispatcher.
+- `clj/bulwark/commands.cljrs`: documented commands and live Var invocation.
+- `clj/bulwark/keymap.cljrs`: Emacs-style sequence parsing and command dispatch.
+- `clj/bulwark/hooks.cljrs`: ordered, awaited event hooks.
+- `clj/bulwark/browser.cljrs`: browser commands and retained title history.
+- `clj/tests/commands.cljrs` and `clj/tests/browser.cljrs`: interpreter and tiered integration suites.
 - `clj/tests/native.cljrs`: native smoke program.
 - `experiments/run_product_native.py`: process-bounded product rendering and lifecycle checks.

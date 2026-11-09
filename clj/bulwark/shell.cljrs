@@ -1,5 +1,7 @@
 (ns bulwark.shell
   (:require [bulwark.native :as native]
+            [bulwark.browser :as browser]
+            [bulwark.hooks :as hooks]
             [clojure.core.async :refer [timeout]]))
 
 (defn value!
@@ -14,14 +16,16 @@
   (case (:event/type event)
     :page/title-changed (await (native/set-echo! (:title event)))
     :page/crashed (await (native/set-echo! (str "Page crashed: " (:message event))))
-    :input/key (when (:pressed event)
+    :input/key (when (and (:pressed event) (= :unbound (:keymap/status event)))
                  (await (native/set-echo! (str "Key: " (:key event)))))
     nil))
 
 (defn ^:async run!
   "Opens the initial page and keeps the runtime alive until native shutdown."
   [url]
-  (alter-var-root #'bulwark.core/dispatch! (constantly dispatch!))
+  (browser/install!)
+  (doseq [event-type [:page/title-changed :page/crashed :input/key]]
+    (hooks/add-hook! event-type :bulwark.shell/echo #'dispatch!))
   (value! (await (native/set-echo! "Bulwark")))
-  (value! (await (native/webview-create url)))
+  (reset! browser/active-view (value! (await (native/webview-create url))))
   (loop [] (await (timeout 60000)) (recur)))

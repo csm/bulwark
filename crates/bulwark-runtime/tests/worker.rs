@@ -203,3 +203,57 @@ fn embedded_shell_opens_a_view_and_displays_native_key_events() {
     assert!(opened, "Shell did not create a view: {result:?}");
     assert!(received_echo, "Shell did not echo the key: {result:?}");
 }
+
+fn run_product_clojure(source: &str, expected: &str, mode: cljrs_runtime::ExecutionMode) {
+    use bulwark_engine::{Command, Data};
+    let (runtime, mut endpoint) = bridge::channel(Arc::new(|| {}));
+    let mut engine = MockEngine::new(endpoint.events.clone());
+    let mut worker = Worker::spawn_with_mode(runtime, source.into(), mode).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !worker.finished() && Instant::now() < deadline {
+        endpoint.admit(|request| match request.command {
+            Command::SetEcho(_) | Command::Log(_) => request.complete(Ok(Data::Nil)),
+            _ => engine.handle(request),
+        });
+        engine.tick();
+        thread::sleep(Duration::from_millis(1));
+    }
+    let timed_out = !worker.finished();
+    endpoint.stop_admission();
+    engine.shutdown();
+    worker.stop();
+    let result = wait(&mut worker);
+    assert!(
+        !timed_out,
+        "Clojure program timed out in {mode:?}: {result:?}"
+    );
+    assert_eq!(result.unwrap(), expected, "Evaluator: {mode:?}");
+}
+
+#[test]
+fn command_keymap_and_hooks_pass_in_interpreter_and_tiered_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/commands.cljrs"),
+            ":commands-passed",
+            mode,
+        );
+    }
+}
+
+#[test]
+fn clojure_browser_commands_and_history_use_the_product_bridge() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/browser.cljrs"),
+            ":browser-passed",
+            mode,
+        );
+    }
+}

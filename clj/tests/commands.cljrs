@@ -1,0 +1,96 @@
+;; Run against the product bridge in both TreeWalk and Tiered modes.
+(ns bulwark.tests.commands
+  (:require [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.core :as core]
+            [bulwark.browser :as browser]
+            [bulwark.native :as native]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defn fails? [f]
+  (try (f) false (catch Exception error true)))
+
+(def calls (atom []))
+(defcommand sample "Records an invocation." [] (swap! calls conj :original))
+(defcommand ^:async parked "Awaits a browser reply and a timer." []
+  (await (timeout 1))
+  (await (browser/set-echo! "Awaited command"))
+  (swap! calls conj :awaited))
+
+(defn key-event [key control]
+  {:event/type :input/key :webview 1 :key key :control control :pressed true})
+
+(defn ^:async key! [key control]
+  (await (core/dispatch! (key-event key control))))
+
+(defn ^:async commands! []
+  (check! (= "Records an invocation." (:doc (commands/command-info 'sample))) "Missing command doc")
+  (check! (= 'bulwark.tests.commands/sample (:name (commands/command-info 'sample))) "Wrong command namespace")
+  (check! (fails? (fn [] (commands/command-info 'missing))) "Unknown command accepted")
+  (check! (fails? (fn [] (commands/register! 'bad "" #'sample))) "Undocumented command accepted")
+  (check! (fails? (fn [] (commands/register! 'test/bad "Bad command" sample))) "Function snapshot accepted")
+  (commands/register! 'another/sample "Another command with the same name." #'sample)
+  (check! (fails? (fn [] (commands/command-info 'sample))) "Ambiguous command accepted")
+  (check! (= 'bulwark.tests.commands/sample
+             (:name (commands/command-info 'bulwark.tests.commands/sample))) "Qualified command was ambiguous")
+  (swap! commands/registry dissoc 'another/sample)
+  (check! (= ["C-M-x" "C--" "Enter" "S-x" "s-r"]
+             (keymap/parse-keys " M-C-x   C-- RET X s-r ")) "Key parsing failed")
+  (check! (= "M-<" (keymap/canonical-stroke "<" false true true false))
+          "Shifted punctuation lost its binding")
+  (doseq [bad ["" " " "C-" "C-C-x" "H-x"]]
+    (check! (fails? (fn [] (keymap/parse-keys bad))) (str "Invalid key accepted: " bad)))
+  (keymap/bind-key! "C-x C-f" 'sample)
+  (check! (fails? (fn [] (keymap/bind-key! "C-x" 'sample))) "Shorter prefix collision accepted")
+  (check! (fails? (fn [] (keymap/bind-key! "C-x C-f r" 'sample))) "Longer prefix collision accepted")
+  (await (key! "x" true))
+  (await (core/dispatch! (assoc (key-event "x" true) :pressed false)))
+  (await (key! "Control" true))
+  (check! (empty? @calls) "Prefix or release invoked command")
+  (await (key! "f" true))
+  (check! (= [:original] @calls) "Sequence did not invoke command")
+  ;; A binding retains the Var. A plain defn changes its next invocation.
+  (defn sample [] (swap! calls conj :redefined))
+  (await (key! "x" true)) (await (key! "f" true))
+  (check! (= [:original :redefined] @calls) "Binding retained old function")
+  (keymap/bind-key! "C-x C-f" 'parked)
+  (await (key! "x" true)) (await (key! "f" true))
+  (check! (= :awaited (last @calls)) "Async command failed")
+  (doseq [cancel ["g" "Escape" "z"]]
+    (await (key! "x" true))
+    (await (key! cancel (= cancel "g")))
+    (await (key! "f" true)))
+  (check! (= 3 (count @calls)) "Cancelled prefix invoked command")
+  (await (key! "x" true))
+  (await (core/dispatch! (assoc (key-event "f" true) :webview 2)))
+  (check! (= 3 (count @calls)) "Prefix crossed views")
+  (await (key! "x" true))
+  (keymap/unbind-key! "C-x C-f")
+  (await (key! "f" true))
+  (check! (= 3 (count @calls)) "Unbound command invoked")
+  (let [seen (atom [])]
+    (hooks/add-hook! :test/event :first (fn [event] (swap! seen conj :old)))
+    (hooks/add-hook! :test/event :second
+      (fn [event]
+        (hooks/remove-hook! :test/event :third)
+        (swap! seen conj :second)))
+    (hooks/add-hook! :test/event :third (fn [event] (swap! seen conj :third)))
+    (hooks/add-hook! :test/event :first
+      (fn ^:async [event]
+        (await (browser/set-echo! "Awaited hook"))
+        (swap! seen conj :new)))
+    (await (core/dispatch! {:event/type :test/event}))
+    (check! (= [:new :second :third] @seen) "Hook ordering, replacement, or snapshot failed")
+    (reset! seen [])
+    (await (core/dispatch! {:event/type :test/event}))
+    (check! (= [:new :second] @seen) "Hook removal failed"))
+  (hooks/add-hook! :test/error :failure (fn [event] (throw (ex-info "Hook failure" {}))))
+  (check! (try (await (core/dispatch! {:event/type :test/error})) false
+               (catch Exception error true)) "Hook error was lost")
+  :commands-passed)
+
+(commands!)

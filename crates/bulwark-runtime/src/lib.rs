@@ -36,6 +36,22 @@ impl RuntimeHost {
         let runtime = Runtime::builder()
             .execution_mode(mode)
             .builtin_source(
+                "bulwark.browser",
+                include_str!("../../../clj/bulwark/browser.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.commands",
+                include_str!("../../../clj/bulwark/commands.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.hooks",
+                include_str!("../../../clj/bulwark/hooks.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.keymap",
+                include_str!("../../../clj/bulwark/keymap.cljrs"),
+            )
+            .builtin_source(
                 "bulwark.core",
                 include_str!("../../../clj/bulwark/core.cljrs"),
             )

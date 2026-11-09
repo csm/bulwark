@@ -1,0 +1,56 @@
+(ns bulwark.tests.browser
+  (:require [bulwark.browser :as browser]
+            [bulwark.commands :as commands]
+            [bulwark.core :as core]
+            [bulwark.hooks :as hooks]
+            [bulwark.native :as native]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defn ^:async wait-history! [n]
+  (loop []
+    (when (< (count @browser/history) n)
+      (await (timeout 1)) (recur))))
+
+(defn ^:async browser! []
+  (browser/install!)
+  (browser/install!)
+  (reset! browser/active-view
+          (browser/value! (await (native/webview-create "https://example.com/first"))))
+  (await (wait-history! 1))
+  (await (browser/navigate! "https://example.com/second"))
+  (await (wait-history! 2))
+  (check! (= ["https://example.com/first" "https://example.com/second"]
+             (mapv :url @browser/history)) "Clojure history did not record navigations")
+  (check! (integer? (:at (first @browser/history))) "History timestamp missing")
+  ;; Reload produces another title event; consecutive identical visits are coalesced.
+  (await (commands/invoke! 'bulwark.browser/reload))
+  (await (commands/invoke! 'bulwark.browser/back))
+  (await (wait-history! 3))
+  (check! (= "https://example.com/first" (:url (last @browser/history))) "Back command failed")
+  (await (commands/invoke! 'bulwark.browser/forward))
+  (await (wait-history! 4))
+  (await (browser/visit-history! 0))
+  (await (wait-history! 5))
+  (check! (= "https://example.com/first"
+             (:url (browser/value! (await (native/webview-info @browser/active-view)))))
+          "History visit did not navigate the active page")
+  (check! (= 5 (count @browser/history)) "Reload recorded a duplicate visit")
+  (await (commands/invoke! 'bulwark.browser/history-list))
+  ;; The hook tracks every view by its own URL, independently of active-view startup.
+  (await (core/dispatch! {:event/type :page/title-changed :webview 999 :title "Unknown"}))
+  (check! (= 5 (count @browser/history)) "Unknown view polluted history")
+  (doseq [n (range 300)]
+    (await (core/dispatch! {:event/type :page/url-changed :webview 999 :url (str "about:" n)}))
+    (await (core/dispatch! {:event/type :page/title-changed :webview 999 :title (str n)})))
+  (check! (= 256 (count @browser/history)) "History retention limit failed")
+  (check! (= "44" (:title (first @browser/history))) "History discarded newest entries")
+  (let [view @browser/active-view]
+    (browser/value! (await (native/webview-close view)))
+    (loop [] (when @browser/active-view (await (timeout 1)) (recur)))
+    (check! (nil? (get @browser/pages view)) "Closed page remained tracked"))
+  :browser-passed)
+
+(browser!)

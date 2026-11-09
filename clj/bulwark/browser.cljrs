@@ -1,0 +1,88 @@
+(ns bulwark.browser
+  (:require [bulwark.native :as native]
+            [bulwark.commands :refer [defcommand]]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [clojure.string :as string]))
+
+(def active-view (atom nil))
+(def pages (atom {}))
+(def history (atom []))
+(def history-limit 256)
+
+(defn value!
+  "Returns a successful native value, or raises an error containing the reply."
+  [reply]
+  (when-not (:ok reply) (throw (ex-info "Native browser operation failed" reply)))
+  (:value reply))
+
+(defn current-view!
+  "Returns the visible view handle, or reports that no page is open."
+  []
+  (or @active-view (throw (ex-info "No active browser view" {}))))
+
+(defn ^:async set-echo!
+  "Displays text in the native echo area."
+  [text]
+  (value! (await (native/set-echo! text))))
+
+(defn ^:async navigate!
+  "Navigates the visible page."
+  [url]
+  (value! (await (native/navigate (current-view!) url))))
+
+(defn track-page!
+  "Tracks page URLs and retains the most recent 256 titled visits in memory."
+  [event]
+  (let [view (:webview event)]
+    (case (:event/type event)
+      :page/url-changed (swap! pages assoc view (:url event))
+      :page/closed (do (swap! pages dissoc view)
+                       (when (= view @active-view) (reset! active-view nil)))
+      :page/title-changed
+      (when-let [url (get @pages view)]
+        (when (seq (:title event))
+          (let [visit {:url url :title (:title event) :at (System/currentTimeMillis)}
+                previous (last @history)]
+            (when-not (= (select-keys previous [:url :title]) (select-keys visit [:url :title]))
+              (swap! history (fn [visits] (vec (take-last history-limit (conj visits visit)))))))))
+      nil)))
+
+(defcommand ^:async reload
+  "Reloads the visible page."
+  []
+  (value! (await (native/reload (current-view!)))))
+
+(defcommand ^:async back
+  "Moves backward in the visible page's navigation history."
+  []
+  (value! (await (native/back (current-view!)))))
+
+(defcommand ^:async forward
+  "Moves forward in the visible page's navigation history."
+  []
+  (value! (await (native/forward (current-view!)))))
+
+(defcommand ^:async history-list
+  "Shows recent page titles in the echo area, newest first."
+  []
+  (await (set-echo! (if (seq @history)
+                     (string/join " | " (map :title (reverse (take-last 8 @history))))
+                     "No titled pages yet"))))
+
+(defn ^:async visit-history!
+  "Navigates to a retained visit by zero-based index, oldest first."
+  [index]
+  (when-not (and (integer? index) (<= 0 index) (< index (count @history)))
+    (throw (ex-info "History index is out of range" {:index index})))
+  (await (navigate! (:url (nth @history index)))))
+
+(defn install!
+  "Installs browser hooks and default keys. Repeated installation replaces them."
+  []
+  (doseq [event-type [:page/url-changed :page/title-changed :page/closed]]
+    (hooks/add-hook! event-type :bulwark.browser/track-page #'track-page!))
+  (keymap/bind-key! "C-c r" 'bulwark.browser/reload)
+  (keymap/bind-key! "C-c b" 'bulwark.browser/back)
+  (keymap/bind-key! "C-c f" 'bulwark.browser/forward)
+  (keymap/bind-key! "C-x h" 'bulwark.browser/history-list))
