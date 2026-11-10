@@ -147,5 +147,6 @@ A8 remains open for explicit interpreter coverage. The product worker currently 
 The [native continuation](phase-1-native.md) connects the window, input, presentation, and egui echo area to the product adapter.
 Preserve the Phase 0 single-visible-view fallback and bounded worker shutdown.
 The [command continuation](phase-1-commands.md) adds commands, keymaps, hooks, and Clojure title history.
-Opt-in loopback nREPL and key interception remain next.
+The [nREPL continuation](phase-1-nrepl.md) adds opt-in loopback discovery and budgeted admission.
+The [key interception continuation](phase-1-keys.md) adds synchronous reservation snapshots and ordered prefix resets.
 The product does not start an nREPL listener yet. Its budgeted admission remains proven in E7.

@@ -26,12 +26,25 @@ struct State {
     stopped: AtomicBool,
     error: Mutex<Option<Fault>>,
     wake: Wake,
+    key_routes: Mutex<Arc<crate::keys::KeyRoutes>>,
 }
 /// Terminal state lives outside the event queue, so a full queue cannot hide it.
 /// Stopping requests host shutdown; the host cancels the runtime after engine cleanup.
 #[derive(Clone)]
 pub struct Control(Arc<State>);
 impl Control {
+    /// A single bounded snapshot replaces the previous one; no queued updates.
+    pub fn set_key_routes(&self, routes: crate::keys::KeyRoutes) -> Result<(), Fault> {
+        if self.is_stopped() {
+            return Err(Fault::ShuttingDown);
+        }
+        let old = std::mem::replace(&mut *self.0.key_routes.lock().unwrap(), Arc::new(routes));
+        drop(old);
+        Ok(())
+    }
+    pub fn key_routes(&self) -> Arc<crate::keys::KeyRoutes> {
+        self.0.key_routes.lock().unwrap().clone()
+    }
     pub fn is_stopped(&self) -> bool {
         self.0.stopped.load(Ordering::Acquire)
     }
@@ -233,6 +246,7 @@ pub fn channel(wake: Wake) -> (RuntimeEndpoint, EngineEndpoint) {
     let control = Control(Arc::new(State {
         stopped: AtomicBool::new(false),
         error: Mutex::new(None),
+        key_routes: Mutex::new(Arc::default()),
         wake,
     }));
     let (sender, requests) = mpsc::channel(REQUEST_CAPACITY);

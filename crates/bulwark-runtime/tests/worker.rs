@@ -257,3 +257,108 @@ fn clojure_browser_commands_and_history_use_the_product_bridge() {
         );
     }
 }
+
+#[test]
+fn key_reservations_publish_before_a_runtime_stall_and_unbind_live() {
+    use bulwark_engine::{Command, Data, KeyInput};
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        let (runtime, mut endpoint) = bridge::channel(Arc::new(|| {}));
+        let source = r#"
+          (require '[bulwark.keymap :as keymap]
+                   '[bulwark.commands :refer [defcommand]]
+                   '[bulwark.native :as native])
+          (defcommand sample "Reservation probe." [] nil)
+          (defn ^:async probe! []
+            (keymap/bind-key! "C-x C-f" 'sample)
+            (native/log "stall")
+            ;; Keep the runtime thread occupied after synchronous publication.
+            (let [end (+ (System/nanoTime) 200000000)]
+              (loop [] (when (< (System/nanoTime) end) (recur))))
+            (await (native/log "recovered"))
+            (keymap/unbind-key! "C-x C-f")
+            (await (native/log "unbound"))
+            :reservations-passed)
+          (probe!)"#;
+        let mut worker = Worker::spawn_with_mode(runtime, source.into(), mode).unwrap();
+        let mut stages = Vec::new();
+        let control = endpoint.control.clone();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !worker.finished() && Instant::now() < deadline {
+            endpoint.admit(|request| {
+                let Command::Log(stage) = &request.command else {
+                    panic!("Unexpected request: {:?}", request.command);
+                };
+                let routes = control.key_routes();
+                let mut prefix = Vec::new();
+                let key = |s: &str, control| KeyInput {
+                    key: s.into(),
+                    control,
+                    alt: false,
+                    shift: false,
+                    meta: false,
+                    pressed: true,
+                };
+                if stage == "unbound" {
+                    assert!(!routes.capture(&mut prefix, &key("x", true)));
+                } else {
+                    assert!(routes.capture(&mut prefix, &key("x", true)));
+                    assert!(routes.capture(&mut prefix, &key("f", true)));
+                    assert!(prefix.is_empty());
+                }
+                assert!(!routes.capture(&mut prefix, &key("a", false)));
+                stages.push(stage.clone());
+                request.complete(Ok(Data::Nil));
+            });
+            thread::sleep(Duration::from_millis(1));
+        }
+        if !worker.finished() {
+            worker.stop();
+        }
+        assert_eq!(wait(&mut worker).unwrap(), ":reservations-passed");
+        assert_eq!(stages, ["stall", "recovered", "unbound"]);
+    }
+}
+
+#[test]
+fn native_stroke_spelling_matches_the_clojure_keymap() {
+    use bulwark_engine::KeyInput;
+    let mut source = String::new();
+    for text in [
+        "x",
+        "X",
+        "é",
+        "É",
+        "<",
+        "-",
+        " ",
+        "Enter",
+        "Tab",
+        "Escape",
+        "ArrowLeft",
+    ] {
+        for flags in 0..16 {
+            let key = KeyInput {
+                key: text.into(),
+                control: flags & 1 != 0,
+                alt: flags & 2 != 0,
+                shift: flags & 4 != 0,
+                meta: flags & 8 != 0,
+                pressed: true,
+            };
+            source.push_str(&format!(
+                "(when-not (= {:?} (bulwark.keymap/canonical-stroke {:?} {} {} {} {})) (throw (ex-info \"Stroke mismatch\" {{}})))\n",
+                key.stroke(), text, key.control, key.alt, key.shift, key.meta,
+            ));
+        }
+    }
+    source.push_str(":spelling-passed");
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(&source, ":spelling-passed", mode);
+    }
+}

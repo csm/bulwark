@@ -8,7 +8,7 @@ Product implementation remains Phase 1 work. The [Phase 0 exit review](../phase-
 The main thread owns `winit`, Servo, webviews, rendering contexts, input, and egui chrome.
 A dedicated thread owns Clojurust, GC values, its Tokio executor, its LocalSet, and the embedded nREPL poller.
 The runtime drives its LocalSet continuously, independently of display frames.
-Only owned Rust requests, replies, and events cross the thread boundary.
+Only owned Rust requests, replies, events, and immutable key reservation snapshots cross the thread boundary.
 Neither thread accesses the other's runtime or engine objects.
 
 Browser operations return futures. Native Clojure entry points run on fibers and await those futures.
@@ -42,6 +42,7 @@ Phase 1 must implement and verify this contract before product acceptance.
 | Browser requests | 32 queued, 64 unfinished | Return structured `:busy` without waiting for capacity |
 | Engine admission | 16 requests or 2 ms between requests per turn | Return to native event processing, then schedule another turn |
 | Ordered engine events | 256 queued | Record one fatal bridge error and begin controlled shutdown |
+| Key reservations | One snapshot, 256 sequences, 16 strokes per sequence, 128 UTF-8 bytes per stroke, 16 cancellation strokes | Throw before replacement and retain the previous snapshot |
 | Command string data | 1 MiB combined UTF-8 bytes per request | Return structured `:payload-too-large` before queue admission |
 | Reply string data | 1 MiB combined UTF-8 bytes per reply | Return structured `:payload-too-large` |
 | Event string data | 64 KiB combined UTF-8 bytes per event | Record one fatal bridge error and begin controlled shutdown |
@@ -81,6 +82,19 @@ The host joins the worker only after completion, with a two-second deadline.
 A worker panic wakes the native loop and follows the error path.
 If the worker does not stop, the host reports failure and exits the process.
 Forced exit does not establish runtime cleanup, successful cancellation, or rollback.
+
+## Native key reservations
+
+The [key interception checkpoint](../phase-1-keys.md) adds a bounded snapshot outside the request queue.
+Clojure publishes canonical sequences and cancellation strokes through the synchronous `bulwark.native/set-key-routes!` mechanism.
+Publication replaces one immutable snapshot before the binding function returns.
+The native loop clones its pointer under a mutex, then matches keys without runtime execution or a future reply.
+Both threads release that mutex before they process keys or execute Clojure.
+
+This exception to future-returning browser operations prevents command keys from reaching Servo during runtime stalls.
+Clojure owns the binding map and command behavior. Rust applies the reservation data and retains physical key ownership through release.
+The existing event queue carries runtime key delivery and ordered prefix resets.
+Its capacity and fatal overflow policy still apply during a stall.
 
 ## Scheduling policy and remaining scope
 

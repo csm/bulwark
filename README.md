@@ -60,7 +60,9 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    The [native shell checkpoint](docs/phase-1-native.md) records the implementation and validation limits.
    The [command checkpoint](docs/phase-1-commands.md) describes Clojure commands, keymaps, hooks, and title history.
    Default keys include `C-c r` for reload and `C-x h` for recent page titles.
-   Command keys also reach the page until key interception is implemented.
+   The native shell reserves command sequences before Servo receives them.
+   Unbound keys reach Servo without a runtime wait.
+   The [key interception checkpoint](docs/phase-1-keys.md) records ownership rules and coverage.
 
    Enable the product nREPL listener:
 

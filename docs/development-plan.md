@@ -735,15 +735,13 @@ than its author, without changes to Rust.
 
 Phase 0 is complete. The [exit review](phase-0-exit.md) records evidence and accepted fallbacks.
 
-1. Promote E3 and E7 mechanisms into the product crates under the D1–D4 contracts.
-   Preserve main-thread engine ownership, dedicated runtime ownership, and owned messages across the bridge.
-2. Implement Phase 1 native API v0 and event delivery to `bulwark.core/dispatch!`.
-   Apply D1 queue, payload, overload, cancellation, and shutdown limits during promotion.
-3. Add Clojure commands, keymaps, hooks, and one end-to-end browser behavior after the completed local native checks.
-4. Add opt-in loopback nREPL with budgeted admission and accepted-work limits.
-   Preserve the overload, interruption, recovery, and shutdown regressions from E7.
-5. Run the Phase 1 acceptance checks against the product executable.
-   The `native` feature opens a window. The default bootstrap and remaining acceptance checks remain incomplete.
+The product now includes the bounded bridge, native API, Servo window, Clojure commands, browser history, and opt-in nREPL.
+The [key interception checkpoint](phase-1-keys.md) adds native reservations without a runtime wait for ordinary page input.
+
+1. Run Linux CI for the key interception continuation.
+2. Run physical key sequences and ordinary page input during a two-second runtime stall.
+3. Run the Phase 1 acceptance checks against the product executable.
+   The `native` feature opens a window. Default native startup and the remaining acceptance checks remain incomplete.
 
 E5 remains mandatory for simultaneous web content splits.
 Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.

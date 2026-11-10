@@ -13,5 +13,6 @@
   (let [routed (case (:event/type event)
                  :input/key (assoc event :keymap/status (await (keymap/dispatch-key! event)))
                  :page/closed (do (keymap/reset-prefix!) event)
+                 :input/reset (do (keymap/reset-prefix!) event)
                  event)]
     (await (hooks/run-hooks! routed))))

@@ -413,20 +413,36 @@ impl ApplicationHandler<Wake> for App {
                         .engine
                         .set_window_state(surface.window.scale_factor() as f32, focused);
                     surface.input.reset();
-                }
-                _ => {
-                    if let Some((handle, view)) = surface.engine.active_webview()
-                        && let Some(key) = surface.input.forward(
-                            &view,
-                            event,
-                            surface.page_size,
-                            response.consumed,
-                        )
+                    if let Some((handle, _)) = surface.engine.active_webview()
                         && let Some(endpoint) = &self.endpoint
                     {
                         let _ = endpoint
                             .events
-                            .emit(handle, bulwark_engine::EventKind::KeyInput(key));
+                            .emit(handle, bulwark_engine::EventKind::InputReset);
+                    }
+                }
+                _ => {
+                    if let Some((handle, view)) = surface.engine.active_webview()
+                        && let Some(endpoint) = &self.endpoint
+                    {
+                        if surface
+                            .input
+                            .sync_routes(endpoint.control.key_routes(), handle)
+                        {
+                            let _ = endpoint
+                                .events
+                                .emit(handle, bulwark_engine::EventKind::InputReset);
+                        }
+                        if let Some(key) = surface.input.forward(
+                            &view,
+                            event,
+                            surface.page_size,
+                            response.consumed,
+                        ) {
+                            let _ = endpoint
+                                .events
+                                .emit(handle, bulwark_engine::EventKind::KeyInput(key));
+                        }
                     }
                 }
             }

@@ -45,6 +45,17 @@
   (doseq [bad ["" " " "C-" "C-C-x" "H-x"]]
     (check! (fails? (fn [] (keymap/parse-keys bad))) (str "Invalid key accepted: " bad)))
   (keymap/bind-key! "C-x C-f" 'sample)
+  (check! (string? (:doc (meta #'native/set-key-routes!))) "Missing native routing docstring")
+  (let [before @keymap/bindings]
+    (doseq [args [[nil []] [[[]] []] [[["x"]] [""]]
+                  [[[(apply str (repeat 129 "x"))]] []]
+                  [[(vec (repeat 17 "x"))] []]
+                  [(vec (repeat 257 ["x"])) []]]]
+      (check! (fails? (fn [] (apply native/set-key-routes! args))) "Invalid native routes accepted"))
+    (check! (= before @keymap/bindings) "Invalid publication mutated bindings")
+    (check! (fails? (fn [] (keymap/bind-key! (apply str (interpose " " (repeat 17 "q"))) 'sample)))
+            "Oversized bind was accepted")
+    (check! (= before @keymap/bindings) "Failed bind changed bindings"))
   (check! (fails? (fn [] (keymap/bind-key! "C-x" 'sample))) "Shorter prefix collision accepted")
   (check! (fails? (fn [] (keymap/bind-key! "C-x C-f r" 'sample))) "Longer prefix collision accepted")
   (await (key! "x" true))
@@ -68,6 +79,10 @@
   (await (key! "x" true))
   (await (core/dispatch! (assoc (key-event "f" true) :webview 2)))
   (check! (= 3 (count @calls)) "Prefix crossed views")
+  (await (key! "x" true))
+  (await (core/dispatch! {:event/type :input/reset :webview 1}))
+  (await (key! "f" true))
+  (check! (= 3 (count @calls)) "Native reset did not cancel prefix")
   (await (key! "x" true))
   (keymap/unbind-key! "C-x C-f")
   (await (key! "f" true))

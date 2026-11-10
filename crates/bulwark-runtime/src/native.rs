@@ -1,4 +1,4 @@
-//! The only Rust-populated Clojure namespace: future-returning mechanisms.
+//! The only Rust-populated Clojure namespace: browser futures and key reservations.
 use bulwark_engine::{
     Command, Data, Event, EventKind, Handle,
     bridge::{Client, DEFAULT_TIMEOUT, RuntimeEndpoint},
@@ -84,7 +84,7 @@ fn event_value(event: Event) -> Value {
             ("meta", Value::Bool(key.meta)),
             ("pressed", Value::Bool(key.pressed)),
         ]),
-        EventKind::Closed => {}
+        EventKind::Closed | EventKind::InputReset => {}
     }
     map(fields)
 }
@@ -121,7 +121,7 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
     let RuntimeEndpoint {
         client,
         events,
-        control: _,
+        control,
     } = endpoint;
     type BuildCommand = fn(&[Value]) -> Result<Command, ValueError>;
     let operations: &[(&str, usize, BuildCommand)] = &[
@@ -162,6 +162,59 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             Value::NativeFunction(GcPtr::new(native)),
         );
     }
+    // Publication is synchronous: bind-key! must update reservations before it
+    // returns, including when a caller immediately starts a synchronous loop.
+    let native = NativeFn::with_closure(
+        "bulwark.native/set-key-routes!",
+        Arity::Fixed(2),
+        move |args| {
+            let vector = |value: &Value, max: usize| match value {
+                Value::Vector(v) if v.get().count() <= max => {
+                    Ok(v.get().iter().cloned().collect::<Vec<_>>())
+                }
+                _ => Err(ValueError::Other(
+                    "Expected a bounded key routing vector".into(),
+                )),
+            };
+            let stroke = |value: &Value| match value {
+                Value::Str(s)
+                    if !s.get().is_empty()
+                        && s.get().len() <= bulwark_engine::keys::MAX_STROKE_BYTES =>
+                {
+                    Ok(s.get().clone())
+                }
+                _ => Err(ValueError::Other(
+                    "Expected a nonempty key stroke of at most 128 bytes".into(),
+                )),
+            };
+            let sequences = vector(&args[0], bulwark_engine::keys::MAX_SEQUENCES)?;
+            let cancel = vector(&args[1], bulwark_engine::keys::MAX_STROKES)?;
+            let sequences = sequences
+                .iter()
+                .map(|sequence| {
+                    vector(sequence, bulwark_engine::keys::MAX_STROKES)?
+                        .iter()
+                        .map(stroke)
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let cancel = cancel.iter().map(stroke).collect::<Result<Vec<_>, _>>()?;
+            let routes = bulwark_engine::keys::KeyRoutes::new(sequences, cancel)
+                .map_err(|e| ValueError::Other(e.to_string()))?;
+            control
+                .set_key_routes(routes)
+                .map_err(|e| ValueError::Other(e.to_string()))?;
+            Ok(Value::Nil)
+        },
+    );
+    let routes_var = globals.intern(
+        "bulwark.native",
+        "set-key-routes!".into(),
+        Value::NativeFunction(GcPtr::new(native)),
+    );
+    routes_var.get().set_meta(map(vec![("doc", Value::string(
+        "Synchronously replaces native key reservations from vectors of canonical sequences and cancellation strokes. Returns nil, or throws without changing the snapshot."
+    ))]));
     let events = Rc::new(Mutex::new(events));
     let native = NativeFn::with_closure("bulwark.native/next-event", Arity::Fixed(0), move |_| {
         let events = events.clone();

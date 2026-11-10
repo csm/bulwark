@@ -3,16 +3,17 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 //! Native input adapted from Servo’s MPL-2.0 winit example; see ../../NOTICE.md.
-use bulwark_engine::KeyInput;
+use bulwark_engine::{Handle, KeyInput, keys::KeyRoutes};
 use servo::{DevicePoint, InputEvent, WebView};
 use std::cell::Cell;
+use std::sync::Arc;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 
 pub struct Input {
     cursor: Cell<DevicePoint>,
     modifiers: Cell<servo::Modifiers>,
     pointer: PointerRoute,
-    keys: Vec<winit::keyboard::PhysicalKey>,
+    keys: KeyboardRoute,
 }
 impl Default for Input {
     fn default() -> Self {
@@ -20,7 +21,7 @@ impl Default for Input {
             cursor: Cell::new(DevicePoint::zero()),
             modifiers: Cell::new(servo::Modifiers::empty()),
             pointer: PointerRoute::default(),
-            keys: Vec::new(),
+            keys: KeyboardRoute::default(),
         }
     }
 }
@@ -28,7 +29,12 @@ impl Input {
     pub fn reset(&mut self) {
         self.modifiers.set(servo::Modifiers::empty());
         self.pointer = PointerRoute::default();
-        self.keys.clear();
+        self.keys.reset();
+    }
+    /// Synchronize route generation and view before processing another key.
+    /// The caller emits an ordered reset event when this returns true.
+    pub fn sync_routes(&mut self, routes: Arc<KeyRoutes>, view: Handle) -> bool {
+        self.keys.sync(routes, view)
     }
     pub fn forward(
         &mut self,
@@ -107,17 +113,6 @@ impl Input {
                 self.modifiers.set(flags);
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                let held = self.keys.contains(&event.physical_key);
-                if consumed && !(held && event.state == ElementState::Released) {
-                    return None;
-                }
-                if event.state == ElementState::Pressed {
-                    if !held {
-                        self.keys.push(event.physical_key);
-                    }
-                } else {
-                    self.keys.retain(|key| *key != event.physical_key);
-                }
                 let key = match event.logical_key.clone() {
                     winit::keyboard::Key::Character(text) => {
                         servo::Key::Character(text.to_string())
@@ -156,23 +151,89 @@ impl Input {
                     meta: flags.contains(servo::Modifiers::META),
                     pressed: event.state == ElementState::Pressed,
                 };
-                view.notify_input_event(InputEvent::Keyboard(
-                    servo::KeyboardEvent::new_without_event(
-                        key_state,
-                        key,
-                        code,
-                        location,
-                        self.modifiers.get(),
-                        event.repeat,
-                        false,
-                    ),
-                ));
+                let route = self.keys.route(event.physical_key, &owned, consumed);
+                if route.page {
+                    view.notify_input_event(InputEvent::Keyboard(
+                        servo::KeyboardEvent::new_without_event(
+                            key_state,
+                            key,
+                            code,
+                            location,
+                            self.modifiers.get(),
+                            event.repeat,
+                            false,
+                        ),
+                    ));
+                }
+                if !route.emit {
+                    return None;
+                }
                 return Some(owned);
             }
             WindowEvent::CursorLeft { .. } => self.pointer.inside = false,
             _ => {}
         }
         None
+    }
+}
+
+#[derive(Default)]
+struct KeyboardRoute {
+    routes: Arc<KeyRoutes>,
+    view: Option<Handle>,
+    pending: Vec<String>,
+    // Ownership survives keymap updates until release. true means Servo owns it.
+    held: Vec<(winit::keyboard::PhysicalKey, bool)>,
+}
+#[derive(Debug, PartialEq, Eq)]
+struct KeyRoute {
+    page: bool,
+    emit: bool,
+}
+impl KeyboardRoute {
+    fn reset(&mut self) {
+        self.pending.clear();
+        self.held.clear();
+    }
+    fn sync(&mut self, routes: Arc<KeyRoutes>, view: Handle) -> bool {
+        if self.view == Some(view) && Arc::ptr_eq(&self.routes, &routes) {
+            return false;
+        }
+        if self.view != Some(view) {
+            self.held.clear();
+        }
+        self.routes = routes;
+        self.view = Some(view);
+        self.pending.clear();
+        true
+    }
+    fn route(
+        &mut self,
+        physical: winit::keyboard::PhysicalKey,
+        key: &KeyInput,
+        consumed: bool,
+    ) -> KeyRoute {
+        if let Some((_, page)) = self.held.iter().find(|(id, _)| *id == physical) {
+            let page = *page;
+            if !key.pressed {
+                self.held.retain(|(id, _)| *id != physical);
+            }
+            // Repeated presses stay with their owner without advancing the runtime
+            // sequence again. Servo still receives ordinary page repeats.
+            return KeyRoute {
+                page,
+                emit: !key.pressed,
+            };
+        }
+        if !key.pressed || consumed {
+            return KeyRoute {
+                page: false,
+                emit: false,
+            };
+        }
+        let page = !self.routes.capture(&mut self.pending, key);
+        self.held.push((physical, page));
+        KeyRoute { page, emit: true }
     }
 }
 
@@ -210,6 +271,90 @@ impl PointerRoute {
 mod tests {
     use super::*;
     use winit::event::MouseButton::Left;
+    use winit::keyboard::{KeyCode, PhysicalKey};
+    fn key(text: &str, pressed: bool) -> KeyInput {
+        KeyInput {
+            key: text.into(),
+            control: false,
+            alt: false,
+            shift: false,
+            meta: false,
+            pressed,
+        }
+    }
+    fn routes() -> Arc<KeyRoutes> {
+        Arc::new(KeyRoutes::new(vec![vec!["x".into(), "f".into()]], vec!["Escape".into()]).unwrap())
+    }
+    #[test]
+    fn command_keys_and_invalid_tails_never_reach_the_page() {
+        let mut route = KeyboardRoute::default();
+        route.sync(routes(), Handle(1));
+        let x = PhysicalKey::Code(KeyCode::KeyX);
+        let f = PhysicalKey::Code(KeyCode::KeyF);
+        assert_eq!(
+            route.route(x, &key("x", true), false),
+            KeyRoute {
+                page: false,
+                emit: true
+            }
+        );
+        assert_eq!(
+            route.route(x, &key("x", true), false),
+            KeyRoute {
+                page: false,
+                emit: false
+            }
+        );
+        assert!(!route.route(x, &key("x", false), true).page);
+        assert!(!route.route(f, &key("f", true), false).page);
+        assert!(route.pending.is_empty());
+        assert!(!route.route(f, &key("f", false), false).page);
+        route.route(x, &key("x", true), false);
+        assert!(!route.route(f, &key("z", true), false).page);
+        assert!(route.pending.is_empty());
+    }
+    #[test]
+    fn held_keys_keep_their_owner_across_rebinds_and_chrome_consumption() {
+        let mut route = KeyboardRoute::default();
+        route.sync(routes(), Handle(1));
+        let a = PhysicalKey::Code(KeyCode::KeyA);
+        let x = PhysicalKey::Code(KeyCode::KeyX);
+        assert!(route.route(a, &key("a", true), false).page);
+        assert!(!route.route(x, &key("x", true), false).page);
+        route.sync(Arc::default(), Handle(1));
+        assert!(!route.route(x, &key("x", false), true).page);
+        // A page repeat reaches Servo but cannot corrupt an application prefix.
+        assert_eq!(
+            route.route(a, &key("a", true), true),
+            KeyRoute {
+                page: true,
+                emit: false
+            }
+        );
+        assert!(route.route(a, &key("a", false), true).page);
+        assert!(!route.route(a, &key("a", true), true).page);
+        assert!(!route.route(a, &key("a", false), false).page);
+    }
+    #[test]
+    fn focus_view_and_snapshot_changes_cancel_native_prefixes() {
+        let mut route = KeyboardRoute::default();
+        let table = routes();
+        assert!(route.sync(table.clone(), Handle(1)));
+        assert!(!route.sync(table.clone(), Handle(1)));
+        let x = PhysicalKey::Code(KeyCode::KeyX);
+        let f = PhysicalKey::Code(KeyCode::KeyF);
+        route.route(x, &key("x", true), false);
+        assert!(route.sync(table.clone(), Handle(2)));
+        assert!(route.route(f, &key("f", true), false).page);
+        route.reset();
+        route.route(x, &key("x", true), false);
+        route.reset();
+        assert!(route.route(f, &key("f", true), false).page);
+        route.reset();
+        route.route(x, &key("x", true), false);
+        assert!(route.sync(routes(), Handle(2)));
+        assert!(route.route(f, &key("f", true), false).page);
+    }
     #[test]
     fn page_drag_releases_over_chrome_and_chrome_press_never_releases_into_page() {
         let mut route = PointerRoute {

@@ -4,6 +4,17 @@
 
 (def bindings (atom {}))
 (def pending (atom {:webview nil :keys []}))
+(def cancel-strokes #{"C-g" "Escape"})
+
+(defn update-bindings!
+  "Publishes native reservations inside the atom update. Failure retains the old map."
+  [update]
+  (swap! bindings
+    (fn [current]
+      (let [updated (update current)]
+        (when-let [publish (resolve 'bulwark.native/set-key-routes!)]
+          (publish (vec (keys updated)) (vec cancel-strokes)))
+        updated))))
 
 (defn reset-prefix!
   "Cancels the pending sequence."
@@ -52,17 +63,20 @@
   "Binds a sequence to a registered command. Conflicting prefixes are rejected."
   [keys command]
   (let [sequence (parse-keys keys) qualified (:name (commands/command-info command))]
-    (when (some (fn [existing] (or (prefix? sequence existing) (prefix? existing sequence)))
-                (clojure.core/keys @bindings))
-      (throw (ex-info "Key sequence conflicts with a command prefix" {:keys keys})))
-    (swap! bindings assoc sequence qualified)
+    (update-bindings!
+      (fn [current]
+        (when (some (fn [existing] (or (prefix? sequence existing) (prefix? existing sequence)))
+                    (clojure.core/keys current))
+          (throw (ex-info "Key sequence conflicts with a command prefix" {:keys keys})))
+        (assoc current sequence qualified)))
     (reset-prefix!)
     qualified))
 
 (defn unbind-key!
   "Removes a sequence and cancels any pending prefix."
   [keys]
-  (swap! bindings dissoc (parse-keys keys))
+  (let [sequence (parse-keys keys)]
+    (update-bindings! (fn [current] (dissoc current sequence))))
   (reset-prefix!))
 
 (defn ^:async dispatch-key!
@@ -76,7 +90,7 @@
           old (if (= (:webview event) (:webview @pending)) (:keys @pending) [])
           sequence (conj old stroke)]
       (cond
-        (contains? #{"C-g" "Escape"} stroke) (do (reset-prefix!) :cancelled)
+        (contains? cancel-strokes stroke) (do (reset-prefix!) :cancelled)
         (get @bindings sequence)
         (let [command (get @bindings sequence)]
           (reset-prefix!)

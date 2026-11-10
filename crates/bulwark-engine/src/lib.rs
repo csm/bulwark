@@ -1,5 +1,6 @@
 //! Owned data shared by the engine and runtime. No Servo or GC types belong here.
 pub mod bridge;
+pub mod keys;
 pub mod mock;
 
 use std::{
@@ -196,6 +197,7 @@ pub enum EventKind {
     Closed,
     Crashed(String),
     KeyInput(KeyInput),
+    InputReset,
 }
 impl EventKind {
     pub fn name(&self) -> &'static str {
@@ -207,6 +209,7 @@ impl EventKind {
             Self::Closed => "page/closed",
             Self::Crashed(_) => "page/crashed",
             Self::KeyInput(_) => "input/key",
+            Self::InputReset => "input/reset",
         }
     }
     pub fn string_bytes(&self) -> usize {

@@ -1,9 +1,34 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `fc68765`, followed by the command and browser continuation on 2026-11-08.
-The fast-forward pull advanced this worktree from `678fcf5` to `fc68765`.
-The product nREPL continuation starts from `7781d87` in an isolated development worktree.
-Working branch: `codex/phase-1-product-nrepl`.
+Snapshot: Bulwark `main` at `7ea01c3`, followed by the key interception continuation on 2026-11-09.
+This clean worktree fast-forwarded from `7781d87` to `7ea01c3` before development.
+The key interception continuation builds on that main commit in a detached worktree.
+
+## Phase 1 key interception continuation
+
+The [key interception checkpoint](phase-1-keys.md) adds native reservations from the Clojure keymap.
+Binding functions synchronously publish one bounded snapshot before they update Clojure bindings.
+The native shell captures command sequences and their releases, while unbound keys reach Servo without a runtime wait.
+Held keys retain their owner across binding changes. Page repeats still reach Servo without duplicate Clojure dispatch.
+Focus, view, and snapshot changes cancel pending prefixes through ordered `:input/reset` events.
+Clojure owns all bindings, commands, and cancellation strokes.
+
+Local macOS checks passed: formatting, workspace Clippy, all 38 workspace tests, and the foundation smoke.
+Native/Servo Clippy, all eight native shell unit tests, both Servo unit tests, and the Servo contract passed.
+All seven native process cases, all three mock nREPL cases, and all four native nREPL cases passed.
+Every native process joined its runtime worker. The software Servo smoke painted 13 frames and joined its worker.
+The native browser case painted 33 frames and made 36 presentations.
+
+The graphics contract first failed inside the filesystem sandbox because macOS denied surface creation.
+The same contract passed with graphics access outside that sandbox.
+The existing GL texture and large `__eh_frame` linker warnings remain.
+The Mac was locked, so computer-use tools could not run physical keyboard checks.
+These local changes still require Linux CI and the interactive Phase 1 acceptance checks.
+
+The [post-merge main CI run](https://github.com/csm/bulwark/actions/runs/42764491262) passed all three jobs at `7ea01c3`.
+Both runtime jobs passed the product nREPL suite. Linux passed the native and native nREPL process suites.
+This result confirms the LLVM dependency and the merged product nREPL work.
+It predates the local key interception changes.
 
 ## Phase 1 product nREPL continuation
 
@@ -58,12 +83,12 @@ Every native case joined the runtime worker. The final browser case painted 21 f
 The Servo contract tests and software smoke passed. The software smoke painted 14 frames and joined the worker.
 
 Native input routing and echo geometry remain unchanged.
-Command keys still reach Servo before Clojure receives them. Key interception remains open.
+Command keys reached Servo at that checkpoint. The later key interception continuation reserves those keys.
 The product still requires `--features native` for a window. The later continuation adds opt-in nREPL.
 
 The [post-merge main CI run](https://github.com/csm/bulwark/actions/runs/42578603502) passed both runtime jobs but failed the Servo job.
 SpiderMonkey attempted a source build after its prebuilt archive failed, then stopped because `llvm-objdump` was absent.
-The workflow now installs `llvm`. That dependency change still requires Linux CI confirmation.
+The workflow now installs `llvm`. The later product nREPL and post-merge CI runs confirmed that dependency change.
 
 ## Phase 1 Linux CI continuation
 
@@ -229,8 +254,9 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Add key interception while preserving ordinary Servo input during runtime stalls.
-2. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage.
+1. Run Linux CI for the key interception continuation.
+2. Run physical command sequences and ordinary page input during a two-second runtime stall.
+3. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage and default native startup.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.
