@@ -1,6 +1,7 @@
 //! Thread-affine Clojurust host. No browser policy belongs here.
 
 pub mod native;
+pub mod nrepl;
 pub mod worker;
 
 use anyhow::{Context, Result, anyhow};

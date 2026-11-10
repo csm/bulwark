@@ -733,6 +733,7 @@ dependencies = [
  "bulwark-engine",
  "cljrs-async",
  "cljrs-gc",
+ "cljrs-nrepl",
  "cljrs-reader",
  "cljrs-runtime",
  "cljrs-stdlib",

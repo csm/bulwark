@@ -2,7 +2,42 @@
 
 Snapshot: Bulwark `main` at `fc68765`, followed by the command and browser continuation on 2026-11-08.
 The fast-forward pull advanced this worktree from `678fcf5` to `fc68765`.
-Working branch: `main`.
+The product nREPL continuation starts from `7781d87` in an isolated development worktree.
+Working branch: `codex/phase-1-product-nrepl`.
+
+## Phase 1 product nREPL continuation
+
+The [product nREPL checkpoint](phase-1-nrepl.md) adds `--nrepl` and `--profile DIR` to the native shell.
+The listener binds only to `127.0.0.1` and uses an operating-system-selected port.
+The profile defaults to `$HOME/.bulwark`. Its `.nrepl-port` file identifies the listener.
+Exclusive file creation prevents a second process from replacing an active profile's discovery file.
+Normal shutdown and runtime failures close the listener and remove the port file.
+
+The runtime admits at most four nREPL jobs per one-millisecond turn.
+Limits remain 32 unfinished jobs globally, 24 per session, 64 KiB request frames, and 256 KiB queued output per connection.
+The product process suite covers overload, interruption, capacity recovery, ordered forms, live commands, key bindings, and title hooks.
+It also covers profile collisions and shutdown with parked evaluations.
+All three mock cases and all four native cases passed locally.
+Every native case joined the runtime worker. The normal native case painted eight frames and made eleven presentations.
+Formatting, workspace Clippy, all 33 workspace tests, native/Servo Clippy, and all five native unit tests passed.
+The Servo contract, seven existing native process cases, and both product smokes passed.
+The software Servo smoke painted thirteen frames and joined the worker.
+
+The [commands CI run](https://github.com/csm/bulwark/actions/runs/42580601137) passed both runtime jobs, Servo Clippy, and native unit tests.
+The Servo job reached its 30-minute deadline during another SpiderMonkey compilation.
+The workflow now keeps a single native feature configuration for product Servo checks and permits 60 minutes.
+The workflow also runs the mock and native product nREPL suites.
+The [first nREPL CI run](https://github.com/csm/bulwark/actions/runs/42675768819) passed both runtime jobs, including the mock nREPL suite.
+Its Linux Servo job passed Clippy, native unit tests, the Servo contract, and the software smoke.
+The native browser-history case then exceeded its 35-second process deadline. The native nREPL suite did not run.
+Local repetition reproduced the timeout after the history navigation request.
+The test now waits for fresh load-completion events after each reload and navigation.
+Each wait has a ten-second deadline with a named phase and event diagnostics.
+The process runner now preserves captured output when its independent deadline expires.
+The seven native process cases passed locally with this change. The browser-history case also passed ten consecutive local runs.
+The [final branch CI run](https://github.com/csm/bulwark/actions/runs/42681801088) passed all three jobs at code commit `e9ecc8d`.
+Linux passed the seven native process cases and all four native nREPL cases, including shutdown with a parked evaluation.
+Both runtime jobs also passed the mock nREPL suite. Linux confirmation is complete.
 
 ## Phase 1 commands and browser continuation
 
@@ -24,7 +59,7 @@ The Servo contract tests and software smoke passed. The software smoke painted 1
 
 Native input routing and echo geometry remain unchanged.
 Command keys still reach Servo before Clojure receives them. Key interception remains open.
-The product still requires `--features native` for a window and does not start nREPL.
+The product still requires `--features native` for a window. The later continuation adds opt-in nREPL.
 
 The [post-merge main CI run](https://github.com/csm/bulwark/actions/runs/42578603502) passed both runtime jobs but failed the Servo job.
 SpiderMonkey attempted a source build after its prebuilt archive failed, then stopped because `llvm-objdump` was absent.
@@ -194,10 +229,8 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Run Linux CI with the LLVM dependency and new Clojure integration suites.
-2. Add opt-in loopback nREPL and the profile port file, with budgeted admission and overload regressions.
-3. Add key interception while preserving ordinary Servo input during runtime stalls.
-4. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage.
+1. Add key interception while preserving ordinary Servo input during runtime stalls.
+2. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.
@@ -270,6 +303,8 @@ The Python runners impose independent process deadlines.
 - `crates/bulwark-engine/src/mock.rs`: deterministic product test engine.
 - `crates/bulwark-runtime/src/native.rs`: native API registry and GC conversion.
 - `crates/bulwark-runtime/src/worker.rs`: dedicated runtime thread and event fiber lifecycle.
+- `crates/bulwark-runtime/src/nrepl.rs`: opt-in listener, profile discovery, and budgeted admission.
+- `experiments/run_product_nrepl.py`: product protocol, overload, live-code, and cleanup assertions.
 - `clj/bulwark/bridge.cljrs`: ordered event loop calling the current dispatcher var.
 - `clj/tests/foundation.cljrs`: product integration assertions.
 - `crates/bulwark-engine-servo/src/engine.rs`: product Servo adapter, deferred evaluations, lifecycle events, and frame painting.

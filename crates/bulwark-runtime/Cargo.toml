@@ -14,3 +14,4 @@ cljrs-stdlib.workspace = true
 cljrs-reader.workspace = true
 cljrs-value.workspace = true
 cljrs-gc.workspace = true
+cljrs-nrepl.workspace = true

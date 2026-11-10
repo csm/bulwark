@@ -62,6 +62,16 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    Default keys include `C-c r` for reload and `C-x h` for recent page titles.
    Command keys also reach the page until key interception is implemented.
 
+   Enable the product nREPL listener:
+
+   ```sh
+   cargo run --locked --features native -- --nrepl --profile /tmp/bulwark-profile about:blank
+   ```
+
+   Connect to `127.0.0.1` at the port in `/tmp/bulwark-profile/.nrepl-port`.
+   Without `--profile`, the directory defaults to `$HOME/.bulwark`.
+   The [product nREPL checkpoint](docs/phase-1-nrepl.md) describes admission limits, cleanup, and live command examples.
+
 2. Run the callback and GC experiment:
 
    ```sh
@@ -133,6 +143,7 @@ The default workspace build excludes Servo compilation.
 - [Phase 1 foundation checkpoint and native API](docs/phase-1-foundation.md)
 - [Phase 1 native window and egui checkpoint](docs/phase-1-native.md)
 - [Phase 1 commands, hooks, and browser behavior](docs/phase-1-commands.md)
+- [Phase 1 product nREPL](docs/phase-1-nrepl.md)
 - [Development handoff and next steps](docs/handoff.md)
 - [Vision](docs/bulwark.md)
 - [Development plan and current progress](docs/development-plan.md)

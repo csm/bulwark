@@ -16,6 +16,7 @@ jobs:
       - run: cargo test --locked --workspace
       - run: cargo run --locked
       - run: cargo run --locked -- --headless-smoke
+      - run: python3 experiments/run_product_nrepl.py
       - run: cargo run --locked -p bulwark-experiment-e2
       - run: cargo build --locked -p bulwark-experiment-e1 -p bulwark-experiment-e7
       - run: python3 experiments/run_e1.py --seconds 5
@@ -28,7 +29,7 @@ jobs:
       - run: python3 experiments/run_e7_nrepl.py
   servo:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -48,8 +49,8 @@ jobs:
             libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev libunwind-dev \
             libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev
       - run: cargo clippy --locked -p bulwark-shell -p bulwark-engine-servo --features native,servo --all-targets -- -D warnings
-      - run: cargo test --locked -p bulwark-shell --features native
-      - run: xvfb-run -a cargo test --locked -p bulwark-engine-servo --features servo
-      - run: xvfb-run -a cargo run --locked --features servo -- --servo-smoke
+      - run: xvfb-run -a cargo test --locked -p bulwark-shell -p bulwark-engine-servo --features native,servo
+      - run: xvfb-run -a cargo run --locked --features native -- --servo-smoke
       - run: cargo build --locked -p bulwark-shell --features native
       - run: xvfb-run -a python3 experiments/run_product_native.py
+      - run: xvfb-run -a python3 experiments/run_product_nrepl.py --native

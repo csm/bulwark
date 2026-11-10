@@ -37,12 +37,14 @@ fn run(
     mode: ExecutionMode,
     interrupt: Arc<InterruptFlag>,
     cancelled: oneshot::Receiver<()>,
+    nrepl: Option<crate::nrepl::Config>,
 ) -> Result<String> {
     let _exit = OnExit(endpoint.control.clone());
     let executor = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()?;
     let local = tokio::task::LocalSet::new();
+    let local_ref = &local;
     executor.block_on(local.run_until(async move {
         let _interrupt = InterruptGuard::install(interrupt);
         let mut host = RuntimeHost::with_bridge(mode, endpoint)?;
@@ -51,15 +53,26 @@ fn run(
         let program = host.eval(&source)?;
         let _program_root = gc_roots::root_value(&program);
         host.collect();
-        tokio::select! {
-            result = cljrs_async::await_value(program) => {
-                result.map(|value| value.to_string()).map_err(|error| anyhow!("{error}"))
-            },
-            result = cljrs_async::await_value(events) => match result {
-                Err(error) => Err(anyhow!("Event dispatcher failed: {error}")),
-                Ok(_) => Err(anyhow!("Event stream ended before program completion")),
-            },
-            _ = cancelled => Err(anyhow!("Runtime cancelled")),
+        let mut nrepl = nrepl
+            .map(|config| crate::nrepl::Driver::start(host.env().globals.clone(), config))
+            .transpose()?;
+        let mut program = Box::pin(cljrs_async::await_value(program));
+        let mut events = Box::pin(cljrs_async::await_value(events));
+        let mut cancelled = cancelled;
+        loop {
+            tokio::select! {
+                result = &mut program => {
+                    break result.map(|value| value.to_string()).map_err(|error| anyhow!("{error}"));
+                },
+                result = &mut events => break match result {
+                    Err(error) => Err(anyhow!("Event dispatcher failed: {error}")),
+                    Ok(_) => Err(anyhow!("Event stream ended before program completion")),
+                },
+                _ = &mut cancelled => break Err(anyhow!("Runtime cancelled")),
+                _ = crate::nrepl::next_turn(&mut nrepl) => {
+                    if let Some(driver) = &mut nrepl { driver.admit(local_ref)?; }
+                }
+            }
         }
     }))
 }
@@ -77,12 +90,22 @@ impl Worker {
         source: String,
         mode: ExecutionMode,
     ) -> Result<Self> {
+        Self::spawn_configured(endpoint, source, mode, None)
+    }
+
+    /// Enables an optional loopback nREPL on the runtime's own LocalSet.
+    pub fn spawn_configured(
+        endpoint: RuntimeEndpoint,
+        source: String,
+        mode: ExecutionMode,
+        nrepl: Option<crate::nrepl::Config>,
+    ) -> Result<Self> {
         let (cancel, cancelled) = oneshot::channel();
         let interrupt = Arc::new(InterruptFlag::new(false));
         let worker_interrupt = interrupt.clone();
         let thread = thread::Builder::new()
             .name("bulwark-runtime".into())
-            .spawn(move || run(endpoint, source, mode, worker_interrupt, cancelled))?;
+            .spawn(move || run(endpoint, source, mode, worker_interrupt, cancelled, nrepl))?;
         Ok(Self {
             thread: Some(thread),
             interrupt,

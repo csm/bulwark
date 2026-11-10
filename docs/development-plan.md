@@ -500,7 +500,8 @@ The [native checkpoint](phase-1-native.md) adds window/input integration and the
 The local interactive macOS checks passed after the egui input routing fix.
 The [command checkpoint](phase-1-commands.md) implements deliverable 4 and a title-history behavior for deliverable 6.
 Its command and browser tests run in both interpreter and tiered modes.
-Deliverable 5, key interception, and the full product acceptance review remain open.
+The [product nREPL checkpoint](phase-1-nrepl.md) implements deliverable 5 with bounded admission and profile discovery.
+Key interception and the full product acceptance review remain open.
 The [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation) passed the product Servo contract tests and software smoke.
 Explicit interpreter coverage remains open for A8.
 No Phase 1 product acceptance criterion is marked complete by this checkpoint.

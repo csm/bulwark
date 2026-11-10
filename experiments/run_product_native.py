@@ -8,8 +8,17 @@ import tempfile
 
 
 def run_case(binary, name, flags, success, expected, timeout):
-    result = subprocess.run([str(binary), *flags], capture_output=True,
-                            text=True, timeout=timeout)
+    try:
+        result = subprocess.run([str(binary), *flags], capture_output=True,
+                                text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        # TimeoutExpired retains bytes even with text=True. Keep the last phase
+        # and runtime diagnostics in CI instead of discarding captured output.
+        for output in (error.stdout, error.stderr):
+            if output:
+                print(output.decode(errors="replace") if isinstance(output, bytes) else output,
+                      end="", flush=True)
+        raise RuntimeError(f"{name}: exceeded {timeout}-second process deadline") from error
     output = result.stdout + result.stderr
     print(output, end="", flush=True)
     if (result.returncode == 0) != success:
