@@ -125,7 +125,10 @@ Formatting and Clippy passed for the portable workspace, native targets, and opt
 The standard GL texture diagnostic and large `__eh_frame` linker warning remain.
 Native macOS graphics checks require graphics access beyond the filesystem sandbox.
 
-The new Linux CI job still requires a remote run.
+The [Ubuntu test host](linux-testing.md) passed all 42 portable workspace tests and the full 17-command portable suite.
+Its runner uses a recorded assertion budget for the small CPU. Shutdown deadlines remain unchanged.
+AOT and Servo validation on that host remain in progress through the sequential queue.
+The new GitHub Linux CI job still requires a remote run.
 Physical keyboard and pointer checks across retained views remain separate from the automated process checks.
 This checkpoint does not extend the existing IME, clipboard, display-scale, or interactive Linux evidence.
 

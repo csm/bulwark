@@ -11,7 +11,9 @@ The separate upstream branch is `codex/bulwark-phase-2-aot`.
 The fix and its regression checks preserve qualified symbol identity during native compilation.
 
 The next work is P2.2 buffers and lifecycle hooks.
-Remote Linux CI and physical input checks across retained views remain open.
+The [Ubuntu test host](linux-testing.md) passed all 42 portable tests and all 17 portable checks.
+Its AOT validation runs before the queued Servo suite. The ignored `target/linux-host.json` records the connection and queue paths.
+GitHub Linux CI and physical input checks across retained views remain open.
 The sections that follow retain the accepted Phase 1 evidence.
 
 ## Phase 1 physical acceptance and exit

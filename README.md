@@ -149,6 +149,7 @@ Use `--no-default-features` for the portable workspace checks without Servo.
 
 - [Phase 2 implementation plan](docs/phase-2-plan.md)
 - [Phase 2 mechanism checkpoint](docs/phase-2-mechanisms.md)
+- [Headless Linux test host and runner](docs/linux-testing.md)
 - [Phase 0 exit review](docs/phase-0-exit.md)
 - [Phase 1 foundation checkpoint and native API](docs/phase-1-foundation.md)
 - [Phase 1 native window and egui checkpoint](docs/phase-1-native.md)

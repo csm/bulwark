@@ -209,7 +209,19 @@ fn run_product_clojure(source: &str, expected: &str, mode: cljrs_runtime::Execut
     let (runtime, mut endpoint) = bridge::channel(Arc::new(|| {}));
     let mut engine = MockEngine::new(endpoint.events.clone());
     let mut worker = Worker::spawn_with_mode(runtime, source.into(), mode).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let timeout_seconds = std::env::var("BULWARK_TEST_PROGRAM_TIMEOUT_SECS")
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .expect("BULWARK_TEST_PROGRAM_TIMEOUT_SECS must be an integer")
+        })
+        .unwrap_or(10);
+    assert!(
+        timeout_seconds > 0,
+        "The Clojure assertion timeout must be positive"
+    );
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(timeout_seconds);
     while !worker.finished() && Instant::now() < deadline {
         endpoint.admit(|request| match request.command {
             Command::SetEcho(_) | Command::Log(_) => request.complete(Ok(Data::Nil)),
@@ -223,9 +235,13 @@ fn run_product_clojure(source: &str, expected: &str, mode: cljrs_runtime::Execut
     engine.shutdown();
     worker.stop();
     let result = wait(&mut worker);
+    eprintln!(
+        "{expected} in {mode:?}: {:?}, budget={timeout_seconds}s",
+        started.elapsed()
+    );
     assert!(
         !timed_out,
-        "Clojure program timed out in {mode:?}: {result:?}"
+        "Clojure program {expected} timed out in {mode:?} after {timeout_seconds}s: {result:?}"
     );
     assert_eq!(result.unwrap(), expected, "Evaluator: {mode:?}");
 }
