@@ -135,14 +135,24 @@ pub struct ViewInfo {
 
 #[derive(Debug)]
 pub enum Command {
-    Create { url: String },
+    Create {
+        url: String,
+    },
     Close(Handle),
-    Navigate { view: Handle, url: String },
+    /// Select one retained view, or hide all views for non-web content.
+    Select(Option<Handle>),
+    Navigate {
+        view: Handle,
+        url: String,
+    },
     Reload(Handle),
     Back(Handle),
     Forward(Handle),
     Info(Handle),
-    Evaluate { view: Handle, script: String },
+    Evaluate {
+        view: Handle,
+        script: String,
+    },
     Log(String),
     SetEcho(String),
     Quit,

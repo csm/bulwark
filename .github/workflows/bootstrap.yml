@@ -61,3 +61,10 @@ jobs:
       - run: xvfb-run -a python3 experiments/run_product_native.py --interpreter
       - run: xvfb-run -a python3 experiments/run_product_nrepl.py --native
       - run: xvfb-run -a python3 experiments/run_product_nrepl.py --native --interpreter
+  shell-aot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python3 experiments/run_shell_aot.py

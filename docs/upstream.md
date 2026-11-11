@@ -1,18 +1,22 @@
 # Upstream dependencies
 
-Last inspection: 2026-11-07.
+Last inspection: 2026-11-11.
 
 ## Pins
 
 | Dependency | Pin | Source |
 |---|---|---|
 | Servo | `=0.7.0`, published 2026-10-05 | [Published crate](https://crates.io/crates/servo/0.7.0) |
-| Clojurust | `b847a29b46e2b6b3fbe624f6d2394cb656ea5882` | [Pinned commit](https://github.com/csm/clojurust/commit/b847a29b46e2b6b3fbe624f6d2394cb656ea5882) |
+| Clojurust | `14bd7f9c6e05eed0349d802275cb7950f5a56f90` | [Pinned commit](https://github.com/csm/clojurust/commit/14bd7f9c6e05eed0349d802275cb7950f5a56f90) |
 
 `Cargo.toml` records direct pins. `Cargo.lock` records the complete dependency graph.
 Clojurust packages use one git revision. No dependency points at a local checkout.
 The bootstrap disables Clojurust's git-backed package loader through `default-features = false`.
 It enables the full regex implementation.
+
+Phase 2 adopts one compiler fix after `b847a29b`: compiled symbol literals now retain namespace and version fields.
+The [mechanism checkpoint](phase-2-mechanisms.md#aot-path-and-upstream-fix) records the failing reproduction and passing upstream checks.
+The optional AOT test feature uses the same revision as the product runtime.
 
 Servo enables `bundled` and `js_jit` with default features disabled.
 The initial probe excludes multiprocess, GStreamer, WebGL, WebGPU, and WebXR.

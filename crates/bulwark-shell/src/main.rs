@@ -96,8 +96,15 @@ fn servo_smoke(mode: cljrs_runtime::ExecutionMode) -> anyhow::Result<()> {
     let url =
         url::Url::from_file_path(fixture).map_err(|_| anyhow::anyhow!("Invalid fixture path"))?;
     let source = format!(
-        "(def servo-fixture-url \"{url}\")\n{}",
-        include_str!("../../../clj/tests/servo.cljrs")
+        "(def servo-fixture-url \"{url}\")\n{}\n(in-ns 'user)\n(def retained-fixture-url servo-fixture-url)\n{}\n\
+         (in-ns 'user)\n\
+         (defn ^:async servo-check! []\n\
+           (await (bulwark.core/servo-test!))\n\
+           (await (bulwark.tests.retained-views/retained-views!))\n\
+           :servo-passed)\n\
+         (servo-check!)",
+        include_str!("../../../clj/tests/servo.cljrs"),
+        include_str!("../../../clj/tests/retained-views.cljrs")
     );
     let mut frames = 0;
     let report = run_headless(

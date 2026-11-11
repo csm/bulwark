@@ -231,6 +231,20 @@ fn run_product_clojure(source: &str, expected: &str, mode: cljrs_runtime::Execut
 }
 
 #[test]
+fn portable_shell_model_passes_in_interpreter_and_tiered_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/shell-model.cljrs"),
+            ":shell-model-passed",
+            mode,
+        );
+    }
+}
+
+#[test]
 fn foundation_passes_in_interpreter_and_tiered_modes() {
     for mode in [
         cljrs_runtime::ExecutionMode::TreeWalk,

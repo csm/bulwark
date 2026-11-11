@@ -129,6 +129,13 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             Ok(Command::Create { url: text(&a[0])? })
         }),
         ("webview-close", 1, |a| Ok(Command::Close(handle(&a[0])?))),
+        ("webview-select", 1, |a| {
+            Ok(Command::Select(if matches!(a[0], Value::Nil) {
+                None
+            } else {
+                Some(handle(&a[0])?)
+            }))
+        }),
         ("navigate", 2, |a| {
             Ok(Command::Navigate {
                 view: handle(&a[0])?,
@@ -156,11 +163,16 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             Arity::Fixed(arity),
             move |args| Ok(request(&client, build(args)?)),
         );
-        globals.intern(
+        let var = globals.intern(
             "bulwark.native",
             name.into(),
             Value::NativeFunction(GcPtr::new(native)),
         );
+        if name == "webview-select" {
+            var.get().set_meta(map(vec![("doc", Value::string(
+                "Selects one retained webview, or hides all webviews for nil. Returns a future; a stale handle leaves selection unchanged."
+            ))]));
+        }
     }
     // Publication is synchronous: bind-key! must update reservations before it
     // returns, including when a caller immediately starts a synchronous loop.

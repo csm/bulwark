@@ -329,6 +329,7 @@ impl App {
         };
         let control = endpoint.control.clone();
         let mut quit = false;
+        let previous_view = surface.engine.active_webview().map(|(handle, _)| handle);
         endpoint.admit(|request| match &request.command {
             Command::Log(text) => {
                 println!("{text}");
@@ -347,6 +348,16 @@ impl App {
             _ => surface.engine.handle(request),
         });
         surface.engine.tick();
+        let selected_view = surface.engine.active_webview().map(|(handle, _)| handle);
+        if previous_view != selected_view {
+            surface.input.change_view();
+            if let Some(handle) = selected_view {
+                let _ = endpoint
+                    .events
+                    .emit(handle, bulwark_engine::EventKind::InputReset);
+            }
+            surface.layout();
+        }
         if surface.engine.needs_repaint() {
             surface.window.request_redraw();
         }
@@ -405,6 +416,9 @@ impl ApplicationHandler<Wake> for App {
                 surface.window.request_redraw();
             }
             match event {
+                WindowEvent::ModifiersChanged(modifiers) => {
+                    surface.input.update_modifiers(modifiers.state());
+                }
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                     surface.layout()
                 }

@@ -6,6 +6,10 @@ Clojure still defines commands, bindings, cancellation keys, and command behavio
 
 ## Reservation snapshot
 
+Phase 2 adds an explicit host publisher through `bulwark.keymap/set-route-publisher!`.
+The runtime installs the native publisher after it loads the keymap namespace.
+The [mechanism checkpoint](phase-2-mechanisms.md#aot-path-and-upstream-fix) records this change and the portable AOT path.
+
 `bulwark.keymap/bind-key!` and `unbind-key!` publish the complete reservation snapshot before they replace the Clojure binding map.
 A failed publication leaves the previous bindings and snapshot intact.
 Commands still retain Vars, so command redefinition does not require another publication.

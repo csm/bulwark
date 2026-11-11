@@ -31,6 +31,19 @@ impl Input {
         self.pointer = PointerRoute::default();
         self.keys.reset();
     }
+    /// Clear page ownership without forgetting physically held modifiers or cursor position.
+    pub fn change_view(&mut self) {
+        self.pointer.buttons.clear();
+        self.keys.reset();
+    }
+    pub fn update_modifiers(&self, keys: winit::keyboard::ModifiersState) {
+        let mut flags = servo::Modifiers::empty();
+        flags.set(servo::Modifiers::SHIFT, keys.shift_key());
+        flags.set(servo::Modifiers::CONTROL, keys.control_key());
+        flags.set(servo::Modifiers::ALT, keys.alt_key());
+        flags.set(servo::Modifiers::META, keys.super_key());
+        self.modifiers.set(flags);
+    }
     /// Synchronize route generation and view before processing another key.
     /// The caller emits an ordered reset event when this returns true.
     pub fn sync_routes(&mut self, routes: Arc<KeyRoutes>, view: Handle) -> bool {
@@ -104,13 +117,7 @@ impl Input {
                 )));
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                let keys = modifiers.state();
-                let mut flags = servo::Modifiers::empty();
-                flags.set(servo::Modifiers::SHIFT, keys.shift_key());
-                flags.set(servo::Modifiers::CONTROL, keys.control_key());
-                flags.set(servo::Modifiers::ALT, keys.alt_key());
-                flags.set(servo::Modifiers::META, keys.super_key());
-                self.modifiers.set(flags);
+                self.update_modifiers(modifiers.state());
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let key = match event.logical_key.clone() {
@@ -284,6 +291,27 @@ mod tests {
     }
     fn routes() -> Arc<KeyRoutes> {
         Arc::new(KeyRoutes::new(vec![vec!["x".into(), "f".into()]], vec!["Escape".into()]).unwrap())
+    }
+    #[test]
+    fn view_changes_clear_page_ownership_but_preserve_physical_input_state() {
+        let mut input = Input::default();
+        input.update_modifiers(winit::keyboard::ModifiersState::CONTROL);
+        input.pointer.inside = true;
+        input.pointer.buttons.push(Left);
+        input.cursor.set(DevicePoint::new(25.0, 30.0));
+        input.keys.sync(routes(), Handle(1));
+        input
+            .keys
+            .route(PhysicalKey::Code(KeyCode::KeyX), &key("x", true), false);
+        input.change_view();
+        assert!(input.modifiers.get().contains(servo::Modifiers::CONTROL));
+        assert!(input.pointer.inside);
+        assert!(input.pointer.buttons.is_empty());
+        assert_eq!(input.cursor.get(), DevicePoint::new(25.0, 30.0));
+        assert!(input.keys.pending.is_empty());
+        assert!(input.keys.held.is_empty());
+        input.update_modifiers(winit::keyboard::ModifiersState::empty());
+        assert!(input.modifiers.get().is_empty());
     }
     #[test]
     fn command_keys_and_invalid_tails_never_reach_the_page() {

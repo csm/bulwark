@@ -70,11 +70,15 @@ impl RuntimeHost {
         let mut host = Self {
             env: runtime.env("user"),
         };
+        let has_bridge = endpoint.is_some();
         if let Some(endpoint) = endpoint {
             cljrs_async::init(&host.env.globals);
             native::install(&host.env.globals, endpoint);
         }
         host.eval("(require 'bulwark.core)")?;
+        if has_bridge {
+            host.eval("(bulwark.keymap/set-route-publisher! bulwark.native/set-key-routes!)")?;
+        }
         Ok(host)
     }
 
