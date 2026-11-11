@@ -26,10 +26,16 @@ The macOS runtime job failed in the older E7 heartbeat assertion. The Linux runt
 The assertion required heartbeat progress during one 40-millisecond sleep.
 It now observes at most ten sleeps to avoid dependence on one timer ordering under host load.
 It still requires heartbeat progress during a sleep. The runtime matrix now disables fail-fast.
-These changes require a new CI run.
+Twenty repeated E7 mock checks passed locally with two concurrent processes.
+The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072) passed all three jobs at `f40c478`.
+Both runtime jobs passed the interpreter and Tiered foundation and mock nREPL suites, plus the E7 regressions.
+Linux passed default native startup, both software Servo modes, and both native process and nREPL modes.
+The remaining Phase 1 acceptance work requires physical interaction.
 
 Computer Use still reports that the Mac is locked.
 The new `experiments/fixtures/phase-1.html` provides visible animation, input, click counts, and a bounded page key log.
+Its local diagnostic frame showed the fixture and a frame counter at 118.
+The host painted 122 frames, made 125 presentations, and joined its worker after timed closure.
 The acceptance review supplies live nREPL commands and the physical test procedure.
 Physical command capture, visible navigation and echo, and input during a two-second command stall remain open.
 The automated checks do not establish interactive display behavior.
@@ -284,9 +290,8 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Run CI for the acceptance continuation, including both product evaluator modes and default native startup.
-2. Run the [physical acceptance checks](phase-1-acceptance.md#physical-checks-after-unlock) after the Mac is unlocked.
-3. Record the results and complete the Phase 1 exit review if all criteria pass.
+1. Run the [physical acceptance checks](phase-1-acceptance.md#physical-checks-after-unlock) after the Mac is unlocked.
+2. Record the results and complete the Phase 1 exit review if all criteria pass.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.

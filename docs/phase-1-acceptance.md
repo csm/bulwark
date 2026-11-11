@@ -14,7 +14,7 @@ Physical checks remain blocked because the Mac is locked.
 | A5: Clojure behavior | `bulwark.browser` retains titles, lists history, and revisits entries. Native process checks cover this behavior. Physical `C-x h` remains open. |
 | A6: mechanisms and policy | The source review below accepts the current boundary. |
 | A7: two-second command stall | Worker tests cover reservation publication during a shorter loop. Physical input, animation, queued commands, and recovery remain open. |
-| A8: Linux and interpreter | Local product suites pass in TreeWalk and Tiered modes. CI now runs both modes, including software Servo. Remote results remain pending. |
+| A8: Linux and interpreter | Passed locally and in the acceptance CI run. Linux runs both product modes, including software Servo and native process suites. |
 
 ## Startup and interpreter execution
 
@@ -138,6 +138,12 @@ The check now observes at most ten sleeps and still requires heartbeat progress 
 A blocking sleep fails every observation.
 The runtime matrix now disables fail-fast so one failure does not cancel the other platform's evidence.
 
+The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072) passed all three jobs at `f40c478`.
+Both runtime jobs passed the foundation and mock nREPL suites in TreeWalk and Tiered modes.
+The E7 mock, nested-await, idle controls, and nREPL checks also passed on Linux and macOS.
+Linux passed native/Servo Clippy, unit and contract tests, default native startup, and both software Servo modes.
+Both native process suites and both native nREPL suites also passed on Linux.
+
 ## Local results
 
 Formatting, portable workspace Clippy, all 40 workspace tests, and native/Servo Clippy passed on macOS arm64.
@@ -146,6 +152,9 @@ Both software Servo smokes painted 13 frames and joined their workers.
 Default native startup painted four frames and made seven presentations before timed closure with a joined worker.
 Both evaluator modes passed all seven native process cases, all four native nREPL cases, and all three mock nREPL cases.
 Both foundation smokes and the E7 mock and nested-await checks passed.
+Twenty repeated E7 mock checks passed with two concurrent processes.
+The acceptance fixture also passed a diagnostic render with 122 painted frames, 125 presentations, and joined shutdown.
+Its captured frame showed the input controls, key log, echo area, and animation counter at 118.
 The existing GL texture and large `__eh_frame` linker warnings remain.
 
-The acceptance continuation still requires a new CI run and the physical results before Phase 1 can close.
+Phase 1 still requires the physical results and final exit review before it can close.

@@ -739,9 +739,10 @@ Phase 0 is complete. The [exit review](phase-0-exit.md) records evidence and acc
 The product now includes the bounded bridge, native API, Servo window, Clojure commands, browser history, and opt-in nREPL.
 The [key interception checkpoint](phase-1-keys.md) adds native reservations without a runtime wait for ordinary page input.
 
-1. Run CI for default native startup and the interpreter acceptance suites.
-2. Run physical key sequences and ordinary page input during a two-second command stall.
-3. Complete the [Phase 1 acceptance review](phase-1-acceptance.md) after the physical checks pass.
+The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072) passed all three jobs at `f40c478`.
+
+1. Run physical key sequences and ordinary page input during a two-second command stall.
+2. Complete the [Phase 1 acceptance review](phase-1-acceptance.md) after the physical checks pass.
 
 E5 remains mandatory for simultaneous web content splits.
 Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.
