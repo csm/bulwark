@@ -1,11 +1,48 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `0e86c4a`, followed by the acceptance continuation on 2026-11-10.
+Snapshot: Bulwark `main` at `0e86c4a`, followed by the acceptance continuation and physical checks through 2026-11-11.
 This clean worktree fast-forwarded from `7781d87` to `0e86c4a` before development.
 
-## Phase 1 acceptance continuation
+## Phase 1 physical acceptance and exit
 
-The [acceptance review](phase-1-acceptance.md) records evidence for A1–A8 and the remaining physical checks.
+The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed at `fe243f8` on 2026-11-11.
+This branch includes current main. No product-code fix was necessary during the interactive checks.
+All A1–A8 criteria now pass, including the earlier three-job acceptance CI run.
+The [exit disposition](phase-1-acceptance.md#exit-disposition) marks Phase 1 complete on this branch.
+Review and merge remain before Phase 2 work.
+
+Computer Use sent native macOS input to a temporary bundle with a byte-identical copy of the product executable.
+Visible startup, navigation through nREPL, live title hooks, command binding, and command redefinition passed.
+Captured command keys stayed outside the page. Ordinary text reached the field.
+Physical `C-x h` displayed retained titles. Clojure history revisited example.com and the fixture.
+
+The synchronous command loop lasted 2000.015375 milliseconds.
+During the loop, native text input and a button click reached the page while the animation counter advanced by 195.
+A screenshot showed both changes while the echo still displayed `Stall started`.
+A separate nREPL client collected 37 observations during the loop.
+The queued command ran after recovery, with stages `[:started :finished :marker]`.
+The page key log contained only the ordinary `z` key.
+
+Post-stall editing, page scrolling, echo isolation, resize, prefix cancellation, and another command passed.
+Echo scrolling left the page offset at 1123 pixels.
+Resize changed the page viewport from 1000×732 to 700×482 and preserved the field text.
+The echo remained at the bottom.
+
+Physical close with an nREPL evaluation parked returned status zero and `shutdown=joined`.
+The client connection and listener closed, and the profile port file disappeared.
+The full fixture session painted 25,256 frames and made 25,258 presentations.
+Those totals cover the complete session, not the stall alone.
+The bundled default-startup close also passed with eight painted frames, eight presentations, and a joined worker.
+
+The active keyboard layout mapped Computer Use key positions differently from the tool's labels.
+The page log identified the logical strokes before the command checks.
+The [acceptance review](phase-1-acceptance.md) records the method, results, and repeat procedure.
+Interactive Linux, IME, clipboard, display-scale transitions, and broader layout coverage remain follow-up work.
+
+## Phase 1 acceptance continuation, 2026-11-10
+
+This checkpoint predates the completed physical review above.
+The [acceptance review](phase-1-acceptance.md) records evidence for A1–A8 and the physical checks.
 The default Cargo features now include `native`, so `cargo run --locked` opens the browser.
 Use `--no-default-features` for the portable runtime build and namespace bootstrap.
 The `--interpreter` product flag selects TreeWalk execution for the shell, scripts, and nREPL.
@@ -30,14 +67,14 @@ Twenty repeated E7 mock checks passed locally with two concurrent processes.
 The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072) passed all three jobs at `f40c478`.
 Both runtime jobs passed the interpreter and Tiered foundation and mock nREPL suites, plus the E7 regressions.
 Linux passed default native startup, both software Servo modes, and both native process and nREPL modes.
-The remaining Phase 1 acceptance work requires physical interaction.
+At this checkpoint, the remaining Phase 1 acceptance work required physical interaction.
 
-Computer Use still reports that the Mac is locked.
+Computer Use reported that the Mac was locked.
 The new `experiments/fixtures/phase-1.html` provides visible animation, input, click counts, and a bounded page key log.
 Its local diagnostic frame showed the fixture and a frame counter at 118.
 The host painted 122 frames, made 125 presentations, and joined its worker after timed closure.
 The acceptance review supplies live nREPL commands and the physical test procedure.
-Physical command capture, visible navigation and echo, and input during a two-second command stall remain open.
+Physical command capture, visible navigation and echo, and input during a two-second command stall remained open until 2026-11-11.
 The automated checks do not establish interactive display behavior.
 
 ## Phase 1 key interception continuation
@@ -290,8 +327,8 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Run the [physical acceptance checks](phase-1-acceptance.md#physical-checks-after-unlock) after the Mac is unlocked.
-2. Record the results and complete the Phase 1 exit review if all criteria pass.
+1. Review and merge `codex/phase-1-acceptance` after the completed [Phase 1 exit review](phase-1-acceptance.md#exit-disposition).
+2. Begin Phase 2 with the accepted single-visible-view fallback and existing runtime/engine limits.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.

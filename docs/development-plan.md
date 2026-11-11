@@ -1,9 +1,9 @@
 # Bulwark Development Plan
 
-Status: active v0.17 (2026-11-10), Phase 0 complete.
+Status: active v0.18 (2026-11-11), Phases 0 and 1 complete on the acceptance branch.
 Phase 1 includes the foundation, Servo adapter, native window, and egui echo area.
 Clojure commands, keymaps, hooks, title history, product nREPL, and key interception are implemented.
-The [acceptance review](phase-1-acceptance.md) records the remaining physical checks and CI status.
+The [acceptance review](phase-1-acceptance.md) records passing physical checks, CI, and the Phase 1 exit disposition.
 Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
@@ -504,8 +504,8 @@ The [product nREPL checkpoint](phase-1-nrepl.md) implements deliverable 5 with b
 The [key interception checkpoint](phase-1-keys.md) adds native command reservations.
 The [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation) passed the product Servo contract tests and software smoke.
 The acceptance continuation adds default native startup and interpreter execution for every product host.
-The [acceptance review](phase-1-acceptance.md) separates automated evidence from the remaining physical checks.
-Phase 1 remains open until those checks pass.
+The [acceptance review](phase-1-acceptance.md) records passing automated and physical checks for A1–A8.
+Phase 1 acceptance is complete on the acceptance branch as of 2026-11-11.
 
 Goal: validate that a useful browser shell can be written primarily in Clojurust with Rust
 and Servo providing mechanisms.
@@ -741,8 +741,11 @@ The [key interception checkpoint](phase-1-keys.md) adds native reservations with
 
 The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072) passed all three jobs at `f40c478`.
 
-1. Run physical key sequences and ordinary page input during a two-second command stall.
-2. Complete the [Phase 1 acceptance review](phase-1-acceptance.md) after the physical checks pass.
+The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
+All Phase 1 acceptance criteria now pass.
+
+1. Review and merge the Phase 1 acceptance branch.
+2. Begin Phase 2 with the accepted single-visible-view fallback.
 
 E5 remains mandatory for simultaneous web content splits.
 Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.

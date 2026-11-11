@@ -1,19 +1,20 @@
 # Phase 1 acceptance review
 
-Status: in progress, 2026-11-10. Base: `main` at `0e86c4a`.
-Physical checks remain blocked because the Mac is locked.
+Status: complete, 2026-11-11. Base: `main` at `0e86c4a`.
+The physical macOS checks passed at `fe243f8` on the acceptance branch.
+The branch includes current main. No product-code fix was necessary during these checks.
 
 ## Acceptance evidence
 
-| Criterion | Evidence and remaining work |
+| Criterion | Evidence |
 |---|---|
-| A1: default native startup | `native` is now a default Cargo feature. Local startup and shutdown pass. Visible display still needs an unlocked Mac. |
-| A2: navigation from nREPL | Mock and native process suites navigate through the product bridge. Visible navigation remains open. The public helper is `bulwark.browser/navigate!`. |
-| A3: live title hook | Both nREPL suites install a title hook and receive subsequent title events. Physical echo observation remains open. |
-| A4: live command binding | Process suites cover live command redefinition. Native matcher tests cover capture and ownership. Physical command sequences remain open. |
-| A5: Clojure behavior | `bulwark.browser` retains titles, lists history, and revisits entries. Native process checks cover this behavior. Physical `C-x h` remains open. |
-| A6: mechanisms and policy | The source review below accepts the current boundary. |
-| A7: two-second command stall | Worker tests cover reservation publication during a shorter loop. Physical input, animation, queued commands, and recovery remain open. |
+| A1: default native startup | Passed. Default startup opened the native window and echo. Physical close joined the worker and returned status zero. |
+| A2: navigation from nREPL | Passed. `bulwark.browser/navigate!` visibly navigated to `https://example.com` and back to the fixture. |
+| A3: live title hook | Passed. A hook installed through nREPL displayed navigation, click, and input titles without restart. |
+| A4: live command binding | Passed. Physical `C-c r` invoked the command. Redefinition changed the existing binding. Captured strokes stayed outside the page. |
+| A5: Clojure behavior | Passed. Physical `C-x h` displayed retained titles. `visit-history!` visibly revisited example.com and the fixture. |
+| A6: mechanisms and policy | Passed. The source review below accepts the current boundary. |
+| A7: two-second command stall | Passed. Input and animation continued during the loop. The queued marker ran after recovery. Native close also passed with a parked evaluation. |
 | A8: Linux and interpreter | Passed locally and in the acceptance CI run. Linux runs both product modes, including software Servo and native process suites. |
 
 ## Startup and interpreter execution
@@ -50,7 +51,55 @@ The startup fallback is `about:blank`.
 No Rust code implements the history behavior.
 This review accepts the Phase 1 boundary without a vision change.
 
-## Physical checks after unlock
+## Physical macOS results, 2026-11-11
+
+Platform: macOS 26.5.2 arm64, Rust 1.97.1, Servo 0.7.0, debug build, default Tiered execution.
+Computer Use sent native macOS pointer and keyboard events.
+It observed the page and echo through native screenshots.
+The page content has no accessibility tree, so page actions used screenshot coordinates.
+
+Default `cargo run --locked` opened the native host.
+Computer Use requires an app identity to attach to this executable.
+A temporary app bundle contained a byte-identical copy of the product binary, with no wrapper code.
+Both copies had SHA-256 `e494bb6c54fc24b262307ad72d987ee965726062b93fd453861773de717b451f`.
+The bundled default window showed `about:blank` and the echo area.
+Its physical close returned status zero with eight painted frames, eight presentations, and `shutdown=joined`.
+
+The fixture session used an isolated profile and the product's opt-in loopback nREPL.
+All command definitions, hooks, and observation helpers came through that listener.
+The active keyboard layout mapped the tool's key positions differently from its key labels.
+The page log identified those logical strokes before the command checks.
+The checks then sent logical `C-c r`, `C-c t`, `C-c s`, and `C-x h` through native input.
+
+| Action | Observation | Result |
+|---|---|---|
+| Navigate through nREPL | Example.com appeared, followed by the fixture after another navigation. | Passed |
+| Install a title hook, then click and type | The echo showed `Example Domain`, `Clicked: 1`, and `Typed: native test`. | Passed |
+| Bind `reload-twice`, press `C-c r`, redefine it, and repeat | The page reloaded and `command-hits` became `[:first :second]` without another binding. | Passed |
+| Invoke a command without a reload, then type | The command ran once. The page key log contained only the letters in `native test`. | Passed |
+| Press `C-x h` | Retained page titles appeared in the echo area. | Passed |
+| Run the two-second stall and send more input | The field became `native testz`, the button count became one, and animation continued before the stall ended. | Passed |
+| Send `C-c t` during the stall | Recovery order was `[:started :finished :marker]`. The page log contained only `z`. | Passed |
+| Edit after recovery | Backspace, Shift+Left, and replacement text produced `native tesx`. | Passed |
+| Scroll the page, then scroll over the echo | The end marker appeared. Echo scrolling left the page offset at 1123 pixels. | Passed |
+| Resize the window | The page viewport changed from 1000×732 to 700×482. The text remained intact and the echo stayed at the bottom. | Passed |
+| Cancel a prefix with Escape, then type | The marker did not run. The ordinary `t` reached the field. | Passed |
+| Run commands and click after resize | The marker ran, the button count became two, and history remained visible. | Passed |
+| Revisit retained entries | Clojure history restored example.com, then the fixture. | Passed |
+| Close with an evaluation parked | The worker joined, the parked connection and listener closed, and the port file disappeared. | Passed |
+
+The measured command loop lasted 2000.015375 milliseconds.
+A separate nREPL client collected 37 page observations during that loop.
+The page animation counter advanced from 7562 to 7757 across those observations.
+The field edit and button click appeared before the loop ended.
+The marker timestamp followed the loop's end timestamp.
+The screenshot during the loop showed the edited field and incremented button while the echo still displayed `Stall started`.
+These observations establish progress during this check, not a display frame-rate guarantee.
+
+The final fixture session painted 25,256 frames, made 25,258 presentations, and returned status zero with `shutdown=joined`.
+The session covered setup, observations, navigation, and interaction. These totals do not measure the stall alone.
+
+## Repeat the physical checks
 
 1. Run `cargo run --locked` and observe the native window and echo area.
 2. Close the window and require `shutdown=joined` with exit status zero.
@@ -157,4 +206,13 @@ The acceptance fixture also passed a diagnostic render with 122 painted frames, 
 Its captured frame showed the input controls, key log, echo area, and animation counter at 118.
 The existing GL texture and large `__eh_frame` linker warnings remain.
 
-Phase 1 still requires the physical results and final exit review before it can close.
+## Exit disposition
+
+All eight Phase 1 acceptance criteria pass on this branch.
+The exit question identifies no browser behavior that requires another Rust mechanism or a vision change.
+Commands, hooks, echo policy, and title history remain in Clojure.
+Phase 1 is complete. Phase 2 can begin after review and merge of the acceptance branch.
+
+Interactive Linux behavior, IME, clipboard, display-scale transitions, and broader site compatibility remain follow-up work.
+The physical check used the active keyboard layout. It does not establish support for every layout.
+The accepted single-visible-view fallback remains in force until E5 passes.

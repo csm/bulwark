@@ -2,7 +2,8 @@
 
 Bulwark is a programmable browser built with Rust, Servo, and Clojurust.
 Phase 0 is complete. The native host and runtime experiments now have an accepted architecture.
-Phase 1 is in progress. The product now has a bounded engine/runtime bridge, a native Servo window, and an egui echo area.
+Phase 1 acceptance is complete. The product has a bounded engine/runtime bridge, a native Servo window, and an egui echo area.
+The [acceptance review](docs/phase-1-acceptance.md) records passing CI and physical macOS checks.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -75,7 +76,7 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    The [product nREPL checkpoint](docs/phase-1-nrepl.md) describes admission limits, cleanup, and live command examples.
    Add `--interpreter` after `--` to select TreeWalk execution for the shell, scripts, and nREPL.
    Without this flag, the runtime uses Tiered execution.
-   The [acceptance review](docs/phase-1-acceptance.md) records automated coverage and the remaining physical checks.
+   The [acceptance review](docs/phase-1-acceptance.md) records automated coverage and the completed physical checks.
 
 2. Run the callback and GC experiment:
 
