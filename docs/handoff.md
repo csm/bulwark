@@ -1,8 +1,81 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `7ea01c3`, followed by the key interception continuation on 2026-11-09.
-This clean worktree fast-forwarded from `7781d87` to `7ea01c3` before development.
-The key interception continuation builds on that main commit in a detached worktree.
+Snapshot: Bulwark `main` at `0e86c4a`, followed by the acceptance continuation and physical checks through 2026-11-11.
+This clean worktree fast-forwarded from `7781d87` to `0e86c4a` before development.
+
+## Phase 1 physical acceptance and exit
+
+The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed at `fe243f8` on 2026-11-11.
+This branch includes current main. No product-code fix was necessary during the interactive checks.
+All A1–A8 criteria now pass, including the earlier three-job acceptance CI run.
+The [exit disposition](phase-1-acceptance.md#exit-disposition) marks Phase 1 complete on this branch.
+Review and merge remain before Phase 2 work.
+
+Computer Use sent native macOS input to a temporary bundle with a byte-identical copy of the product executable.
+Visible startup, navigation through nREPL, live title hooks, command binding, and command redefinition passed.
+Captured command keys stayed outside the page. Ordinary text reached the field.
+Physical `C-x h` displayed retained titles. Clojure history revisited example.com and the fixture.
+
+The synchronous command loop lasted 2000.015375 milliseconds.
+During the loop, native text input and a button click reached the page while the animation counter advanced by 195.
+A screenshot showed both changes while the echo still displayed `Stall started`.
+A separate nREPL client collected 37 observations during the loop.
+The queued command ran after recovery, with stages `[:started :finished :marker]`.
+The page key log contained only the ordinary `z` key.
+
+Post-stall editing, page scrolling, echo isolation, resize, prefix cancellation, and another command passed.
+Echo scrolling left the page offset at 1123 pixels.
+Resize changed the page viewport from 1000×732 to 700×482 and preserved the field text.
+The echo remained at the bottom.
+
+Physical close with an nREPL evaluation parked returned status zero and `shutdown=joined`.
+The client connection and listener closed, and the profile port file disappeared.
+The full fixture session painted 25,256 frames and made 25,258 presentations.
+Those totals cover the complete session, not the stall alone.
+The bundled default-startup close also passed with eight painted frames, eight presentations, and a joined worker.
+
+The active keyboard layout mapped Computer Use key positions differently from the tool's labels.
+The page log identified the logical strokes before the command checks.
+The [acceptance review](phase-1-acceptance.md) records the method, results, and repeat procedure.
+Interactive Linux, IME, clipboard, display-scale transitions, and broader layout coverage remain follow-up work.
+
+## Phase 1 acceptance continuation, 2026-11-10
+
+This checkpoint predates the completed physical review above.
+The [acceptance review](phase-1-acceptance.md) records evidence for A1–A8 and the physical checks.
+The default Cargo features now include `native`, so `cargo run --locked` opens the browser.
+Use `--no-default-features` for the portable runtime build and namespace bootstrap.
+The `--interpreter` product flag selects TreeWalk execution for the shell, scripts, and nREPL.
+CI now runs both evaluator modes for the product smokes and process suites.
+The foundation worker suite also covers both modes.
+
+Local macOS checks passed: formatting, portable workspace Clippy, all 40 workspace tests, and native/Servo Clippy.
+All nine native shell unit tests, both Servo unit tests, and the Servo contract passed.
+Both software Servo smokes passed with 13 painted frames each and joined workers.
+Default native startup painted four frames, made seven presentations, and joined its worker after timed closure.
+All seven native process cases and all four native nREPL cases passed in each evaluator mode.
+Both foundation smokes and all three mock nREPL cases also passed in each mode.
+The E7 mock and nested-await checks passed.
+
+The [key interception main CI run](https://github.com/csm/bulwark/actions/runs/42770493413) passed the Linux Servo job.
+This result confirms key interception, software Servo, native process checks, and native nREPL on Linux.
+The macOS runtime job failed in the older E7 heartbeat assertion. The Linux runtime job was cancelled.
+The assertion required heartbeat progress during one 40-millisecond sleep.
+It now observes at most ten sleeps to avoid dependence on one timer ordering under host load.
+It still requires heartbeat progress during a sleep. The runtime matrix now disables fail-fast.
+Twenty repeated E7 mock checks passed locally with two concurrent processes.
+The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072) passed all three jobs at `f40c478`.
+Both runtime jobs passed the interpreter and Tiered foundation and mock nREPL suites, plus the E7 regressions.
+Linux passed default native startup, both software Servo modes, and both native process and nREPL modes.
+At this checkpoint, the remaining Phase 1 acceptance work required physical interaction.
+
+Computer Use reported that the Mac was locked.
+The new `experiments/fixtures/phase-1.html` provides visible animation, input, click counts, and a bounded page key log.
+Its local diagnostic frame showed the fixture and a frame counter at 118.
+The host painted 122 frames, made 125 presentations, and joined its worker after timed closure.
+The acceptance review supplies live nREPL commands and the physical test procedure.
+Physical command capture, visible navigation and echo, and input during a two-second command stall remained open until 2026-11-11.
+The automated checks do not establish interactive display behavior.
 
 ## Phase 1 key interception continuation
 
@@ -113,8 +186,8 @@ These Xvfb checks establish automated Linux coverage. Interactive Linux behavior
 ## Current state
 
 Phase 0 is complete. The [exit review](phase-0-exit.md) accepts the architecture and records all gate dispositions.
-Phase 1 foundation is implemented. The default executable prints `{:phase 1, :status :foundation}` and exits.
-The `native` feature opens a browser window with Servo content and an egui echo area.
+Phase 1 foundation is implemented. The default executable opens a native browser window with an egui echo area.
+The `--no-default-features` build prints `{:phase 1, :status :foundation}` and exits without a mode flag.
 The product bridge and dedicated runtime worker now run with a mock engine through `cargo run --locked -- --headless-smoke`.
 The [foundation report](phase-1-foundation.md) records the native API, coverage, and remaining integration work.
 The product Servo adapter now supports software rendering through `cargo run --locked --features servo -- --servo-smoke`.
@@ -254,9 +327,8 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Run Linux CI for the key interception continuation.
-2. Run physical command sequences and ordinary page input during a two-second runtime stall.
-3. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage and default native startup.
+1. Review and merge `codex/phase-1-acceptance` after the completed [Phase 1 exit review](phase-1-acceptance.md#exit-disposition).
+2. Begin Phase 2 with the accepted single-visible-view fallback and existing runtime/engine limits.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.
@@ -283,8 +355,8 @@ Run the portable checks:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace
+cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+cargo test --locked --workspace --no-default-features
 cargo build --locked -p bulwark-experiment-e1 -p bulwark-experiment-e2 -p bulwark-experiment-e6 -p bulwark-experiment-e7
 cargo run --locked -p bulwark-experiment-e2
 cargo run --locked -p bulwark-experiment-e6

@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bulwark Phase 1 acceptance</title>
+<style>
+  body { font: 24px sans-serif; margin: 40px; background: #f6f7fa; color: #172033; }
+  input, button { font: inherit; }
+  #pulse { width: 80px; height: 12px; background: #1967d2; }
+  section { height: 1400px; }
+</style>
+<h1>Bulwark Phase 1 acceptance</h1>
+<p>Animation frame: <output id="frame">0</output></p>
+<div id="pulse"></div>
+<p><label>Keyboard input <input id="text"></label></p>
+<button id="button">Click count: 0</button>
+<p>Last page key: <output id="key">none</output></p>
+<section>Scroll down to see the end marker.</section>
+<p>End marker</p>
+<script>
+  window.keyEvents = [];
+  window.frames = 0;
+  window.clicks = 0;
+  document.addEventListener('keydown', event => {
+    const key = `${event.ctrlKey ? 'C-' : ''}${event.key}`;
+    window.keyEvents.push(key);
+    if (window.keyEvents.length > 256) window.keyEvents.shift();
+    document.getElementById('key').textContent = key;
+  });
+  document.getElementById('text').addEventListener('input', event => {
+    document.title = `Typed: ${event.target.value}`;
+  });
+  document.getElementById('button').addEventListener('click', event => {
+    event.target.textContent = `Click count: ${++window.clicks}`;
+    document.title = `Clicked: ${window.clicks}`;
+  });
+  function animate() {
+    document.getElementById('frame').textContent = ++window.frames;
+    document.getElementById('pulse').style.transform =
+      `translateX(${Math.round(100 + 100 * Math.sin(window.frames / 20))}px)`;
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+</script>

@@ -1,9 +1,9 @@
 # Bulwark Development Plan
 
-Status: active v0.16 (2026-11-08), Phase 0 complete.
+Status: active v0.18 (2026-11-11), Phases 0 and 1 complete on the acceptance branch.
 Phase 1 includes the foundation, Servo adapter, native window, and egui echo area.
-Clojure commands, keymaps, hooks, and title history are implemented locally.
-Product nREPL and key interception remain next.
+Clojure commands, keymaps, hooks, title history, product nREPL, and key interception are implemented.
+The [acceptance review](phase-1-acceptance.md) records passing physical checks, CI, and the Phase 1 exit disposition.
 Derived from `docs/bulwark.md`, Section 9 ("Next Steps"),
 which calls for decomposing the high-level plan into concrete, independently verifiable phases.
 
@@ -501,10 +501,11 @@ The local interactive macOS checks passed after the egui input routing fix.
 The [command checkpoint](phase-1-commands.md) implements deliverable 4 and a title-history behavior for deliverable 6.
 Its command and browser tests run in both interpreter and tiered modes.
 The [product nREPL checkpoint](phase-1-nrepl.md) implements deliverable 5 with bounded admission and profile discovery.
-Key interception and the full product acceptance review remain open.
+The [key interception checkpoint](phase-1-keys.md) adds native command reservations.
 The [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation) passed the product Servo contract tests and software smoke.
-Explicit interpreter coverage remains open for A8.
-No Phase 1 product acceptance criterion is marked complete by this checkpoint.
+The acceptance continuation adds default native startup and interpreter execution for every product host.
+The [acceptance review](phase-1-acceptance.md) records passing automated and physical checks for A1–A8.
+Phase 1 acceptance is complete on the acceptance branch as of 2026-11-11.
 
 Goal: validate that a useful browser shell can be written primarily in Clojurust with Rust
 and Servo providing mechanisms.
@@ -530,7 +531,7 @@ Acceptance criteria:
 
 - A1. `cargo run` opens a window showing a web page rendered by Servo. (vision §8.1)
 - A2. Connecting an nREPL client to the port in the port file and evaluating
-  `(bulwark.core/navigate! "https://example.com")` navigates the visible page. (§8.2, §8.3)
+  `(await (bulwark.browser/navigate! "https://example.com"))` navigates the visible page. (§8.2, §8.3)
 - A3. `(add-hook! :page/title-changed (fn [e] (set-echo! (:title e))))` from the REPL causes
   the echo area to show titles on subsequent navigations, without restart. (§8.4)
 - A4. `(defcommand reload-twice ...)` followed by `(bind-key! "C-c r" 'reload-twice)` from the
@@ -738,10 +739,13 @@ Phase 0 is complete. The [exit review](phase-0-exit.md) records evidence and acc
 The product now includes the bounded bridge, native API, Servo window, Clojure commands, browser history, and opt-in nREPL.
 The [key interception checkpoint](phase-1-keys.md) adds native reservations without a runtime wait for ordinary page input.
 
-1. Run Linux CI for the key interception continuation.
-2. Run physical key sequences and ordinary page input during a two-second runtime stall.
-3. Run the Phase 1 acceptance checks against the product executable.
-   The `native` feature opens a window. Default native startup and the remaining acceptance checks remain incomplete.
+The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072) passed all three jobs at `f40c478`.
+
+The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
+All Phase 1 acceptance criteria now pass.
+
+1. Review and merge the Phase 1 acceptance branch.
+2. Begin Phase 2 with the accepted single-visible-view fallback.
 
 E5 remains mandatory for simultaneous web content splits.
 Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.

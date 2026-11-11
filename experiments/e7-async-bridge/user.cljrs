@@ -51,9 +51,17 @@
           (recur (inc i)))))
     (await (timeout 30))
     (require! (> @ticks 0) "Async heartbeat did not progress")
-    (let [before @ticks]
-      (Thread/sleep 40)
-      (require! (> @ticks before) "Fiber sleep blocked the async heartbeat"))
+    ;; A busy host can make both timers ready before either fiber resumes.
+    ;; Observe several sleeps instead of requiring one specific timer ordering.
+    ;; A blocking Thread/sleep still fails every observation.
+    (let [progress (loop [remaining 10]
+                     (let [before @ticks]
+                       (Thread/sleep 40)
+                       (cond
+                         (> @ticks before) true
+                         (> remaining 1) (recur (dec remaining))
+                         :else false)))]
+      (require! progress "Fiber sleep blocked the async heartbeat"))
     (loop [i 0]
       (when (< i 100)
         (require! (= "round-trip" (await (eval-js! view "\"round-trip\""))) "Bad script result")

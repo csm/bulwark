@@ -84,6 +84,8 @@ def run_case(args, case):
         profile = Path(directory) / "profile"
         port_file = profile / ".nrepl-port"
         command = [str(args.binary), "--nrepl", "--profile", str(profile)]
+        if args.interpreter:
+            command += ["--interpreter"]
         if args.native:
             command += ["--script", str(ROOT / "clj/tests/nrepl.cljrs")]
             if case == "close":
@@ -195,6 +197,7 @@ def main():
     parser.add_argument("--binary", type=Path, default=Path(
         os.environ.get("CARGO_TARGET_DIR", "target")) / "debug/bulwark-shell")
     parser.add_argument("--native", action="store_true")
+    parser.add_argument("--interpreter", action="store_true")
     parser.add_argument("--timeout", type=float, default=35)
     args = parser.parse_args()
     if args.timeout <= 0:
