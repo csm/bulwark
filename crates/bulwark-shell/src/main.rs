@@ -3,40 +3,44 @@ mod native;
 mod options;
 
 fn main() -> anyhow::Result<()> {
-    let (args, nrepl) = options::parse(std::env::args().skip(1))?;
+    let options::Options { args, nrepl, mode } = options::parse(std::env::args().skip(1))?;
     if args == ["--nrepl-smoke"] {
         anyhow::ensure!(nrepl.is_some(), "--nrepl-smoke requires --nrepl");
-        return nrepl_smoke(nrepl);
+        return nrepl_smoke(nrepl, mode);
     }
     if args == ["--headless-smoke"] {
         anyhow::ensure!(nrepl.is_none(), "Use --nrepl-smoke for nREPL checks");
-        return headless_smoke();
+        return headless_smoke(mode);
     }
     if args == ["--servo-smoke"] {
         anyhow::ensure!(nrepl.is_none(), "Use the native shell for Servo nREPL");
         #[cfg(feature = "servo")]
-        return servo_smoke();
+        return servo_smoke(mode);
         #[cfg(not(feature = "servo"))]
         anyhow::bail!("--servo-smoke requires --features servo");
     }
     #[cfg(feature = "native")]
-    return native::run(&args, nrepl);
+    return native::run(&args, nrepl, mode);
     #[cfg(not(feature = "native"))]
     {
         anyhow::ensure!(
             nrepl.is_none(),
             "--nrepl requires --features native or --nrepl-smoke"
         );
-        bootstrap(&args)
+        bootstrap(&args, mode)
     }
 }
 
-fn nrepl_smoke(nrepl: Option<bulwark_runtime::nrepl::Config>) -> anyhow::Result<()> {
+fn nrepl_smoke(
+    nrepl: Option<bulwark_runtime::nrepl::Config>,
+    mode: cljrs_runtime::ExecutionMode,
+) -> anyhow::Result<()> {
     let report = run_headless(
         include_str!("../../../clj/tests/nrepl.cljrs").into(),
         |events, _| Ok(bulwark_engine::mock::MockEngine::new(events)),
         |_| {},
         nrepl,
+        mode,
     )?;
     anyhow::ensure!(
         report.result == ":nrepl-passed",
@@ -48,23 +52,24 @@ fn nrepl_smoke(nrepl: Option<bulwark_runtime::nrepl::Config>) -> anyhow::Result<
 }
 
 #[cfg(not(feature = "native"))]
-fn bootstrap(args: &[String]) -> anyhow::Result<()> {
+fn bootstrap(args: &[String], mode: cljrs_runtime::ExecutionMode) -> anyhow::Result<()> {
     anyhow::ensure!(
         args.is_empty(),
         "Usage: bulwark-shell [--headless-smoke | --servo-smoke]; use --features native to open a window"
     );
-    let mut host = bulwark_runtime::RuntimeHost::new(cljrs_runtime::ExecutionMode::Tiered)?;
+    let mut host = bulwark_runtime::RuntimeHost::new(mode)?;
     println!("{}", host.eval("(bulwark.core/bootstrap-status)")?);
     Ok(())
 }
 
 /// Exercises product transport and runtime ownership without a native display.
-fn headless_smoke() -> anyhow::Result<()> {
+fn headless_smoke(mode: cljrs_runtime::ExecutionMode) -> anyhow::Result<()> {
     let report = run_headless(
         include_str!("../../../clj/tests/foundation.cljrs").into(),
         |events, _| Ok(bulwark_engine::mock::MockEngine::new(events)),
         |_| {},
         None,
+        mode,
     )?;
     anyhow::ensure!(
         report.result == ":foundation-passed",
@@ -83,7 +88,7 @@ fn headless_smoke() -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "servo")]
-fn servo_smoke() -> anyhow::Result<()> {
+fn servo_smoke(mode: cljrs_runtime::ExecutionMode) -> anyhow::Result<()> {
     // File paths and fixture assertions belong to the smoke program, not browser policy.
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../clj/tests/fixtures/servo.html")
@@ -103,6 +108,7 @@ fn servo_smoke() -> anyhow::Result<()> {
             frames = engine.frame_count();
         },
         None,
+        mode,
     )?;
     anyhow::ensure!(
         report.result == ":servo-passed",
@@ -134,6 +140,7 @@ fn run_headless<E: bulwark_engine::Engine>(
     ) -> anyhow::Result<E>,
     mut after_tick: impl FnMut(&mut E),
     nrepl: Option<bulwark_runtime::nrepl::Config>,
+    mode: cljrs_runtime::ExecutionMode,
 ) -> anyhow::Result<HeadlessReport> {
     use bulwark_engine::{Command, Data, Fault, bridge};
     use std::{
@@ -145,12 +152,8 @@ fn run_headless<E: bulwark_engine::Engine>(
     let wake: bridge::Wake = Arc::new(move || main_thread.unpark());
     let (runtime, mut endpoint) = bridge::channel(wake.clone());
     let mut engine = create(endpoint.events.clone(), wake)?;
-    let mut worker = bulwark_runtime::worker::Worker::spawn_configured(
-        runtime,
-        source,
-        cljrs_runtime::ExecutionMode::Tiered,
-        nrepl,
-    )?;
+    let mut worker =
+        bulwark_runtime::worker::Worker::spawn_configured(runtime, source, mode, nrepl)?;
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut echo = String::new();
     let host_control = endpoint.control.clone();

@@ -231,6 +231,20 @@ fn run_product_clojure(source: &str, expected: &str, mode: cljrs_runtime::Execut
 }
 
 #[test]
+fn foundation_passes_in_interpreter_and_tiered_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/foundation.cljrs"),
+            ":foundation-passed",
+            mode,
+        );
+    }
+}
+
+#[test]
 fn command_keymap_and_hooks_pass_in_interpreter_and_tiered_modes() {
     for mode in [
         cljrs_runtime::ExecutionMode::TreeWalk,

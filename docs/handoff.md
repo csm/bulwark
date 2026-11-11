@@ -1,8 +1,38 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `7ea01c3`, followed by the key interception continuation on 2026-11-09.
-This clean worktree fast-forwarded from `7781d87` to `7ea01c3` before development.
-The key interception continuation builds on that main commit in a detached worktree.
+Snapshot: Bulwark `main` at `0e86c4a`, followed by the acceptance continuation on 2026-11-10.
+This clean worktree fast-forwarded from `7781d87` to `0e86c4a` before development.
+
+## Phase 1 acceptance continuation
+
+The [acceptance review](phase-1-acceptance.md) records evidence for A1–A8 and the remaining physical checks.
+The default Cargo features now include `native`, so `cargo run --locked` opens the browser.
+Use `--no-default-features` for the portable runtime build and namespace bootstrap.
+The `--interpreter` product flag selects TreeWalk execution for the shell, scripts, and nREPL.
+CI now runs both evaluator modes for the product smokes and process suites.
+The foundation worker suite also covers both modes.
+
+Local macOS checks passed: formatting, portable workspace Clippy, all 40 workspace tests, and native/Servo Clippy.
+All nine native shell unit tests, both Servo unit tests, and the Servo contract passed.
+Both software Servo smokes passed with 13 painted frames each and joined workers.
+Default native startup painted four frames, made seven presentations, and joined its worker after timed closure.
+All seven native process cases and all four native nREPL cases passed in each evaluator mode.
+Both foundation smokes and all three mock nREPL cases also passed in each mode.
+The E7 mock and nested-await checks passed.
+
+The [key interception main CI run](https://github.com/csm/bulwark/actions/runs/42770493413) passed the Linux Servo job.
+This result confirms key interception, software Servo, native process checks, and native nREPL on Linux.
+The macOS runtime job failed in the older E7 heartbeat assertion. The Linux runtime job was cancelled.
+The assertion required heartbeat progress during one 40-millisecond sleep.
+It now observes at most ten sleeps to avoid dependence on one timer ordering under host load.
+It still requires heartbeat progress during a sleep. The runtime matrix now disables fail-fast.
+These changes require a new CI run.
+
+Computer Use still reports that the Mac is locked.
+The new `experiments/fixtures/phase-1.html` provides visible animation, input, click counts, and a bounded page key log.
+The acceptance review supplies live nREPL commands and the physical test procedure.
+Physical command capture, visible navigation and echo, and input during a two-second command stall remain open.
+The automated checks do not establish interactive display behavior.
 
 ## Phase 1 key interception continuation
 
@@ -113,8 +143,8 @@ These Xvfb checks establish automated Linux coverage. Interactive Linux behavior
 ## Current state
 
 Phase 0 is complete. The [exit review](phase-0-exit.md) accepts the architecture and records all gate dispositions.
-Phase 1 foundation is implemented. The default executable prints `{:phase 1, :status :foundation}` and exits.
-The `native` feature opens a browser window with Servo content and an egui echo area.
+Phase 1 foundation is implemented. The default executable opens a native browser window with an egui echo area.
+The `--no-default-features` build prints `{:phase 1, :status :foundation}` and exits without a mode flag.
 The product bridge and dedicated runtime worker now run with a mock engine through `cargo run --locked -- --headless-smoke`.
 The [foundation report](phase-1-foundation.md) records the native API, coverage, and remaining integration work.
 The product Servo adapter now supports software rendering through `cargo run --locked --features servo -- --servo-smoke`.
@@ -254,9 +284,9 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Run Linux CI for the key interception continuation.
-2. Run physical command sequences and ordinary page input during a two-second runtime stall.
-3. Run the Phase 1 acceptance checks against the product executable, including remaining interpreter coverage and default native startup.
+1. Run CI for the acceptance continuation, including both product evaluator modes and default native startup.
+2. Run the [physical acceptance checks](phase-1-acceptance.md#physical-checks-after-unlock) after the Mac is unlocked.
+3. Record the results and complete the Phase 1 exit review if all criteria pass.
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.
@@ -283,8 +313,8 @@ Run the portable checks:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace
+cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+cargo test --locked --workspace --no-default-features
 cargo build --locked -p bulwark-experiment-e1 -p bulwark-experiment-e2 -p bulwark-experiment-e6 -p bulwark-experiment-e7
 cargo run --locked -p bulwark-experiment-e2
 cargo run --locked -p bulwark-experiment-e6

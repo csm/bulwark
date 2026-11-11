@@ -36,7 +36,7 @@ Define a command and bind its name:
 ```
 
 Later definitions change the function that the existing binding calls.
-Command keys still reach Servo until key interception is complete.
+The [key interception continuation](phase-1-keys.md) reserves command keys before they reach Servo.
 
 ## Admission and cleanup
 

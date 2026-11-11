@@ -154,6 +154,7 @@ struct App {
     proxy: EventLoopProxy<Wake>,
     source: String,
     nrepl: Option<bulwark_runtime::nrepl::Config>,
+    mode: cljrs_runtime::ExecutionMode,
     smoke: bool,
     deadline: Option<Instant>,
     close_after: Option<Duration>,
@@ -227,7 +228,7 @@ impl App {
         self.worker = Some(Worker::spawn_configured(
             runtime,
             self.source.clone(),
-            cljrs_runtime::ExecutionMode::Tiered,
+            self.mode,
             self.nrepl.take(),
         )?);
         self.close_at = self.close_after.map(|duration| Instant::now() + duration);
@@ -479,7 +480,11 @@ impl ApplicationHandler<Wake> for App {
     }
 }
 
-pub fn run(args: &[String], nrepl: Option<bulwark_runtime::nrepl::Config>) -> Result<()> {
+pub fn run(
+    args: &[String],
+    nrepl: Option<bulwark_runtime::nrepl::Config>,
+    mode: cljrs_runtime::ExecutionMode,
+) -> Result<()> {
     let smoke = args.iter().any(|arg| arg == "--native-smoke");
     let mut initial = None;
     let mut script = None;
@@ -549,6 +554,7 @@ pub fn run(args: &[String], nrepl: Option<bulwark_runtime::nrepl::Config>) -> Re
         proxy: event_loop.create_proxy(),
         source,
         nrepl,
+        mode,
         smoke,
         deadline: smoke.then(|| Instant::now() + Duration::from_secs(30)),
         close_after,
