@@ -35,13 +35,19 @@ def main():
         os.environ.get("CARGO_TARGET_DIR", "target")) / "debug/bulwark-shell")
     parser.add_argument("--interpreter", action="store_true")
     parser.add_argument("--timeout", type=float, default=35)
+    parser.add_argument("--artifacts-dir", type=Path,
+                        help="Retain page/chrome and mixed-pane PNGs in this directory")
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if args.artifacts_dir:
+        args.artifacts_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="bulwark-product-native-") as directory:
         directory = Path(directory)
         root = Path(__file__).resolve().parent.parent
-        screenshot = directory / "smoke.png"
+        artifacts = args.artifacts_dir or directory
+        suffix = "interpreter" if args.interpreter else "tiered"
+        screenshot = artifacts / f"page-and-chrome-{suffix}.png"
         mode = ["--interpreter"] if args.interpreter else []
         run_case(args.binary, "page-and-chrome", [*mode, "--native-smoke", "--screenshot", str(screenshot)],
                  True, ["Phase 1 native passed"], args.timeout)
@@ -57,6 +63,8 @@ def main():
              True, ["Retained webview assertions passed"]),
             ("retained-buffers", (root / "clj/tests/buffers-native.cljrs").read_text(),
              True, ["Retained buffer assertions passed"]),
+            ("mixed-windows", (root / "clj/tests/windows-native.cljrs").read_text(),
+             True, ["Native mixed-window assertions passed"]),
             ("clojure-browser", (root / "clj/tests/browser-native.cljrs").read_text(),
              True, ["Native Clojure commands and history passed"]),
             ("hook-failure", '''
@@ -85,7 +93,9 @@ def main():
             script = directory / f"{name}.cljrs"
             script.write_text(source)
             flags = [*mode, "--script", str(script)]
-            if name in {"clojure-browser", "retained-views", "retained-buffers"}:
+            if name == "mixed-windows":
+                flags += ["--screenshot", str(artifacts / f"mixed-windows-{suffix}.png")]
+            if name in {"clojure-browser", "retained-views", "retained-buffers", "mixed-windows"}:
                 flags.append((root / "clj/tests/fixtures/servo.html").as_uri())
             run_case(args.binary, name, flags, success, expected, args.timeout)
 

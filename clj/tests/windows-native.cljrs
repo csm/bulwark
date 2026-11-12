@@ -1,0 +1,80 @@
+;; Mixed panes against the real native host. The runner supplies user/initial-url.
+(ns bulwark.tests.windows-native
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.native :as native]
+            [bulwark.ui :as ui]
+            [bulwark.window :as window]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defn ^:async js! [id script]
+  (browser/value! (await (native/eval-js (:buffer/view (buffer/buffer! id)) script))))
+
+(defn ^:async wait-js! [id script expected]
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (when-not (= expected (await (js! id script)))
+        (check! (< (System/currentTimeMillis) deadline) (str "Timed out: " script))
+        (await (timeout 5))
+        (recur)))))
+
+(defn web-element []
+  (first (filter (fn [element] (= :web (:ui/kind element)))
+                 (:elements (:description @ui/issued)))))
+
+(defn ^:async fits! [id]
+  (let [element (web-element)]
+    (await (wait-js! id "String(innerWidth) + 'x' + String(innerHeight)"
+                    (str (:width element) "x" (:height element))))))
+
+(defn ^:async program! []
+  (browser/install!)
+  (reset! buffer/last-web-buffer-policy nil)
+  (let [a (await (browser/open! user/initial-url))
+        b (await (browser/open! user/initial-url {:select false}))
+        notes (await (buffer/create! {:kind :text :name "*notes*" :select false
+                                     :text "Mixed windows\n\nA retained web page and a text buffer.\n\nClick either pane to select it.\nC-x o moves between panes.\nC-x 1 keeps the selected pane."}))
+        left (buffer/selected-window)]
+    (await (wait-js! a "document.title" "Bulwark Servo fixture"))
+    (await (wait-js! b "document.title" "Bulwark Servo fixture"))
+    (await (js! a "window.retained = 'page-a'; 'ok'"))
+    (await (js! b "window.retained = 'page-b'; 'ok'"))
+    (let [right (await (browser/split-window! :row))]
+      (await (fits! a))
+      (check! (= 0 (:x (web-element))) "The page did not start in the left pane")
+      ;; Text takes keyboard focus while the page remains visible and alive.
+      (await (browser/select-window! right))
+      (await (wait-js! a "String(document.hasFocus())" "false"))
+      (check! (and (= notes (buffer/selected-id)) (nil? (browser/active-view)) (web-element))
+              "Text selection hid the visible page or selected its buffer")
+      (await (browser/select-window! left))
+      (check! (= left (:focus (:description @ui/issued))) "The page did not take the described focus")
+      (await (browser/resize-window! :row 100))
+      (await (fits! a))
+      ;; Replace the visible page. Both documents retain their independent state.
+      (await (buffer/select! b))
+      (await (fits! b))
+      (check! (= "page-a" (await (js! a "String(window.retained)"))) "The hidden page lost its document")
+      (check! (= "page-b" (await (js! b "String(window.retained)"))) "The selected page lost its document")
+      ;; Keep text alone, then show the page on its right to exercise a nonzero origin.
+      (await (browser/select-window! right))
+      (await (buffer/change-layout! window/only right))
+      (check! (nil? (web-element)) "A text-only frame still described a page")
+      (await (wait-js! b "String(document.hasFocus())" "false"))
+      (let [page-window (await (browser/split-window! :row))]
+        (await (buffer/change-layout! window/set-buffer page-window a))
+        (await (browser/select-window! page-window))
+        (await (fits! a))
+        (check! (pos? (:x (web-element))) "The page did not move to the right pane")
+        (check! (= page-window (:focus (:description @ui/issued))) "The right page did not take the described focus")
+        (await (buffer/kill! b))
+        (check! (= "page-a" (await (js! a "String(window.retained)"))) "Killing the hidden page changed the visible page")
+        (await (browser/set-echo! "Mixed windows ready"))
+        (await (timeout 100)))))
+  (browser/value! (await (native/log "Native mixed-window assertions passed")))
+  :windows-native-passed)
+
+(program!)

@@ -20,6 +20,7 @@
 (def max-elements 64)
 (def max-line-characters 256)
 (def max-text-characters 16384)
+(def max-description-characters 65536)
 (def default-viewport {:width 1000 :height 760 :scale 1.0})
 (def host (atom nil))
 (def issued (atom {:revision 0 :structure nil :description nil}))
@@ -75,14 +76,14 @@
 
 (defn pane-elements
   "Returns the elements of one window: its content, then its modeline when both fit."
-  [rectangle pane selected]
+  [rectangle pane selected text-limit]
   (let [x (:x rectangle) y (:y rectangle) width (:width rectangle) height (:height rectangle)
         modeline (and (:modeline pane) (> height modeline-height))
         content-height (if modeline (- height modeline-height) height)
         place {:ui/id (:window/id rectangle) :x x :y y :width width :height content-height}
         content (if (= :web (:kind pane))
                   (assoc place :ui/kind :web :webview (:view pane))
-                  (assoc place :ui/kind :text :text (clip (or (:text pane) "") max-text-characters)))]
+                  (assoc place :ui/kind :text :text (clip (or (:text pane) "") text-limit)))]
     (if modeline
       [content {:ui/kind :line :x x :y (+ y content-height) :width width :height modeline-height
                 :text (clip (:modeline pane) max-line-characters) :emphasis selected}]
@@ -95,12 +96,19 @@
   [layout panes viewport]
   (let [area (window-area viewport)
         echo {:ui/kind :echo :x 0 :y (:height area) :width (:width area) :height echo-height}
+        rectangles (if layout (rectangles layout area) [])
+        ;; Four UTF-8 bytes per character bounds the whole description at 256 KiB.
+        ;; Reserve every modeline first, then share the remaining budget among panes.
+        text-limit (min max-text-characters
+                        (quot (- max-description-characters (* (count rectangles) max-line-characters))
+                              (max 1 (count rectangles))))
         windows (if layout
                   (vec (mapcat (fn [rectangle]
                                  (pane-elements rectangle
                                                 (get panes (:window/id rectangle))
-                                                (= (:window/id rectangle) (:selected layout))))
-                               (rectangles layout area)))
+                                                (= (:window/id rectangle) (:selected layout))
+                                                text-limit))
+                               rectangles))
                   [])]
     {:focus (when layout (:selected layout)) :elements (conj windows echo)}))
 

@@ -1,6 +1,32 @@
 # Development handoff
 
-Snapshot: `claude/cool-faraday-q2ev46`, based on main at `283a925`, 2026-11-12.
+Snapshot: Phase 2.3 continuation after `9b0eb20`, based on main at `c1fef4d`, 2026-11-12.
+
+## Phase 2.3 native UI continuation
+
+This continuation starts from `main` at `c1fef4d` and the inherited WIP commit `9b0eb20`.
+The [window checkpoint](phase-2-windows.md) now records the registry, bounded UI schema, native renderer, and interaction contract.
+The implementation covers mixed web/text panes, modelines, the echo area, and editable control mechanisms.
+Clojure owns the tree, selection, split fallback, commands, and bindings.
+
+The continuation preserves mouse releases across focus changes within the same visible page.
+It bounds the combined Unicode text of all panes and replaces recursive window traversal with explicit paths and pending lists.
+A stale-handle assertion now allocates an unused id, so it also passes when the test runs alone.
+The new native mixed-window fixture runs in both evaluator modes through the existing process runner.
+`--artifacts-dir` retains screenshots for review.
+
+The Unicode regression required [Clojurust draft PR #491](https://github.com/csm/clojurust/pull/491).
+The product and AOT compiler now pin `174557b3`, one commit after `14bd7f9c`.
+The earlier pin counted UTF-8 bytes in compiled strings, which broke character budgets and clipping.
+Three upstream ABI tests and a standalone AOT regression pass with the fix.
+
+Local automated coverage includes 50 portable tests, 17 native unit tests, the Servo contract, and ten native process cases per evaluator mode.
+The AOT model includes six compiled shell namespaces. Portable and native formatting and Clippy checks cover the changes.
+The window checkpoint records the exact evidence and remaining limits.
+
+Computer Use reported a locked Mac. Physical mixed-pane input checks remain open.
+Current Linux CI also remains open. P2.3 is not yet an accepted milestone.
+After those checks pass, continue with P2.4 modes and contextual keymaps.
 
 ## Phase 2 buffer continuation
 
@@ -17,13 +43,13 @@ That run covers the new `retained-buffers` native case, the native nREPL suite, 
 
 The [window model checkpoint](phase-2-windows.md) begins P2.3 with the immutable window tree and the pure layout function.
 Its assertions pass in the interpreter, Tiered mode, and the AOT binary.
-The next work connects the layout to the buffer registry, then adds the bounded UI descriptions and native mechanisms.
+The native UI continuation above completes those implementation steps.
 
 ## Phase 2 mechanism continuation
 
 The owner accepted Phases 0 and 1 and confirmed the [Phase 2 scope](phase-2-plan.md).
 The [mechanism checkpoint](phase-2-mechanisms.md) adds retained webviews, explicit selection, and standalone AOT assertions.
-Clojurust now pins `14bd7f9c`, a one-commit compiler fix after the accepted runtime pin.
+Clojurust at that checkpoint pinned `14bd7f9c`, a one-commit compiler fix after the accepted runtime pin.
 The separate upstream branch is `codex/bulwark-phase-2-aot`.
 The fix and its regression checks preserve qualified symbol identity during native compilation.
 
@@ -356,9 +382,8 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Run remote CI for the Phase 2 mechanism checkpoint and its AOT job.
-2. Add P2.2 buffers with the accepted single-visible-view fallback and existing runtime/engine limits.
-3. Continue the [Phase 2 implementation plan](phase-2-plan.md).
+1. Run current Linux CI and the physical mixed-pane checks in the [window checkpoint](phase-2-windows.md).
+2. Continue P2.4 in the [Phase 2 implementation plan](phase-2-plan.md).
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.

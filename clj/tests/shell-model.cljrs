@@ -287,5 +287,31 @@
       (check! (= :window-too-small (error-kind (fn [] (ui/check-fit! crowded)))) "A crowded layout fit the frame")
       (check! (= [:web :line :echo] (kinds (ui/describe crowded (buffer/panes split) viewport)))
               "A crowded layout did not fall back to its selected window"))))
+;; Deep trees do not consume the interpreter's native call stack.
+(let [deep (reduce (fn [state id] (window/split state 1 id :row 12))
+                   (window/initial 1 12) (range 2 65))
+      changed (window/set-buffer deep 1 13)
+      resized (window/resize changed 1 :row 10)
+      deleted (window/delete resized 1)]
+  (check! (= 64 (count (window/windows deep))) "A deep tree lost windows")
+  (check! (= 13 (:window/buffer (window/window changed 1))) "A deep buffer assignment failed")
+  (check! (= 63 (count (window/windows deleted))) "A deep deletion failed")
+  (check! (= 64 (:selected (window/select deep 64))) "A deep selection failed")
+  (check! (= :window-too-small (error-kind (fn [] (window/layout deep {:x 0 :y 0 :width 1000 :height 760}))))
+          "A deep layout ignored minimum sizes"))
+;; Several Unicode text panes share the frame budget, including their modelines.
+(check! (= ["😀é" "😀"] [(ui/clip "😀é" 3) (ui/clip "😀é" 1)])
+        "Unicode clipping used byte indices")
+(let [layout (reduce (fn [state pair] (window/split state (first pair) (second pair) :row 12))
+                     (window/initial 1 12) [[1 2] [1 3] [2 4] [1 5] [3 6] [2 7] [4 8]])
+      text (apply str (repeat 20000 "😀"))
+      panes (reduce (fn [panes id] (assoc panes id {:kind :text :text text :modeline text})) {} (range 1 9))
+      description (ui/describe layout panes {:width 32768 :height 760 :scale 1.0})
+      characters (reduce + (map (fn [element] (count (or (:text element) ""))) (:elements description)))]
+  (check! (= 17 (count (:elements description))) "The frame lost a fitting text pane")
+  (check! (<= characters ui/max-description-characters) "The text panes exceeded the frame budget")
+  (check! (every? (fn [element] (seq (:text element)))
+                 (filter (fn [element] (= :text (:ui/kind element))) (:elements description)))
+          "A text pane received no content budget"))
 (println "Shell model assertions passed")
 :shell-model-passed

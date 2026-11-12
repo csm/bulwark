@@ -409,7 +409,11 @@ impl App {
         surface.engine.tick();
         let current_owner = owner(surface);
         if previous_owner != current_owner {
-            surface.input.change_view();
+            if previous_owner.0 != current_owner.0 {
+                surface.input.change_view();
+            } else {
+                surface.input.change_focus();
+            }
             // A frame without a page still cancels a pending prefix.
             if current_owner.0.is_some() || surface.engine.ui().is_some() {
                 surface.emit(

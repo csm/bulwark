@@ -27,9 +27,13 @@
 (defn leaves
   "Returns a node's leaf windows in layout order."
   [node]
-  (if (leaf? node)
-    [node]
-    (vec (mapcat leaves (:split/children node)))))
+  (loop [pending (list node) result []]
+    (if-let [node (first pending)]
+      (if (leaf? node)
+        (recur (rest pending) (conj result node))
+        (recur (cons (first (:split/children node))
+                     (cons (second (:split/children node)) (rest pending))) result))
+      result)))
 
 (defn windows
   "Returns the layout's leaf windows in layout order."
@@ -63,24 +67,42 @@
   [state root]
   (assoc state :root root :revision (inc (:revision state))))
 
+(defn leaf-path
+  "Returns a leaf and its ancestors as [parent child-index] pairs, or nil."
+  [node id]
+  (loop [pending (list [node []])]
+    (when-let [entry (first pending)]
+      (let [node (first entry) path (second entry)]
+        (if (leaf? node)
+          (if (= id (:window/id node)) {:leaf node :path path} (recur (rest pending)))
+          (recur (cons [(first (:split/children node)) (conj path [node 0])]
+                       (cons [(second (:split/children node)) (conj path [node 1])] (rest pending)))))))))
+
+(defn rebuild
+  "Rebuilds the ancestors of a replacement node without recursive evaluator calls."
+  [node path]
+  (reduce (fn [child entry]
+            (let [parent (first entry) side (second entry)
+                  children (:split/children parent)]
+              (assoc parent :split/children
+                     (if (= side 0) [child (second children)] [(first children) child]))))
+          node (reverse path)))
+
 (defn replace-leaf
   "Replaces one leaf with the node that a function returns for it."
   [node id f]
-  (if (leaf? node)
-    (if (= id (:window/id node)) (f node) node)
-    (assoc node :split/children
-           (mapv (fn [child] (replace-leaf child id f)) (:split/children node)))))
+  (if-let [found (leaf-path node id)]
+    (rebuild (f (:leaf found)) (:path found))
+    node))
 
 (defn remove-leaf
   "Removes one leaf. Its sibling takes the place of their split."
   [node id]
-  (if (leaf? node)
-    node
-    (let [a (first (:split/children node)) b (second (:split/children node))]
-      (cond
-        (and (leaf? a) (= id (:window/id a))) b
-        (and (leaf? b) (= id (:window/id b))) a
-        :else (assoc node :split/children [(remove-leaf a id) (remove-leaf b id)])))))
+  (let [path (:path (leaf-path node id))
+        entry (last path)]
+    (if entry
+      (rebuild (nth (:split/children (first entry)) (- 1 (second entry))) (butlast path))
+      node)))
 
 (defn select
   "Selects a live window."
@@ -140,18 +162,16 @@
 (defn resize-node
   "Moves the nearest enclosing split of a direction toward growing a window by thousandths."
   [node id direction amount]
-  (if (leaf? node)
-    {:node node :found (= id (:window/id node)) :done false}
-    (let [a (resize-node (first (:split/children node)) id direction amount)
-          b (resize-node (second (:split/children node)) id direction amount)
-          found (or (:found a) (:found b))
-          done (or (:done a) (:done b))
-          children (assoc node :split/children [(:node a) (:node b)])]
-      (if (and found (not done) (= direction (:split/direction node)))
-        (let [share (+ (:split/share node) (if (:found a) amount (- amount)))]
-          {:node (assoc children :split/share (max minimum-share (min maximum-share share)))
-           :found true :done true})
-        {:node children :found found :done done}))))
+  (let [found (leaf-path node id)]
+    (loop [path (:path found)]
+      (if-let [entry (last path)]
+        (let [parent (first entry) side (second entry)]
+          (if (= direction (:split/direction parent))
+            (let [share (+ (:split/share parent) (if (= side 0) amount (- amount)))]
+              {:node (rebuild (assoc parent :split/share (max minimum-share (min maximum-share share))) (butlast path))
+               :found true :done true})
+            (recur (butlast path))))
+        {:node node :found (boolean found) :done false}))))
 
 (defn resize
   "Grows a window by thousandths of its nearest enclosing split in a direction. A negative
@@ -168,18 +188,22 @@
 (defn layout-node
   "Assigns integer rectangles to a node's leaves inside a rectangle."
   [node x y width height]
-  (if (leaf? node)
-    [{:window/id (:window/id node) :window/buffer (:window/buffer node)
-      :x x :y y :width width :height height}]
-    (let [a (first (:split/children node)) b (second (:split/children node))
-          share (:split/share node)]
-      (if (= :row (:split/direction node))
-        (let [extent (quot (* share width) 1000)]
-          (into (layout-node a x y extent height)
-                (layout-node b (+ x extent) y (- width extent) height)))
-        (let [extent (quot (* share height) 1000)]
-          (into (layout-node a x y width extent)
-                (layout-node b x (+ y extent) width (- height extent))))))))
+  (loop [pending (list [node x y width height]) result []]
+    (if-let [entry (first pending)]
+      (let [node (nth entry 0) x (nth entry 1) y (nth entry 2)
+            width (nth entry 3) height (nth entry 4)]
+        (if (leaf? node)
+          (recur (rest pending)
+                 (conj result {:window/id (:window/id node) :window/buffer (:window/buffer node)
+                               :x x :y y :width width :height height}))
+          (let [a (first (:split/children node)) b (second (:split/children node))
+                row (= :row (:split/direction node))
+                extent (quot (* (:split/share node) (if row width height)) 1000)
+                first-rect (if row [a x y extent height] [a x y width extent])
+                second-rect (if row [b (+ x extent) y (- width extent) height]
+                                   [b x (+ y extent) width (- height extent)])]
+            (recur (cons first-rect (cons second-rect (rest pending))) result))))
+      result)))
 
 (defn layout
   "Returns one rectangle per window for a viewport {:x :y :width :height} in logical pixels.

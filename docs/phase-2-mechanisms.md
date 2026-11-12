@@ -73,12 +73,14 @@ Publisher replacement first publishes the current reservations. Failure retains 
 Binding updates retain their existing publication-before-commit behavior.
 
 The symbol defect required an upstream fix.
-Bulwark now pins all Clojurust packages to [`14bd7f9c`](https://github.com/csm/clojurust/commit/14bd7f9c6e05eed0349d802275cb7950f5a56f90).
+This checkpoint pinned all Clojurust packages to [`14bd7f9c`](https://github.com/csm/clojurust/commit/14bd7f9c6e05eed0349d802275cb7950f5a56f90).
 That commit extends the previous pin by one commit on `codex/bulwark-phase-2-aot`.
 The fix uses `Symbol::parse` in `rt_const_symbol`, preserving namespace and version fields.
 The ABI regression failed before the fix and passed afterward.
 All 77 compiler unit tests and a standalone native AOT regression passed.
 The latter checks namespace, name, symbol equality, and qualified map-key lookup.
+
+The [window continuation](phase-2-windows.md#unicode-compiler-fix) adds the next compiler fix and records the current pin.
 
 General compiled runtime reflection remains a dependency risk for later features.
 This change does not implement `resolve` in compiled code.

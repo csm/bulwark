@@ -148,7 +148,8 @@
         (check! (= :stale-handle
                    (:error (await (native/set-ui!
                                     {:revision (inc (:revision (frame)))
-                                     :elements [{:ui/kind :web :ui/id 1 :x 0 :y 0 :width 9 :height 9 :webview 1}]}))))
+                                     :elements [{:ui/kind :web :ui/id 1 :x 0 :y 0 :width 9 :height 9
+                                                 :webview (native/allocate-id!)}]}))))
                 "A dead webview was accepted")
         ;; A killed buffer's window takes the most recent buffer. The last kill leaves the echo line.
         (reset! selections [])
@@ -168,6 +169,14 @@
         (let [text (await (buffer/create! {:kind :text :name "*Messages*" :text "ready"}))]
           (check! (and (= [text] (mapv second (shown))) (not= @kept (buffer/selected-window)))
                   "A window id was reused or no window was created")))))
+  ;; The Clojure budget also fits the Rust byte limit for four-byte characters.
+  (let [layout (reduce (fn [state pair] (window/split state (first pair) (second pair) :row 12))
+                       (window/initial 1 12) [[1 2] [1 3] [2 4] [1 5] [3 6] [2 7] [4 8]])
+        text (apply str (repeat 20000 "😀"))
+        panes (reduce (fn [panes id] (assoc panes id {:kind :text :text text :modeline text})) {} (range 1 9))
+        description (assoc (ui/describe layout panes {:width 32768 :height 760 :scale 1.0})
+                           :revision (inc (:revision (frame))))]
+    (check! (:ok (await (native/set-ui! description))) "The native frame rejected bounded Unicode panes"))
   :windows-passed)
 
 (windows!)

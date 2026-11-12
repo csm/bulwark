@@ -56,6 +56,11 @@ impl Input {
         self.pointer.buttons.clear();
         self.keys.reset();
     }
+    /// A focus change within the frame cancels keys but preserves an ongoing page drag.
+    /// The page can receive the press before Clojure selects its window.
+    pub fn change_focus(&mut self) {
+        self.keys.reset();
+    }
     pub fn update_modifiers(&self, keys: winit::keyboard::ModifiersState) {
         let mut flags = servo::Modifiers::empty();
         flags.set(servo::Modifiers::SHIFT, keys.shift_key());
@@ -386,6 +391,23 @@ mod tests {
         input.pointer.buttons.push(Left);
         input.position = Some((0.0, 0.0));
         assert!(input.place(Some(page)));
+    }
+    #[test]
+    fn selecting_the_visible_page_preserves_its_pending_mouse_release() {
+        let mut input = Input::default();
+        input.pointer.inside = true;
+        assert!(input.pointer.button(Left, ElementState::Pressed, false));
+        input.keys.sync(routes(), Handle(1));
+        input
+            .keys
+            .route(PhysicalKey::Code(KeyCode::KeyX), &key("x", true), false);
+        input.change_focus();
+        assert!(input.keys.pending.is_empty());
+        assert!(input.keys.held.is_empty());
+        // The release still reaches the page even if the pointer crossed into text.
+        input.pointer.inside = false;
+        assert!(input.pointer.button(Left, ElementState::Released, true));
+        assert!(input.pointer.buttons.is_empty());
     }
     #[test]
     fn command_keys_and_invalid_tails_never_reach_the_page() {
