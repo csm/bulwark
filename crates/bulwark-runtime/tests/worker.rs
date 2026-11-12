@@ -303,6 +303,20 @@ fn clojure_browser_commands_and_history_use_the_product_bridge() {
 }
 
 #[test]
+fn buffer_lifecycles_pass_in_interpreter_and_tiered_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/buffers.cljrs"),
+            ":buffers-passed",
+            mode,
+        );
+    }
+}
+
+#[test]
 fn key_reservations_publish_before_a_runtime_stall_and_unbind_live() {
     use bulwark_engine::{Command, Data, KeyInput};
     for mode in [

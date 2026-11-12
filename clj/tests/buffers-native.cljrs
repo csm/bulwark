@@ -1,0 +1,71 @@
+;; Retained buffer state against the real native Servo host. The host supplies user/initial-url.
+(ns bulwark.tests.buffers-native
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.native :as native]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defn ^:async wait-for! [label predicate]
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (when-not (predicate)
+        (check! (< (System/currentTimeMillis) deadline) (str "Timed out waiting for " label))
+        (await (timeout 5))
+        (recur)))))
+
+(defn ^:async js! [id script]
+  (browser/value! (await (native/eval-js (:buffer/view (buffer/buffer! id)) script))))
+
+(defn ^:async loaded! [id]
+  ;; Page state arrives through ordered events routed to the owning buffer.
+  (await (wait-for! (str "buffer " id " to load")
+                    (fn [] (let [page (buffer/page id)]
+                             (and (= :complete (:load-status page))
+                                  (= "Bulwark Servo fixture" (:title page))))))))
+
+(defn ^:async show! [id]
+  (await (buffer/select! id))
+  ;; The event loop paints the selected page between switches.
+  (await (timeout 80)))
+
+(defn ^:async program! []
+  (let [a (await (browser/open! user/initial-url))
+        b (await (browser/open! user/initial-url {:select false}))
+        view-a (:buffer/view (buffer/buffer a))
+        view-b (:buffer/view (buffer/buffer b))]
+    (await (loaded! a))
+    (await (loaded! b))
+    (check! (= view-a (browser/active-view)) "A background buffer became visible")
+    (await (js! a "window.retained = 'buffer-a'; var field = document.createElement('input'); field.id = 'retained'; field.value = 'form state'; document.body.appendChild(field); history.pushState(null, '', '#retained'); 'ok'"))
+    (await (js! b "window.retained = 'buffer-b'; document.title = 'Background buffer'; 'ok'"))
+    (await (wait-for! "background title" (fn [] (= "Background buffer" (:title (buffer/page b))))))
+    (check! (= "Bulwark Servo fixture" (:title (buffer/page a))) "A background title changed the selected buffer")
+    (await (native/log "Retained buffers: background title reached its buffer"))
+    (doseq [id [b a b a]] (await (show! id)))
+    (let [text (await (buffer/create! {:kind :text :name "*scratch*"}))]
+      (check! (nil? (browser/active-view)) "A text buffer left a page selected")
+      (await (timeout 80))
+      (await (buffer/kill! text)))
+    (check! (= a (buffer/selected-id)) "Kill did not restore the most recent buffer")
+    (await (timeout 80))
+    (check! (= "buffer-a" (await (js! a "String(window.retained)"))) "Switching discarded the first document")
+    (check! (= "form state" (await (js! a "document.getElementById('retained').value")))
+            "Switching discarded form state")
+    (check! (= "buffer-b" (await (js! b "String(window.retained)"))) "Buffers shared global state")
+    (check! (:can-go-back (browser/value! (await (native/webview-info view-a)))) "First buffer lost its history")
+    (check! (not (:can-go-back (browser/value! (await (native/webview-info view-b))))) "History leaked between buffers")
+    (await (buffer/kill! a))
+    (check! (and (= b (buffer/selected-id)) (= view-b (browser/active-view))) "Kill did not select the survivor")
+    (check! (= :stale-handle (:error (await (native/webview-info view-a)))) "Kill left its webview open")
+    (await (timeout 80))
+    (check! (= "buffer-b" (await (js! b "String(window.retained)"))) "Kill invalidated the surviving document")
+    (await (wait-for! "close event" (fn [] (not (contains? (:closing @buffer/registry) view-a)))))
+    (await (buffer/kill! b))
+    (check! (and (empty? (buffer/buffers)) (nil? (browser/active-view))) "The last kill left a buffer"))
+  (browser/value! (await (native/log "Retained buffer assertions passed")))
+  :buffers-native-passed)
+
+(program!)

@@ -55,6 +55,8 @@ def main():
              (root / "clj/tests/retained-views.cljrs").read_text() +
              "\n(bulwark.tests.retained-views/retained-views!)",
              True, ["Retained webview assertions passed"]),
+            ("retained-buffers", (root / "clj/tests/buffers-native.cljrs").read_text(),
+             True, ["Retained buffer assertions passed"]),
             ("clojure-browser", (root / "clj/tests/browser-native.cljrs").read_text(),
              True, ["Native Clojure commands and history passed"]),
             ("hook-failure", '''
@@ -83,7 +85,7 @@ def main():
             script = directory / f"{name}.cljrs"
             script.write_text(source)
             flags = [*mode, "--script", str(script)]
-            if name in {"clojure-browser", "retained-views"}:
+            if name in {"clojure-browser", "retained-views", "retained-buffers"}:
                 flags.append((root / "clj/tests/fixtures/servo.html").as_uri())
             run_case(args.binary, name, flags, success, expected, args.timeout)
 

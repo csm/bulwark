@@ -10,11 +10,11 @@
 (def shell-task (shell/run! "about:blank"))
 
 (defn eval-js! [script]
-  (shell/value! (await (native/eval-js @browser/active-view script))))
+  (shell/value! (await (native/eval-js (browser/active-view) script))))
 
 (defn ^:async run! []
   (loop []
-    (when-not @browser/active-view (Thread/sleep 5) (recur)))
+    (when-not (browser/active-view) (Thread/sleep 5) (recur)))
   (reset! ready true)
   (loop []
     (when (= true @running)

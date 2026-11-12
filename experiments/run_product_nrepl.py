@@ -74,7 +74,7 @@ def probe(a, b, controller, native):
             raise RuntimeError("REPL-installed hook did not receive a title")
         time.sleep(0.01)
     b.expect('(get (bulwark.shell/value! (await (bulwark.native/webview-info '
-             '@bulwark.browser/active-view))) :url)', json.dumps(url))
+             '(bulwark.browser/active-view)))) :url)', json.dumps(url))
     return {**result, "ordered_burst": count, "live_commands_and_hooks": True,
             "cross_session_browser_calls": True}
 

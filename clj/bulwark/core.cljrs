@@ -1,16 +1,20 @@
 (ns bulwark.core
-  (:require [bulwark.hooks :as hooks]
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.hooks :as hooks]
             [bulwark.keymap :as keymap]))
 
 (defn bootstrap-status
   "Returns the current product implementation stage."
   []
-  {:phase 1 :status :foundation})
+  {:phase 2 :status :buffers})
 
 (defn ^:async dispatch!
-  "Receives an ordered engine event. Redefinition takes effect on the next event."
+  "Receives an ordered engine event. Redefinition takes effect on the next event.
+  Page state reaches the owning buffer first. Hooks see the owner's id under :buffer."
   [event]
-  (let [routed (case (:event/type event)
+  (let [owner (await (buffer/handle-event! event))
+        event (if owner (assoc event :buffer owner) event)
+        routed (case (:event/type event)
                  :input/key (assoc event :keymap/status (await (keymap/dispatch-key! event)))
                  :page/closed (do (keymap/reset-prefix!) event)
                  :input/reset (do (keymap/reset-prefix!) event)

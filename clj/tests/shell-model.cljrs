@@ -1,6 +1,7 @@
 ;; The runtime tests and the pinned AOT compiler run this same source.
 (ns bulwark.tests.shell-model
-  (:require [bulwark.commands :as commands :refer [defcommand]]
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands :refer [defcommand]]
             [bulwark.keymap :as keymap]
             [bulwark.hooks :as hooks]))
 
@@ -38,5 +39,78 @@
 (check! (= 1 (count (get @hooks/registry :buffer/created))) "Hook replacement duplicated an entry")
 (hooks/remove-hook! :buffer/created :sample)
 (check! (empty? (get @hooks/registry :buffer/created)) "Hook removal failed")
+;; Buffer registry transitions take supplied identifiers and need no engine.
+(defn fails? [f]
+  (try (f) false (catch Exception error true)))
+(let [web (buffer/make-buffer 10 :web {:view 3})
+      text (buffer/make-buffer 11 :text {:name "*Messages*" :text "ready"})
+      state (-> buffer/empty-registry (buffer/add web) (buffer/add text))]
+  (check! (= [:web-mode :text-mode] [(:buffer/major-mode web) (:buffer/major-mode text)])
+          "Buffer kinds lost their default major modes")
+  (check! (and (nil? (:buffer/text web)) (= "ready" (:buffer/text text))) "Buffer text followed the wrong kind")
+  (check! (and (nil? (:selected state)) (= [10 11] (:recent state)) (= 10 (get (:owners state) 3)))
+          "Publication changed selection or lost ownership")
+  (doseq [bad [(fn [] (buffer/make-buffer 0 :text {}))
+               (fn [] (buffer/make-buffer 12 :tab {}))
+               (fn [] (buffer/make-buffer 12 :web {}))
+               (fn [] (buffer/make-buffer 12 :text {:view 4}))
+               (fn [] (buffer/make-buffer 12 :text {:name ""}))
+               (fn [] (buffer/add state web))
+               (fn [] (buffer/add state (buffer/make-buffer 12 :web {:view 3})))
+               (fn [] (buffer/add state (buffer/make-buffer 12 :repl {:name "*Messages*"})))
+               (fn [] (buffer/select state 12))
+               (fn [] (buffer/remove-buffer state 12))
+               (fn [] (buffer/set-local state 12 :zoom 2))
+               (fn [] (buffer/set-text state 10 "page"))]]
+    (check! (fails? bad) "An invalid buffer transition was accepted"))
+  (let [chosen (-> state (buffer/select 11) (buffer/select 10))
+        titled (-> chosen
+                   (buffer/page-event {:event/type :page/url-changed :webview 3 :url "about:a"})
+                   (buffer/page-event {:event/type :page/title-changed :webview 3 :title "A"})
+                   (buffer/page-event {:event/type :page/title-changed :webview 4 :title "Unowned"})
+                   (buffer/page-event {:event/type :input/key :webview 3 :key "a"}))
+        killed (buffer/remove-buffer titled 10)
+        late (buffer/page-event killed {:event/type :page/title-changed :webview 3 :title "Late"})
+        closed (buffer/page-event late {:event/type :page/closed :webview 3})]
+    (check! (and (= 10 (:selected chosen)) (= [10 11] (:recent chosen))) "Selection did not update recency")
+    (check! (= {:url "about:a" :title "A"} (get (:pages titled) 3)) "Page events missed their view")
+    (check! (= text (get (:buffers titled) 11)) "A page event changed another buffer")
+    (check! (and (nil? (:selected killed)) (= [11] (:recent killed)) (empty? (:owners killed)))
+            "Removal retained a reference")
+    (check! (= {4 {:title "Unowned"}} (:pages late)) "A late event revived a killed buffer's page")
+    (check! (and (empty? (:buffers (buffer/remove-buffer late 11))) (= #{3} (:closing late)))
+            "A late event recreated a buffer")
+    (check! (fails? (fn [] (buffer/add late (buffer/make-buffer 12 :web {:view 3}))))
+            "A closing view accepted a new owner")
+    (check! (empty? (:closing closed)) "The close event did not release its view"))
+  (let [moded (-> state
+                  (buffer/set-local 11 :fill-column 72)
+                  (buffer/set-major-mode 11 :help-mode)
+                  (buffer/enable-minor-mode 11 :reader-mode)
+                  (buffer/enable-minor-mode 11 :vi-mode)
+                  (buffer/enable-minor-mode 11 :reader-mode)
+                  (buffer/set-text 11 "updated"))
+        record (get (:buffers moded) 11)]
+    (check! (= {:fill-column 72} (:buffer/locals record)) "Buffer-local variable was lost")
+    (check! (= {} (:buffer/locals (get (:buffers moded) 10))) "A local variable leaked between buffers")
+    (check! (= :help-mode (:buffer/major-mode record)) "Major mode did not change")
+    (check! (= [:vi-mode :reader-mode] (:buffer/minor-modes record)) "Minor modes are not most-recent-first")
+    (check! (= [:vi-mode] (:buffer/minor-modes (get (:buffers (buffer/disable-minor-mode moded 11 :reader-mode)) 11)))
+            "Minor mode was not disabled")
+    (check! (= "updated" (:buffer/text record)) "Buffer text did not change")))
+;; A portable runtime has no host: text buffers work, and web buffers report the missing engine.
+(reset! buffer/registry buffer/empty-registry)
+(buffer/set-host! nil)
+(let [id (buffer/next-id!)]
+  (swap! buffer/registry buffer/add (buffer/make-buffer id :text {:name "*scratch*"}))
+  (buffer/set-local! id :answer 42)
+  (check! (= 42 (buffer/local id :answer)) "Registry accessor missed a local variable")
+  (check! (= :fallback (buffer/local id :missing :fallback)) "Local default was ignored")
+  (check! (= id (:buffer/id (buffer/find-named "*scratch*"))) "Named lookup failed")
+  (check! (= "*scratch*" (buffer/display-name id)) "Display name ignored the explicit name")
+  (check! (> (buffer/next-id!) id) "Portable identifiers repeated")
+  (check! (fails? (fn [] (buffer/host-operation :create))) "A portable runtime claimed an engine")
+  (check! (fails? (fn [] (buffer/set-host! {:create 1}))) "An invalid host was installed"))
+(reset! buffer/registry buffer/empty-registry)
 (println "Shell model assertions passed")
 :shell-model-passed

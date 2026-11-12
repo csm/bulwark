@@ -227,6 +227,19 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
     routes_var.get().set_meta(map(vec![("doc", Value::string(
         "Synchronously replaces native key reservations from vectors of canonical sequences and cancellation strokes. Returns nil, or throws without changing the snapshot."
     ))]));
+    let native = NativeFn::with_closure("bulwark.native/allocate-id!", Arity::Fixed(0), |_| {
+        bulwark_engine::allocate_id()
+            .map(|id| Value::Long(id as i64))
+            .map_err(|error| ValueError::Other(error.to_string()))
+    });
+    let id_var = globals.intern(
+        "bulwark.native",
+        "allocate-id!".into(),
+        Value::NativeFunction(GcPtr::new(native)),
+    );
+    id_var.get().set_meta(map(vec![("doc", Value::string(
+        "Synchronously returns a positive process-wide identifier for a runtime-owned resource. Identifiers never repeat and never equal a webview handle; exhaustion throws."
+    ))]));
     let events = Rc::new(Mutex::new(events));
     let native = NativeFn::with_closure("bulwark.native/next-event", Arity::Fixed(0), move |_| {
         let events = events.clone();

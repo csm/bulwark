@@ -1,14 +1,14 @@
 (ns bulwark.browser
   (:require [bulwark.native :as native]
+            [bulwark.buffer :as buffer]
             [bulwark.commands :refer [defcommand]]
             [bulwark.hooks :as hooks]
             [bulwark.keymap :as keymap]
             [clojure.string :as string]))
 
-(def active-view (atom nil))
-(def pages (atom {}))
 (def history (atom []))
 (def history-limit 256)
+(def new-buffer-url (atom "about:blank"))
 
 (defn value!
   "Returns a successful native value, or raises an error containing the reply."
@@ -16,10 +16,15 @@
   (when-not (:ok reply) (throw (ex-info "Native browser operation failed" reply)))
   (:value reply))
 
+(defn active-view
+  "Returns the selected web buffer's view handle, or nil."
+  []
+  (buffer/selected-view))
+
 (defn current-view!
   "Returns the visible view handle, or reports that no page is open."
   []
-  (or @active-view (throw (ex-info "No active browser view" {}))))
+  (or (active-view) (throw (ex-info "No active browser view" {}))))
 
 (defn ^:async set-echo!
   "Displays text in the native echo area."
@@ -32,21 +37,14 @@
   (value! (await (native/navigate (current-view!) url))))
 
 (defn track-page!
-  "Tracks page URLs and retains the most recent 256 titled visits in memory."
+  "Retains the most recent 256 titled visits in memory. The buffer registry supplies each view's URL."
   [event]
-  (let [view (:webview event)]
-    (case (:event/type event)
-      :page/url-changed (swap! pages assoc view (:url event))
-      :page/closed (do (swap! pages dissoc view)
-                       (when (= view @active-view) (reset! active-view nil)))
-      :page/title-changed
-      (when-let [url (get @pages view)]
-        (when (seq (:title event))
-          (let [visit {:url url :title (:title event) :at (System/currentTimeMillis)}
-                previous (last @history)]
-            (when-not (= (select-keys previous [:url :title]) (select-keys visit [:url :title]))
-              (swap! history (fn [visits] (vec (take-last history-limit (conj visits visit)))))))))
-      nil)))
+  (when-let [url (:url (buffer/view-page (:webview event)))]
+    (when (seq (:title event))
+      (let [visit {:url url :title (:title event) :at (System/currentTimeMillis)}
+            previous (last @history)]
+        (when-not (= (select-keys previous [:url :title]) (select-keys visit [:url :title]))
+          (swap! history (fn [visits] (vec (take-last history-limit (conj visits visit))))))))))
 
 (defcommand ^:async reload
   "Reloads the visible page."
@@ -77,11 +75,58 @@
     (throw (ex-info "History index is out of range" {:index index})))
   (await (navigate! (:url (nth @history index)))))
 
-(defn install!
-  "Installs browser hooks and default keys. Repeated installation replaces them."
+(defn ^:async open!
+  "Opens a URL in a new web buffer and returns the buffer id. Options follow bulwark.buffer/create!."
+  ([url] (await (open! url {})))
+  ([url options] (await (buffer/create! (assoc options :kind :web :url url)))))
+
+(defn ^:async replace-last-buffer!
+  "Default policy after the last web buffer dies: open the new-buffer URL, unless the engine is stopping."
+  [killed]
+  (try
+    (await (open! @new-buffer-url))
+    (catch Exception error
+      (when-not (contains? #{:shutting-down :engine-disconnected} (:error (ex-data error)))
+        (throw error)))))
+
+(defn ^:async cycle-buffer!
+  "Selects the buffer a number of places after the selected one in creation order."
+  [offset]
+  (let [ids (mapv :buffer/id (buffer/buffers))
+        selected (buffer/selected-id)
+        position (first (filter (fn [index] (= selected (nth ids index))) (range (count ids))))]
+    (when (empty? ids) (throw (ex-info "No buffers" {})))
+    (await (buffer/select! (nth ids (mod (+ (or position 0) offset) (count ids)))))))
+
+(defcommand ^:async new-buffer
+  "Opens the new-buffer URL in a new selected buffer."
   []
-  (doseq [event-type [:page/url-changed :page/title-changed :page/closed]]
-    (hooks/add-hook! event-type :bulwark.browser/track-page #'track-page!))
+  (await (open! @new-buffer-url)))
+
+(defcommand ^:async kill-buffer
+  "Kills the selected buffer and closes its page."
+  []
+  (await (buffer/kill! (or (buffer/selected-id) (throw (ex-info "No selected buffer" {}))))))
+
+(defcommand ^:async next-buffer
+  "Selects the next buffer in creation order."
+  []
+  (await (cycle-buffer! 1)))
+
+(defcommand ^:async previous-buffer
+  "Selects the previous buffer in creation order."
+  []
+  (await (cycle-buffer! -1)))
+
+(defn install!
+  "Installs browser hooks, the last-buffer policy, and default keys. Repeated installation replaces them."
+  []
+  (hooks/add-hook! :page/title-changed :bulwark.browser/track-page #'track-page!)
+  (reset! buffer/last-web-buffer-policy #'replace-last-buffer!)
+  (keymap/bind-key! "C-c n" 'bulwark.browser/new-buffer)
+  (keymap/bind-key! "C-x k" 'bulwark.browser/kill-buffer)
+  (keymap/bind-key! "C-x ArrowRight" 'bulwark.browser/next-buffer)
+  (keymap/bind-key! "C-x ArrowLeft" 'bulwark.browser/previous-buffer)
   (keymap/bind-key! "C-c r" 'bulwark.browser/reload)
   (keymap/bind-key! "C-c b" 'bulwark.browser/back)
   (keymap/bind-key! "C-c f" 'bulwark.browser/forward)

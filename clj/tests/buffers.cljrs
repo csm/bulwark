@@ -1,0 +1,153 @@
+;; Buffer lifecycles against the product bridge and the mock engine, in both evaluator modes.
+(ns bulwark.tests.buffers
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands]
+            [bulwark.core :as core]
+            [bulwark.hooks :as hooks]
+            [bulwark.native :as native]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(def lifecycle (atom []))
+(def native-calls (atom []))
+(def titles (atom []))
+
+(defn record-lifecycle! [event]
+  (swap! lifecycle conj [(:event/type event) (:buffer event) (:previous event)]))
+
+(defn ^:async wait-for! [label predicate]
+  (let [deadline (+ (System/currentTimeMillis) 5000)]
+    (loop []
+      (when-not (predicate)
+        (check! (< (System/currentTimeMillis) deadline) (str "Timed out waiting for " label))
+        (await (timeout 1))
+        (recur)))))
+
+(defn ^:async fails-with? [expected operation]
+  (try (await (operation)) false
+       (catch Exception error (= expected (:error (ex-data error))))))
+
+(defn ^:async buffers! []
+  ;; Record every native lifecycle request without changing the product mechanisms.
+  (buffer/set-host!
+    {:create (fn [url] (swap! native-calls conj [:create url]) (native/webview-create url))
+     :close (fn [view] (swap! native-calls conj [:close view]) (native/webview-close view))
+     :select (fn [view] (swap! native-calls conj [:select view]) (native/webview-select view))
+     :next-id native/allocate-id!})
+  (check! (string? (:doc (meta #'native/allocate-id!))) "Missing identifier docstring")
+  (doseq [event-type [:buffer/created :buffer/selected :buffer/killed]]
+    (hooks/add-hook! event-type :test/lifecycle #'record-lifecycle!))
+  (hooks/add-hook! :page/title-changed :test/titles
+    (fn [event] (swap! titles conj [(:webview event) (:buffer event)])))
+  (let [a (await (buffer/create! {:url "https://example.com/a"}))
+        b (await (buffer/create! {:url "https://example.com/b" :select false}))
+        view-a (:buffer/view (buffer/buffer a))
+        view-b (:buffer/view (buffer/buffer b))]
+    (check! (and (not= a b) (not= view-a view-b) (not= a view-a) (not= b view-b))
+            "Buffers and webviews shared an identifier")
+    (check! (= [[:buffer/created a nil] [:buffer/selected a nil] [:buffer/created b nil]] @lifecycle)
+            "Creation hooks ran in the wrong order")
+    (check! (and (= a (buffer/selected-id)) (= view-a (browser/active-view)))
+            "A background buffer took the selection")
+    (check! (= [:select view-a] (last @native-calls)) "Background creation changed the visible view")
+    (check! (= [:web :web-mode []] (mapv (buffer/buffer b) [:buffer/kind :buffer/major-mode :buffer/minor-modes]))
+            "A web buffer lacks its default metadata")
+    ;; A background navigation reaches its own buffer and leaves the selected one alone.
+    (browser/value! (await (native/navigate view-b "https://example.com/background")))
+    ;; The history event is the last of the navigation's four ordered events.
+    (await (wait-for! "background history" (fn [] (:can-go-back (buffer/page b)))))
+    (check! (= "https://example.com/background" (:url (buffer/page b))) "A background URL was lost")
+    (check! (= "https://example.com/a" (:url (buffer/page a))) "A background event changed the selected buffer")
+    (check! (some (fn [seen] (= [view-b b] seen)) @titles) "Hooks did not see the owning buffer")
+    (check! (= "Bulwark mock" (buffer/display-name b)) "Display name ignored the page title")
+    ;; Local variables and modes stay with their buffer across selection.
+    (buffer/set-local! a :zoom 2)
+    (buffer/enable-minor-mode! b :reader-mode)
+    (await (buffer/select! b))
+    (check! (and (= b (buffer/selected-id)) (= view-b (browser/active-view))) "Selection did not move")
+    (check! (= [:select view-b] (last @native-calls)) "Selection did not show the buffer's webview")
+    (check! (= [:buffer/selected b a] (last @lifecycle)) "Selection hook lost the previous buffer")
+    (await (buffer/select! b))
+    (check! (= [:buffer/selected b a] (last @lifecycle)) "Reselecting ran the selection hook again")
+    (check! (and (= 2 (buffer/local a :zoom)) (nil? (buffer/local b :zoom))) "A local variable leaked")
+    (check! (= [:reader-mode] (:buffer/minor-modes (buffer/buffer b))) "A minor mode was lost")
+    ;; Browser helpers follow the selected buffer.
+    (await (browser/navigate! "https://example.com/visible"))
+    (check! (= "https://example.com/visible" (:url (browser/value! (await (native/webview-info view-b)))))
+            "A browser helper missed the selected buffer")
+    (check! (= "https://example.com/a" (:url (browser/value! (await (native/webview-info view-a)))))
+            "A browser helper changed a background buffer")
+    ;; Text buffers own no webview. Selecting one hides every page.
+    (let [text (await (buffer/create! {:kind :text :name "*Messages*" :text "ready"}))]
+      (check! (and (= text (buffer/selected-id)) (nil? (browser/active-view))) "Text buffer was not selected")
+      (check! (= [:select nil] (last @native-calls)) "Text selection left a page visible")
+      (check! (= text (:buffer/id (buffer/find-named "*Messages*"))) "Named buffer lookup failed")
+      (check! (await (fails-with? nil (fn [] (browser/navigate! "about:blank"))))
+              "Navigation succeeded without a visible page")
+      ;; A failed publication closes the webview that no buffer owns.
+      (let [before (count (buffer/buffers))]
+        (check! (try (await (buffer/create! {:url "about:duplicate" :name "*Messages*"})) false
+                     (catch Exception error true))
+                "A duplicate buffer name was accepted")
+        (check! (= before (count (buffer/buffers))) "A failed creation published a buffer")
+        (let [orphan (second (last @native-calls))]
+          (check! (= :close (first (last @native-calls))) "A failed creation leaked its webview")
+          (check! (= :stale-handle (:error (await (native/webview-info orphan)))) "The orphan stayed open")
+          (await (wait-for! "orphan close event" (fn [] (nil? (buffer/view-page orphan)))))))
+      (check! (= text (buffer/selected-id)) "A failed creation changed the selection")
+      ;; Killing the selected buffer selects the most recently selected survivor.
+      (reset! lifecycle [])
+      (await (buffer/kill! text))
+      (check! (= [[:buffer/killed text nil] [:buffer/selected b text]] @lifecycle)
+              "Kill hooks ran in the wrong order")
+      (check! (and (= b (buffer/selected-id)) (= [:select view-b] (last @native-calls)))
+              "Kill did not select the most recent buffer")
+      (check! (await (fails-with? :stale-buffer (fn [] (buffer/select! text)))) "A killed id stayed selectable")
+      (check! (await (fails-with? :stale-buffer (fn [] (buffer/kill! text)))) "A buffer was killed twice"))
+    ;; Killing a background buffer closes its view once and keeps the selection.
+    (let [closes (fn [] (count (filter (fn [call] (= [:close view-a] call)) @native-calls)))]
+      (await (buffer/kill! a))
+      (check! (and (= 1 (closes)) (= b (buffer/selected-id))) "Background kill closed twice or moved selection")
+      (check! (= :stale-handle (:error (await (native/webview-info view-a)))) "Kill left the webview open")
+      (check! (await (fails-with? :stale-buffer (fn [] (buffer/kill! a)))) "A stale kill reached the engine")
+      (check! (= 1 (closes)) "A stale kill closed the webview again")
+      ;; Late events for the killed view change nothing, before or after its close event.
+      (await (wait-for! "close event" (fn [] (not (contains? (:closing @buffer/registry) view-a)))))
+      (let [before @buffer/registry]
+        (await (core/dispatch! {:event/type :page/title-changed :webview view-a :title "Late"}))
+        (await (core/dispatch! {:event/type :page/closed :webview view-a}))
+        (check! (= (:buffers before) (:buffers @buffer/registry)) "A late event recreated or changed a buffer")
+        (check! (nil? (buffer/owner view-a)) "A late event restored ownership")))
+    ;; An engine-initiated close of the last web buffer runs the Clojure policy once.
+    (browser/install!)
+    (reset! lifecycle [])
+    (browser/value! (await (native/webview-close view-b)))
+    (await (wait-for! "replacement buffer" (fn [] (and (buffer/selected-id) (not= b (buffer/selected-id))))))
+    (let [replacement (buffer/selected-id)]
+      (check! (= [[:buffer/killed b nil] [:buffer/created replacement nil] [:buffer/selected replacement nil]]
+                 @lifecycle)
+              "Engine close or the last-buffer policy ran the wrong hooks")
+      (check! (not (some (fn [call] (= [:close view-b] call)) @native-calls)) "Engine close was closed again")
+      (check! (= [replacement] (mapv :buffer/id (buffer/buffers))) "The policy did not leave one buffer")
+      (check! (> replacement b) "A buffer id was reused")
+      ;; Commands create, cycle, and kill through the same registry.
+      (let [opened (await (commands/invoke! 'bulwark.browser/new-buffer))]
+        (check! (= opened (buffer/selected-id)) "new-buffer did not select its buffer")
+        (await (commands/invoke! 'bulwark.browser/next-buffer))
+        (check! (= replacement (buffer/selected-id)) "next-buffer did not wrap")
+        (await (commands/invoke! 'bulwark.browser/previous-buffer))
+        (check! (= opened (buffer/selected-id)) "previous-buffer did not wrap")
+        (await (commands/invoke! 'bulwark.browser/kill-buffer))
+        (check! (and (= replacement (buffer/selected-id)) (nil? (buffer/buffer opened)))
+                "kill-buffer did not kill the selected buffer"))
+      ;; A nil policy leaves no buffer and no visible page.
+      (reset! buffer/last-web-buffer-policy nil)
+      (await (buffer/kill! replacement))
+      (check! (and (empty? (buffer/buffers)) (nil? (buffer/selected-id)) (nil? (browser/active-view)))
+              "The last kill left a buffer or a selection")))
+  :buffers-passed)
+
+(buffers!)
