@@ -103,6 +103,8 @@ pub struct ServoEngine {
     // Resources and callbacks drop before Servo and its rendering context.
     views: Registry<View>,
     selected: Option<Handle>,
+    ui: Option<bulwark_engine::ui::Ui>,
+    ui_generation: u64,
     pending: Pending,
     servo: Servo,
     context: Rc<dyn RenderingContext>,
@@ -137,6 +139,8 @@ impl ServoEngine {
         Ok(Self {
             views: Registry::default(),
             selected: None,
+            ui: None,
+            ui_generation: 0,
             pending: Rc::default(),
             servo,
             context,
@@ -182,7 +186,8 @@ impl ServoEngine {
             View { webview, state }
         })?;
         // Preserve Phase 1 startup. Further views stay hidden until explicitly selected.
-        if first {
+        // A UI description decides visibility once one exists.
+        if first && self.ui.is_none() {
             self.select(Some(handle))?;
         }
         Ok(Data::Handle(handle))
@@ -218,6 +223,27 @@ impl ServoEngine {
         }
         (self.wake)();
         Ok(Data::Nil)
+    }
+
+    fn present(&mut self, ui: &bulwark_engine::ui::Ui) -> Result<Data, Fault> {
+        // Validate before any change, so a rejected description changes nothing.
+        ui.check_revision(self.ui.as_ref())?;
+        let web = ui.web().map(|(view, _)| view);
+        self.select(web)?;
+        self.ui = Some(ui.clone());
+        self.ui_generation += 1;
+        (self.wake)();
+        Ok(Data::Nil)
+    }
+
+    /// The presented UI description. The host draws it and sizes the page's surface.
+    pub fn ui(&self) -> Option<&bulwark_engine::ui::Ui> {
+        self.ui.as_ref()
+    }
+
+    /// Counts accepted descriptions, including changes of content alone.
+    pub fn ui_generation(&self) -> u64 {
+        self.ui_generation
     }
 
     fn invalidate(&mut self, handle: Handle) -> Result<(), Fault> {
@@ -323,6 +349,7 @@ impl Engine for ServoEngine {
                 Ok(Data::Nil)
             }
             Command::Select(handle) => self.select(*handle),
+            Command::SetUi(ui) => self.present(ui),
             Command::Navigate { view, url } => {
                 let view = self.view(*view)?;
                 let url = url::Url::parse(url).map_err(|error| Fault::Engine(error.to_string()))?;

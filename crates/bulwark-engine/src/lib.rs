@@ -2,6 +2,7 @@
 pub mod bridge;
 pub mod keys;
 pub mod mock;
+pub mod ui;
 
 use std::{
     collections::BTreeMap,
@@ -11,6 +12,10 @@ use std::{
 /// Handles fit in a Clojure long. Zero is reserved; exhaustion never wraps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Handle(pub u64);
+impl Handle {
+    /// Names no resource. Events that belong to no webview carry it.
+    pub const NONE: Handle = Handle(0);
+}
 
 struct IdAllocator(AtomicU64);
 impl IdAllocator {
@@ -86,6 +91,9 @@ pub enum Fault {
     PayloadTooLarge,
     EventOverflow,
     ShuttingDown,
+    /// A UI description is older than the presented one, or reuses its revision
+    /// for another structure.
+    StaleRevision,
     Engine(String),
 }
 impl Fault {
@@ -100,6 +108,7 @@ impl Fault {
             Self::PayloadTooLarge => "payload-too-large",
             Self::EventOverflow => "event-overflow",
             Self::ShuttingDown => "shutting-down",
+            Self::StaleRevision => "stale-revision",
             Self::Engine(_) => "engine-error",
         }
     }
@@ -161,6 +170,8 @@ pub enum Command {
     },
     Log(String),
     SetEcho(String),
+    /// Replace the frame's UI description. Its web element selects the visible view.
+    SetUi(ui::Ui),
     Quit,
 }
 impl Command {
@@ -169,6 +180,7 @@ impl Command {
             Self::Create { url } | Self::Navigate { url, .. } => url.len(),
             Self::Evaluate { script, .. } => script.len(),
             Self::Log(text) | Self::SetEcho(text) => text.len(),
+            Self::SetUi(ui) => ui.text_bytes(),
             _ => 0,
         }
     }
@@ -214,6 +226,23 @@ pub enum EventKind {
     Crashed(String),
     KeyInput(KeyInput),
     InputReset,
+    /// The window's size or scale changed. The runtime reads the snapshot from the bridge.
+    ViewportChanged,
+    /// A pointer button went down on an identified element of the named revision.
+    UiPressed {
+        element: u64,
+        revision: u64,
+    },
+    UiInputChanged {
+        element: u64,
+        revision: u64,
+        text: String,
+    },
+    UiInputSubmitted {
+        element: u64,
+        revision: u64,
+        text: String,
+    },
 }
 impl EventKind {
     pub fn name(&self) -> &'static str {
@@ -226,12 +255,17 @@ impl EventKind {
             Self::Crashed(_) => "page/crashed",
             Self::KeyInput(_) => "input/key",
             Self::InputReset => "input/reset",
+            Self::ViewportChanged => "ui/viewport-changed",
+            Self::UiPressed { .. } => "ui/pressed",
+            Self::UiInputChanged { .. } => "ui/input-changed",
+            Self::UiInputSubmitted { .. } => "ui/input-submitted",
         }
     }
     pub fn string_bytes(&self) -> usize {
         match self {
             Self::UrlChanged(s) | Self::TitleChanged(s) | Self::Crashed(s) => s.len(),
             Self::KeyInput(key) => key.key.len(),
+            Self::UiInputChanged { text, .. } | Self::UiInputSubmitted { text, .. } => text.len(),
             _ => 0,
         }
     }

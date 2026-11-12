@@ -317,6 +317,80 @@ fn buffer_lifecycles_pass_in_interpreter_and_tiered_modes() {
 }
 
 #[test]
+fn windows_and_ui_descriptions_pass_in_interpreter_and_tiered_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/windows.cljrs"),
+            ":windows-passed",
+            mode,
+        );
+    }
+}
+
+#[test]
+fn frame_events_and_the_viewport_snapshot_reach_clojure() {
+    use bulwark_engine::{EventKind, Handle, ui::Viewport};
+    let (runtime, endpoint) = bridge::channel(Arc::new(|| {}));
+    let viewport = Viewport {
+        width: 1000,
+        height: 760,
+        scale: 2.0,
+    };
+    assert!(endpoint.control.set_viewport(viewport));
+    for kind in [
+        EventKind::ViewportChanged,
+        EventKind::UiPressed {
+            element: 12,
+            revision: 3,
+        },
+        EventKind::UiInputChanged {
+            element: 13,
+            revision: 3,
+            text: "ab".into(),
+        },
+        EventKind::UiInputSubmitted {
+            element: 13,
+            revision: 4,
+            text: "abc".into(),
+        },
+    ] {
+        endpoint.events.emit(Handle::NONE, kind).unwrap();
+    }
+    let mut worker = Worker::spawn(
+        runtime,
+        "(require 'clojure.core.async)
+        (in-ns 'bulwark.core)
+        (def events (atom []))
+        (defn dispatch! [event] (swap! events conj event))
+        (defn ^:async verify! []
+          (loop []
+            (when (< (count @events) 4)
+              (await (clojure.core.async/timeout 1)) (recur)))
+          (if (and (= [:ui/viewport-changed :ui/pressed :ui/input-changed :ui/input-submitted]
+                      (mapv :event/type @events))
+                   (not-any? (fn [event] (contains? event :webview)) @events)
+                   (= {:width 1000 :height 760 :scale 2.0} (bulwark.native/ui-viewport))
+                   (= [12 3] (mapv (nth @events 1) [:ui/id :revision]))
+                   (= [13 3 \"ab\"] (mapv (nth @events 2) [:ui/id :revision :text]))
+                   (= [13 4 \"abc\"] (mapv (nth @events 3) [:ui/id :revision :text])))
+            :frame-events-passed
+            (throw (ex-info \"Wrong frame event payload\" {:events @events}))))
+        (verify!)"
+            .into(),
+    )
+    .unwrap();
+    assert_eq!(wait(&mut worker).unwrap(), ":frame-events-passed");
+    // Reading the snapshot rearmed the notification.
+    assert!(endpoint.control.set_viewport(Viewport {
+        width: 900,
+        ..viewport
+    }));
+}
+
+#[test]
 fn key_reservations_publish_before_a_runtime_stall_and_unbind_live() {
     use bulwark_engine::{Command, Data, KeyInput};
     for mode in [

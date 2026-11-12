@@ -125,6 +125,18 @@
         heir (:window/id (nth remaining (min position (dec (count remaining)))))]
     (assoc (revise state root) :selected (if (= id (:selected state)) heir (:selected state)))))
 
+(defn only
+  "Deletes every other window. The remaining window is selected and takes the whole frame."
+  [state id]
+  (assoc (revise state (window! state id)) :selected id))
+
+(defn following
+  "Returns the id of the window a number of places after the selected one in layout order."
+  [state offset]
+  (let [ids (mapv :window/id (windows state))
+        position (count (take-while (fn [id] (not= id (:selected state))) ids))]
+    (nth ids (mod (+ position offset) (count ids)))))
+
 (defn resize-node
   "Moves the nearest enclosing split of a direction toward growing a window by thousandths."
   [node id direction amount]

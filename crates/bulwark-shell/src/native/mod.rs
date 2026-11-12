@@ -1,8 +1,9 @@
 //! Main-thread native host. Runtime requests and Servo wakes share a winit proxy.
+mod frame;
 mod input;
 
 use anyhow::{Result, anyhow, ensure};
-use bulwark_engine::{Command, Data, Engine, bridge};
+use bulwark_engine::{Command, Data, Engine, EventKind, Handle, bridge, ui::Widget};
 use bulwark_engine_servo::ServoEngine;
 use bulwark_runtime::worker::Worker;
 use servo::{OffscreenRenderingContext, RenderingContext, WindowRenderingContext};
@@ -19,7 +20,6 @@ use winit::{
     window::{Window, WindowId},
 };
 
-const ECHO_HEIGHT: f32 = 28.0;
 const MAINTENANCE: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug)]
@@ -36,29 +36,79 @@ struct Surface {
     context: Rc<WindowRenderingContext>,
     window: Rc<Window>,
     input: input::Input,
+    edits: frame::Edits,
+    events: bridge::EventSink,
+    control: bridge::Control,
     echo: String,
-    page_size: winit::dpi::PhysicalSize<u32>,
+    // The page's place in the window. None hides the page.
+    page_rect: Option<input::PageRect>,
     focused: bool,
     presentations: u64,
     echo_presented: String,
 }
 impl Surface {
+    /// Whether the page owns the keyboard: always without a description, else by its focus.
+    fn page_has_focus(&self) -> bool {
+        self.engine
+            .ui()
+            .is_none_or(|ui| matches!(ui.focused(), Some(Widget::Web(_))))
+    }
+
+    /// Whether an editable control owns the keyboard.
+    fn input_has_focus(&self) -> bool {
+        self.engine
+            .ui()
+            .is_some_and(|ui| matches!(ui.focused(), Some(Widget::Input(_))))
+    }
+
+    /// The pointer in logical pixels, when it is inside the window.
+    fn pointer(&self) -> Option<(f64, f64)> {
+        let scale = self.window.scale_factor();
+        self.input.position().map(|(x, y)| (x / scale, y / scale))
+    }
+
+    /// Whether chrome covers the pointer. A description answers with its own hit test.
+    fn chrome_covers_pointer(&self, egui_consumed: bool) -> bool {
+        match (self.engine.ui(), self.pointer()) {
+            (Some(ui), Some((x, y))) => {
+                !matches!(ui.hit(x, y).map(|e| &e.widget), Some(Widget::Web(_)))
+            }
+            (Some(_), None) => true,
+            (None, _) => egui_consumed,
+        }
+    }
+
+    fn emit(&self, view: Handle, kind: EventKind) {
+        // EventSink stores fatal overflow outside the queue and wakes the host.
+        let _ = self.events.emit(view, kind);
+    }
+
+    /// Applies the window size, the presented description, and the focus to the page.
     fn layout(&mut self) {
         let size = self.window.inner_size();
         if size.width == 0 || size.height == 0 {
             return;
         }
+        let scale = self.window.scale_factor();
         self.context.resize(size);
-        self.page_size = content_size(size, self.window.scale_factor());
-        if self.page.size() != self.page_size {
-            if let Some((_, view)) = self.engine.active_webview() {
-                view.resize(self.page_size);
-            } else {
-                self.page.resize(self.page_size);
+        self.page_rect = frame::page_rect(size, scale, self.engine.ui());
+        if let Some(rect) = self.page_rect {
+            let page_size = winit::dpi::PhysicalSize::new(rect.width, rect.height);
+            if self.page.size() != page_size {
+                if let Some((_, view)) = self.engine.active_webview() {
+                    view.resize(page_size);
+                } else {
+                    self.page.resize(page_size);
+                }
             }
         }
+        self.input.place(self.page_rect);
+        self.edits.sync(self.engine.ui());
         self.engine
-            .set_window_state(self.window.scale_factor() as f32, self.focused);
+            .set_window_state(scale as f32, self.focused && self.page_has_focus());
+        if self.control.set_viewport(frame::viewport(size, scale)) {
+            self.emit(Handle::NONE, EventKind::ViewportChanged);
+        }
         self.window.request_redraw();
     }
 
@@ -75,20 +125,36 @@ impl Surface {
         self.chrome
             .painter
             .clear(size.into(), [0.08, 0.09, 0.11, 1.0]);
-        if self.engine.active_webview().is_some()
+        if let Some(rect) = self.page_rect
+            && self.engine.active_webview().is_some()
             && let Some(blit) = self.page.render_to_parent_callback()
         {
             // GL's origin is at the bottom; input and content layout start at the top.
             let target = euclid::default::Rect::new(
-                euclid::point2(0, (size.height - self.page_size.height) as i32),
-                euclid::size2(self.page_size.width as i32, self.page_size.height as i32),
+                euclid::point2(
+                    rect.x as i32,
+                    size.height as i32 - (rect.y + rect.height) as i32,
+                ),
+                euclid::size2(rect.width as i32, rect.height as i32),
             );
             blit(&self.context.glow_gl_api(), target);
         }
-        // EguiGlow::run gives the root UI the entire window, which makes egui
-        // claim page clicks as well as chrome clicks. Bound the root to chrome.
         let input = self.chrome.egui_winit.take_egui_input(&self.window);
-        let output = draw_echo(&self.chrome.egui_ctx, input, &self.echo);
+        let mut interactions = Vec::new();
+        let output = match self.engine.ui() {
+            Some(ui) => frame::draw(
+                &self.chrome.egui_ctx,
+                input,
+                &self.echo,
+                ui,
+                &mut self.edits,
+                &mut interactions,
+            ),
+            None => frame::draw_echo(&self.chrome.egui_ctx, input, &self.echo),
+        };
+        for interaction in interactions {
+            self.emit(Handle::NONE, interaction);
+        }
         self.chrome
             .egui_winit
             .handle_platform_output(&self.window, output.platform_output);
@@ -120,31 +186,11 @@ impl Surface {
         Ok(())
     }
 }
-
-fn draw_echo(context: &egui::Context, mut input: egui::RawInput, text: &str) -> egui::FullOutput {
-    if let Some(mut rect) = input.screen_rect {
-        rect.min.y = (rect.max.y - ECHO_HEIGHT).max(rect.min.y);
-        input.screen_rect = Some(rect);
-    }
-    context.run_ui(input, |ui| {
-        egui::Panel::bottom("echo")
-            .exact_size(ECHO_HEIGHT)
-            .resizable(false)
-            .show_inside(ui, |ui| {
-                ui.add(egui::Label::new(text).truncate().selectable(false));
-            });
-    })
-}
 impl Drop for Surface {
     fn drop(&mut self) {
         let _ = self.context.make_current();
         self.chrome.destroy();
     }
-}
-
-fn content_size(size: winit::dpi::PhysicalSize<u32>, scale: f64) -> winit::dpi::PhysicalSize<u32> {
-    let echo = (ECHO_HEIGHT as f64 * scale).round() as u32;
-    winit::dpi::PhysicalSize::new(size.width.max(1), size.height.saturating_sub(echo).max(1))
 }
 
 struct App {
@@ -184,8 +230,10 @@ impl App {
             )
             .map_err(|error| anyhow!("Window context: {error:?}"))?,
         );
-        let page_size = content_size(window.inner_size(), window.scale_factor());
-        let page = Rc::new(context.offscreen_context(page_size));
+        let page_rect = frame::page_rect(window.inner_size(), window.scale_factor(), None);
+        let page = Rc::new(context.offscreen_context(
+            page_rect.map_or((1, 1).into(), |rect| (rect.width, rect.height).into()),
+        ));
         let proxy = self.proxy.clone();
         let wake: bridge::Wake = Arc::new(move || {
             let _ = proxy.send_event(Wake::Work);
@@ -218,8 +266,11 @@ impl App {
             context,
             window,
             input: input::Input::default(),
+            edits: frame::Edits::default(),
+            events: endpoint.events.clone(),
+            control: endpoint.control.clone(),
             echo: String::new(),
-            page_size,
+            page_rect,
             focused: true,
             presentations: 0,
             echo_presented: String::new(),
@@ -329,7 +380,15 @@ impl App {
         };
         let control = endpoint.control.clone();
         let mut quit = false;
-        let previous_view = surface.engine.active_webview().map(|(handle, _)| handle);
+        // The key owner is the visible page and the described focus.
+        let owner = |surface: &Surface| {
+            (
+                surface.engine.active_webview().map(|(handle, _)| handle),
+                surface.engine.ui().and_then(|ui| ui.focus()),
+            )
+        };
+        let previous_owner = owner(surface);
+        let previous_ui = surface.engine.ui_generation();
         endpoint.admit(|request| match &request.command {
             Command::Log(text) => {
                 println!("{text}");
@@ -348,14 +407,18 @@ impl App {
             _ => surface.engine.handle(request),
         });
         surface.engine.tick();
-        let selected_view = surface.engine.active_webview().map(|(handle, _)| handle);
-        if previous_view != selected_view {
+        let current_owner = owner(surface);
+        if previous_owner != current_owner {
             surface.input.change_view();
-            if let Some(handle) = selected_view {
-                let _ = endpoint
-                    .events
-                    .emit(handle, bulwark_engine::EventKind::InputReset);
+            // A frame without a page still cancels a pending prefix.
+            if current_owner.0.is_some() || surface.engine.ui().is_some() {
+                surface.emit(
+                    current_owner.0.unwrap_or(Handle::NONE),
+                    EventKind::InputReset,
+                );
             }
+        }
+        if previous_owner != current_owner || previous_ui != surface.engine.ui_generation() {
             surface.layout();
         }
         if surface.engine.needs_repaint() {
@@ -411,10 +474,18 @@ impl ApplicationHandler<Wake> for App {
                 self.fail(error);
             }
         } else {
-            let response = surface.chrome.on_window_event(&surface.window, &event);
+            // egui receives a key only when it is free and an editable control owns the focus.
+            let keyboard = matches!(event, WindowEvent::KeyboardInput { .. });
+            let response = if keyboard {
+                Default::default()
+            } else {
+                surface.chrome.on_window_event(&surface.window, &event)
+            };
             if response.repaint {
                 surface.window.request_redraw();
             }
+            let view = surface.engine.active_webview();
+            let handle = view.as_ref().map_or(Handle::NONE, |(handle, _)| *handle);
             match event {
                 WindowEvent::ModifiersChanged(modifiers) => {
                     surface.input.update_modifiers(modifiers.state());
@@ -424,40 +495,66 @@ impl ApplicationHandler<Wake> for App {
                 }
                 WindowEvent::Focused(focused) => {
                     surface.focused = focused;
-                    surface
-                        .engine
-                        .set_window_state(surface.window.scale_factor() as f32, focused);
+                    surface.engine.set_window_state(
+                        surface.window.scale_factor() as f32,
+                        focused && surface.page_has_focus(),
+                    );
                     surface.input.reset();
-                    if let Some((handle, _)) = surface.engine.active_webview()
-                        && let Some(endpoint) = &self.endpoint
-                    {
-                        let _ = endpoint
-                            .events
-                            .emit(handle, bulwark_engine::EventKind::InputReset);
+                    if view.is_some() || surface.engine.ui().is_some() {
+                        surface.emit(handle, EventKind::InputReset);
                     }
                 }
                 _ => {
-                    if let Some((handle, view)) = surface.engine.active_webview()
-                        && let Some(endpoint) = &self.endpoint
-                    {
-                        if surface
+                    if let Some(endpoint) = &self.endpoint
+                        && surface
                             .input
                             .sync_routes(endpoint.control.key_routes(), handle)
-                        {
-                            let _ = endpoint
-                                .events
-                                .emit(handle, bulwark_engine::EventKind::InputReset);
+                        && (view.is_some() || surface.engine.ui().is_some())
+                    {
+                        surface.emit(handle, EventKind::InputReset);
+                    }
+                    let pressed = matches!(
+                        event,
+                        WindowEvent::MouseInput {
+                            state: winit::event::ElementState::Pressed,
+                            ..
                         }
-                        if let Some(key) = surface.input.forward(
-                            &view,
-                            event,
-                            surface.page_size,
-                            response.consumed,
-                        ) {
-                            let _ = endpoint
-                                .events
-                                .emit(handle, bulwark_engine::EventKind::KeyInput(key));
-                        }
+                    );
+                    // Only the focused page receives keys. Any visible page receives the pointer.
+                    let target = view
+                        .as_ref()
+                        .filter(|_| !keyboard || surface.page_has_focus())
+                        .map(|(_, view)| view);
+                    let covered = surface.chrome_covers_pointer(response.consumed);
+                    let routed =
+                        surface
+                            .input
+                            .forward(target, event.clone(), surface.page_rect, covered);
+                    if keyboard
+                        && routed.free
+                        && surface.input_has_focus()
+                        && surface
+                            .chrome
+                            .on_window_event(&surface.window, &event)
+                            .repaint
+                    {
+                        surface.window.request_redraw();
+                    }
+                    if let Some(key) = routed.key {
+                        surface.emit(handle, EventKind::KeyInput(key));
+                    }
+                    // A press names its element, so Clojure can move the focus.
+                    if pressed
+                        && let (Some(ui), Some((x, y))) = (surface.engine.ui(), surface.pointer())
+                        && let Some(element) = ui.hit(x, y).and_then(|element| element.id)
+                    {
+                        surface.emit(
+                            Handle::NONE,
+                            EventKind::UiPressed {
+                                element,
+                                revision: ui.revision(),
+                            },
+                        );
                     }
                 }
             }
@@ -613,40 +710,4 @@ pub fn run(
         println!("Phase 1 native passed: local page, egui echo, and joined worker");
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn egui_consumes_echo_pointer_input_but_leaves_page_input_available_after_resize() {
-        let context = egui::Context::default();
-        for (size, point, consumed) in [
-            ([1000.0, 760.0], [522.0, 138.0], false),
-            ([1000.0, 760.0], [10.0, 746.0], true),
-            ([650.0, 450.0], [300.0, 132.0], false),
-            ([650.0, 450.0], [10.0, 436.0], true),
-        ] {
-            // Run another pass to include egui's previous-frame hit-test state.
-            for _ in 0..2 {
-                let input = egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
-                    events: vec![egui::Event::PointerMoved(point.into())],
-                    ..Default::default()
-                };
-                let _ = draw_echo(&context, input, "Fixture title");
-            }
-            assert_eq!(
-                context.egui_wants_pointer_input(),
-                consumed,
-                "pointer {point:?} in {size:?}"
-            );
-        }
-    }
-    #[test]
-    fn page_reserves_physical_echo_pixels_at_each_scale_and_never_has_zero_size() {
-        assert_eq!(content_size((1000, 760).into(), 1.0), (1000, 732).into());
-        assert_eq!(content_size((2000, 1520).into(), 2.0), (2000, 1464).into());
-        assert_eq!(content_size((0, 0).into(), 2.0), (1, 1).into());
-    }
 }

@@ -4,6 +4,7 @@
             [bulwark.commands :as commands :refer [defcommand]]
             [bulwark.keymap :as keymap]
             [bulwark.hooks :as hooks]
+            [bulwark.ui :as ui]
             [bulwark.window :as window]))
 
 (defn check! [condition message]
@@ -174,5 +175,117 @@
     (let [mixed (-> three (window/set-buffer 2 20) (window/set-buffer 3 21))]
       (check! (= mixed (window/check-web-limit mixed web?)) "A mixed layout was rejected")
       (check! (= [1] (mapv :window/id (window/web-windows mixed web?))) "Web windows were miscounted"))))
+;; Deleting the other windows and cycling follow layout order.
+(let [three (-> (window/initial 1 10) (window/split 1 2 :row 11) (window/split 2 3 :column))
+      only (window/only three 3)]
+  (check! (= [2 3 1] (mapv (fn [offset] (window/following three offset)) [1 2 3])) "Window order did not cycle")
+  (check! (= 2 (window/following (window/select three 3) -1)) "Window order did not cycle backward")
+  (check! (and (= [3] (mapv :window/id (window/windows only))) (= 3 (:selected only))
+               (> (:revision only) (:revision three)))
+          "Deleting the other windows kept one of them")
+  (check! (= :stale-window (error-kind (fn [] (window/only three 9)))) "A stale window survived alone"))
+;; The registry holds the layout. Selection, removal, and window operations keep it valid.
+(let [state (-> buffer/empty-registry
+                (buffer/add (buffer/make-buffer 10 :web {:view 3}))
+                (buffer/add (buffer/make-buffer 11 :web {:view 4}))
+                (buffer/add (buffer/make-buffer 12 :text {:name "notes" :text "hello"}))
+                (buffer/add (buffer/make-buffer 13 :text {:name "log"})))
+      shown (fn [state] (mapv (fn [leaf] [(:window/id leaf) (:window/buffer leaf)])
+                              (window/windows (:layout state))))
+      one (buffer/select state 10 1)
+      split (buffer/change-layout one window/split 1 2 :row 12)
+      beside (buffer/change-layout split window/select 2)]
+  (check! (nil? (:layout (buffer/select state 10))) "A selection without a window id created a window")
+  (check! (and (= [[1 10]] (shown one)) (= 1 (:selected (:layout one)))) "The first selection created no window")
+  (check! (= (:layout one) (:layout (buffer/select one 10 9))) "A reselection changed the layout")
+  (check! (and (= [[1 10] [2 12]] (shown split)) (= 10 (:selected split))) "A split moved the selection")
+  (check! (and (= 12 (:selected beside)) (= 12 (first (:recent beside))))
+          "Selecting a window did not select its buffer")
+  ;; A page selected from a text window takes the window that already shows a page.
+  (let [paged (buffer/select beside 11)]
+    (check! (= [[1 11] [2 12]] (shown paged)) "A second page became visible")
+    (check! (and (= 1 (:selected (:layout paged))) (= 11 (:selected paged))) "The page's window was not selected"))
+  (check! (= [[1 10] [2 13]] (shown (buffer/select beside 13))) "A text buffer left the selected window")
+  (check! (= [[1 13] [2 12]] (shown (buffer/select split 13))) "A text buffer did not replace the page")
+  (check! (= :multiple-visible-webviews
+             (error-kind (fn [] (buffer/change-layout split window/set-buffer 2 11))))
+          "A window operation showed a second page")
+  (check! (= :multiple-visible-webviews (error-kind (fn [] (buffer/change-layout one window/split 1 2 :row))))
+          "One page was split into two windows")
+  (check! (= :stale-buffer (error-kind (fn [] (buffer/change-layout split window/set-buffer 2 99))))
+          "A window showed a dead buffer")
+  (check! (= :no-window (error-kind (fn [] (buffer/change-layout state window/select 1))))
+          "A window operation ran without a layout")
+  ;; A killed buffer's windows take the most recent buffer that keeps one page visible.
+  (let [killed (buffer/remove-buffer beside 12)]
+    (check! (= [[1 10] [2 13]] (shown killed)) "A window showed a second page after a kill")
+    (check! (and (= 13 (:selected killed)) (= 13 (first (:recent killed)))) "The heir was not selected"))
+  (let [killed (buffer/remove-buffer split 10)]
+    (check! (and (= [[1 11] [2 12]] (shown killed)) (= 11 (:selected killed)) (contains? (:closing killed) 3))
+            "The most recent page did not replace a killed page"))
+  (let [killed (buffer/remove-buffer split 12)]
+    (check! (and (= [[1 10] [2 13]] (shown killed)) (= 10 (:selected killed)))
+            "A background window's kill moved the selection"))
+  ;; A window without a replacement is deleted. The last window leaves no layout.
+  (let [pair (-> buffer/empty-registry
+                 (buffer/add (buffer/make-buffer 10 :web {:view 3}))
+                 (buffer/add (buffer/make-buffer 12 :text {}))
+                 (buffer/select 10 1)
+                 (buffer/change-layout window/split 1 2 :row 12)
+                 (buffer/change-layout window/select 2))
+        alone (buffer/remove-buffer pair 12)
+        none (buffer/remove-buffer alone 10)]
+    (check! (and (= [[1 10]] (shown alone)) (= 10 (:selected alone))) "A window without a replacement survived")
+    (check! (and (nil? (:layout none)) (nil? (:selected none))) "The last kill left a window"))
+  ;; UI descriptions are plain data computed from the layout, the panes, and the viewport.
+  (let [titled (-> split
+                   (buffer/page-event {:event/type :page/url-changed :webview 3 :url "about:a"})
+                   (buffer/page-event {:event/type :page/title-changed :webview 3 :title "Example"}))
+        viewport {:width 1000 :height 760 :scale 2.0}
+        describe (fn [state viewport] (ui/describe (:layout state) (buffer/panes state) viewport))
+        described (describe titled viewport)
+        kinds (fn [description] (mapv :ui/kind (:elements description)))]
+    (check! (= {:focus 1
+                :elements [{:ui/kind :web :ui/id 1 :x 0 :y 0 :width 500 :height 710 :webview 3}
+                           {:ui/kind :line :x 0 :y 710 :width 500 :height 22
+                            :text " Example  about:a" :emphasis true}
+                           {:ui/kind :text :ui/id 2 :x 500 :y 0 :width 500 :height 710 :text "hello"}
+                           {:ui/kind :line :x 500 :y 710 :width 500 :height 22 :text " notes" :emphasis false}
+                           {:ui/kind :echo :x 0 :y 732 :width 1000 :height 28}]}
+               described)
+            "The mixed description is wrong")
+    (check! (= (ui/structure described) (ui/structure (describe split viewport)))
+            "A title change changed the structure")
+    (check! (not= (ui/structure described) (ui/structure (describe beside viewport)))
+            "A focus change kept the structure")
+    (check! (not= (ui/structure described) (ui/structure (describe titled {:width 900 :height 760 :scale 2.0})))
+            "A resize kept the structure")
+    (reset! buffer/modeline-format (fn [context] (str (:buffer/id (:buffer context)) (when (:selected context) "*"))))
+    (check! (= ["10*" "12"] (mapv :text (filter (fn [element] (= :line (:ui/kind element)))
+                                                (:elements (describe titled viewport)))))
+            "The modeline policy was ignored")
+    (reset! buffer/modeline-format nil)
+    ;; A frame that is too small shows the selected window alone, and never a zero size.
+    (let [narrow (describe beside {:width 150 :height 400 :scale 1.0})
+          tiny (describe titled {:width 100 :height 20 :scale 1.0})]
+      (check! (and (= [:text :line :echo] (kinds narrow)) (= 2 (:focus narrow))
+                   (= [0 0 150 350] (mapv (first (:elements narrow)) [:x :y :width :height])))
+              "A narrow frame did not show the selected window alone")
+      (check! (and (= [:web :echo] (kinds tiny)) (= [100 1] (mapv (first (:elements tiny)) [:width :height])))
+              "A tiny frame produced a modeline or a zero size"))
+    (check! (= {:focus nil :elements [{:ui/kind :echo :x 0 :y 732 :width 1000 :height 28}]}
+               (ui/describe nil {} viewport))
+            "A frame without windows is not the echo line alone")
+    (let [long (buffer/set-text split 12 (apply str (repeat 20000 "x")))]
+      (check! (= ui/max-text-characters (count (:text (nth (:elements (describe long viewport)) 2))))
+              "A text pane exceeded its limit"))
+    ;; Without a host, the frame has the default size.
+    (check! (= ui/default-viewport (ui/viewport)) "A portable runtime claimed a window")
+    (check! (= (:layout split) (ui/check-fit! (:layout split))) "A fitting layout was rejected")
+    (let [crowded (-> (:layout split) (window/split 1 3 :row 12) (window/split 1 4 :row 12)
+                      (window/split 1 5 :row 12))]
+      (check! (= :window-too-small (error-kind (fn [] (ui/check-fit! crowded)))) "A crowded layout fit the frame")
+      (check! (= [:web :line :echo] (kinds (ui/describe crowded (buffer/panes split) viewport)))
+              "A crowded layout did not fall back to its selected window"))))
 (println "Shell model assertions passed")
 :shell-model-passed

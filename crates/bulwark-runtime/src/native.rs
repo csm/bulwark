@@ -60,8 +60,17 @@ fn event_value(event: Event) -> Value {
     let mut fields = vec![
         ("sequence", Value::Long(event.sequence as i64)),
         ("event/type", keyword(event.kind.name())),
-        ("webview", Value::Long(event.view.0 as i64)),
     ];
+    // Frame events belong to no webview.
+    if event.view != Handle::NONE {
+        fields.push(("webview", Value::Long(event.view.0 as i64)));
+    }
+    let interaction = |element: u64, revision: u64| {
+        [
+            ("ui/id", Value::Long(element as i64)),
+            ("revision", Value::Long(revision as i64)),
+        ]
+    };
     match event.kind {
         EventKind::UrlChanged(url) => fields.push(("url", Value::string(url))),
         EventKind::TitleChanged(title) => fields.push(("title", Value::string(title))),
@@ -84,7 +93,21 @@ fn event_value(event: Event) -> Value {
             ("meta", Value::Bool(key.meta)),
             ("pressed", Value::Bool(key.pressed)),
         ]),
-        EventKind::Closed | EventKind::InputReset => {}
+        EventKind::UiPressed { element, revision } => fields.extend(interaction(element, revision)),
+        EventKind::UiInputChanged {
+            element,
+            revision,
+            text,
+        }
+        | EventKind::UiInputSubmitted {
+            element,
+            revision,
+            text,
+        } => {
+            fields.extend(interaction(element, revision));
+            fields.push(("text", Value::string(text)));
+        }
+        EventKind::Closed | EventKind::InputReset | EventKind::ViewportChanged => {}
     }
     map(fields)
 }
@@ -102,6 +125,79 @@ fn handle(value: &Value) -> Result<Handle, ValueError> {
             "Expected a positive webview handle".into(),
         )),
     }
+}
+fn invalid(message: &str) -> ValueError {
+    ValueError::Other(message.into())
+}
+fn field(map: &Value, name: &str) -> Option<Value> {
+    match map {
+        Value::Map(map) => map.get(&keyword(name)).filter(|v| !matches!(v, Value::Nil)),
+        _ => None,
+    }
+}
+fn number(map: &Value, name: &str) -> Result<Option<u64>, ValueError> {
+    match field(map, name) {
+        None => Ok(None),
+        Some(Value::Long(n)) if n >= 0 => Ok(Some(n as u64)),
+        Some(_) => Err(invalid("UI numbers must be nonnegative integers")),
+    }
+}
+fn extent(map: &Value, name: &str) -> Result<u32, ValueError> {
+    number(map, name)?
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| invalid("A UI element needs integer :x, :y, :width, and :height"))
+}
+/// Copies a Clojure UI description into owned, validated data.
+fn ui(description: &Value) -> Result<bulwark_engine::ui::Ui, ValueError> {
+    use bulwark_engine::ui::{Element, Rect, Ui, Widget};
+    let elements = match field(description, "elements") {
+        Some(Value::Vector(elements)) => elements.get().iter().cloned().collect::<Vec<_>>(),
+        _ => return Err(invalid("A UI description needs an :elements vector")),
+    };
+    if elements.len() > bulwark_engine::ui::MAX_ELEMENTS {
+        return Err(invalid("UI description has more than 64 elements"));
+    }
+    let elements = elements
+        .iter()
+        .map(|element| {
+            let content = || field(element, "text").map_or(Ok(String::new()), |v| text(&v));
+            let kind = field(element, "ui/kind");
+            let widget = if kind == Some(keyword("web")) {
+                Widget::Web(handle(&field(element, "webview").unwrap_or(Value::Nil))?)
+            } else if kind == Some(keyword("text")) {
+                Widget::Text(content()?)
+            } else if kind == Some(keyword("line")) {
+                Widget::Line {
+                    text: content()?,
+                    emphasis: field(element, "emphasis") == Some(Value::Bool(true)),
+                }
+            } else if kind == Some(keyword("echo")) {
+                Widget::Echo
+            } else if kind == Some(keyword("input")) {
+                Widget::Input(content()?)
+            } else {
+                return Err(invalid(
+                    "A UI element's :ui/kind must be :web, :text, :line, :echo, or :input",
+                ));
+            };
+            Ok(Element {
+                id: number(element, "ui/id")?,
+                rect: Rect {
+                    x: extent(element, "x")?,
+                    y: extent(element, "y")?,
+                    width: extent(element, "width")?,
+                    height: extent(element, "height")?,
+                },
+                widget,
+            })
+        })
+        .collect::<Result<Vec<_>, ValueError>>()?;
+    Ui::new(
+        number(description, "revision")?.unwrap_or(0),
+        number(description, "focus")?,
+        elements,
+    )
+    .map_err(invalid)
 }
 fn request(client: &Client, command: Command) -> Value {
     let pending = client.submit(command, DEFAULT_TIMEOUT);
@@ -154,6 +250,7 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
         }),
         ("log", 1, |a| Ok(Command::Log(text(&a[0])?))),
         ("set-echo!", 1, |a| Ok(Command::SetEcho(text(&a[0])?))),
+        ("set-ui!", 1, |a| Ok(Command::SetUi(ui(&a[0])?))),
         ("quit", 0, |_| Ok(Command::Quit)),
     ];
     for &(name, arity, build) in operations {
@@ -168,12 +265,35 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             name.into(),
             Value::NativeFunction(GcPtr::new(native)),
         );
-        if name == "webview-select" {
-            var.get().set_meta(map(vec![("doc", Value::string(
+        let doc = match name {
+            "webview-select" => {
                 "Selects one retained webview, or hides all webviews for nil. Returns a future; a stale handle leaves selection unchanged."
-            ))]));
-        }
+            }
+            "set-ui!" => {
+                "Replaces the frame's UI description {:revision n :focus id :elements [...]}. Each element has :ui/kind (:web, :text, :line, :echo, or :input) and an integer :x, :y, :width, and :height in logical pixels. :web, :text, and :input need a :ui/id; :web needs a :webview handle; :text, :line, and :input take :text. The :web element becomes the one visible webview. Throws for a malformed or oversized description. Returns a future; :stale-revision or :stale-handle leaves the frame unchanged."
+            }
+            _ => continue,
+        };
+        var.get().set_meta(map(vec![("doc", Value::string(doc))]));
     }
+    let viewport = control.clone();
+    let native = NativeFn::with_closure("bulwark.native/ui-viewport", Arity::Fixed(0), move |_| {
+        Ok(viewport.viewport().map_or(Value::Nil, |viewport| {
+            map(vec![
+                ("width", Value::Long(viewport.width as i64)),
+                ("height", Value::Long(viewport.height as i64)),
+                ("scale", Value::Double(viewport.scale as f64)),
+            ])
+        }))
+    });
+    let viewport_var = globals.intern(
+        "bulwark.native",
+        "ui-viewport".into(),
+        Value::NativeFunction(GcPtr::new(native)),
+    );
+    viewport_var.get().set_meta(map(vec![("doc", Value::string(
+        "Synchronously returns the native frame's {:width :height :scale} in logical pixels, or nil without a window. Reading it rearms the :ui/viewport-changed event."
+    ))]));
     // Publication is synchronous: bind-key! must update reservations before it
     // returns, including when a caller immediately starts a synchronous loop.
     let native = NativeFn::with_closure(

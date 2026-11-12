@@ -1,22 +1,30 @@
 (ns bulwark.core
   (:require [bulwark.buffer :as buffer]
             [bulwark.hooks :as hooks]
-            [bulwark.keymap :as keymap]))
+            [bulwark.keymap :as keymap]
+            [bulwark.ui :as ui]))
 
 (defn bootstrap-status
   "Returns the current product implementation stage."
   []
-  {:phase 2 :status :buffers})
+  {:phase 2 :status :windows})
+
+(def interactions #{:ui/pressed :ui/input-changed :ui/input-submitted})
 
 (defn ^:async dispatch!
   "Receives an ordered engine event. Redefinition takes effect on the next event.
-  Page state reaches the owning buffer first. Hooks see the owner's id under :buffer."
+  Page state reaches the owning buffer first. Hooks see the owner's id under :buffer.
+  A frame change publishes the windows again before its hooks run. An interaction with
+  an older UI structure is discarded."
   [event]
-  (let [owner (await (buffer/handle-event! event))
-        event (if owner (assoc event :buffer owner) event)
-        routed (case (:event/type event)
-                 :input/key (assoc event :keymap/status (await (keymap/dispatch-key! event)))
-                 :page/closed (do (keymap/reset-prefix!) event)
-                 :input/reset (do (keymap/reset-prefix!) event)
-                 event)]
-    (await (hooks/run-hooks! routed))))
+  (if (and (contains? interactions (:event/type event)) (not (ui/current? event)))
+    (ui/drop-obsolete!)
+    (let [owner (await (buffer/handle-event! event))
+          event (if owner (assoc event :buffer owner) event)
+          routed (case (:event/type event)
+                   :input/key (assoc event :keymap/status (await (keymap/dispatch-key! event)))
+                   :page/closed (do (keymap/reset-prefix!) event)
+                   :input/reset (do (keymap/reset-prefix!) event)
+                   :ui/viewport-changed (do (await (buffer/refresh-after-event!)) event)
+                   event)]
+      (await (hooks/run-hooks! routed)))))

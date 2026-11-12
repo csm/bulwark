@@ -56,6 +56,7 @@ impl RuntimeHost {
                 "bulwark.buffer",
                 include_str!("../../../clj/bulwark/buffer.cljrs"),
             )
+            .builtin_source("bulwark.ui", include_str!("../../../clj/bulwark/ui.cljrs"))
             .builtin_source(
                 "bulwark.window",
                 include_str!("../../../clj/bulwark/window.cljrs"),
@@ -87,9 +88,12 @@ impl RuntimeHost {
         if has_bridge {
             host.eval("(bulwark.keymap/set-route-publisher! bulwark.native/set-key-routes!)")?;
             host.eval(
+                "(bulwark.ui/set-host! {:publish bulwark.native/set-ui! \
+                                       :viewport bulwark.native/ui-viewport})",
+            )?;
+            host.eval(
                 "(bulwark.buffer/set-host! {:create bulwark.native/webview-create \
                                            :close bulwark.native/webview-close \
-                                           :select bulwark.native/webview-select \
                                            :next-id bulwark.native/allocate-id!})",
             )?;
         }

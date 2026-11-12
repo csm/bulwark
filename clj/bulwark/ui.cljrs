@@ -1,0 +1,144 @@
+(ns bulwark.ui
+  (:require [bulwark.window :as window]))
+
+;; A UI description is plain data for the whole native frame:
+;;   {:revision n :focus element-id :elements [element ...]}
+;; Every element has :ui/kind and an integer :x, :y, :width, and :height in logical pixels
+;; from the frame's top-left corner. Elements draw in order.
+;;   :web   {:ui/id window-id :webview handle}       the one visible page
+;;   :text  {:ui/id window-id :text string}          a read-only text panel
+;;   :line  {:text string :emphasis boolean}         one line, such as a modeline
+;;   :echo  {}                                       the place of the native echo text
+;;   :input {:ui/id id :text string}                 a one-line editable control
+;; A revision names one structure: the focus and each element's id, kind, rectangle, and
+;; webview. A change of text alone keeps the revision. Native interactions carry the
+;; revision they saw, so an interaction with an older structure can be discarded.
+;; The native side checks every description again. These limits keep descriptions inside it.
+
+(def echo-height 28)
+(def modeline-height 22)
+(def max-elements 64)
+(def max-line-characters 256)
+(def max-text-characters 16384)
+(def default-viewport {:width 1000 :height 760 :scale 1.0})
+(def host (atom nil))
+(def issued (atom {:revision 0 :structure nil :description nil}))
+(def dropped (atom 0))
+
+(defn set-host!
+  "Installs native mechanisms: :publish [description] returns an awaitable reply, and
+  :viewport returns the frame's {:width :height :scale} or nil. Nil keeps the namespace portable."
+  [operations]
+  (when-not (or (nil? operations)
+                (and (map? operations) (every? ifn? (vals operations))))
+    (throw (ex-info "UI host must be nil or a map of callable mechanisms" {})))
+  (reset! host operations)
+  (reset! issued {:revision (:revision @issued) :structure nil :description nil})
+  nil)
+
+(defn viewport
+  "Returns the native frame's {:width :height :scale}, or a default without a window."
+  []
+  (let [read (:viewport @host)]
+    (or (when read (read)) default-viewport)))
+
+(defn window-area
+  "Returns the part of a viewport above the echo line. It never has a zero size."
+  [viewport]
+  {:x 0 :y 0
+   :width (max 1 (:width viewport))
+   :height (max 1 (- (:height viewport) echo-height))})
+
+(defn check-fit!
+  "Returns a layout, or raises :window-too-small when a window does not fit the frame."
+  [layout]
+  (window/layout layout (window-area (viewport)))
+  layout)
+
+(defn clip
+  "Returns at most a number of leading characters of a string."
+  [text limit]
+  (if (> (count text) limit) (subs text 0 limit) text))
+
+(defn rectangles
+  "Returns the window rectangles for an area. A layout that does not fit the area or the
+  element limit shows only its selected window. The layout itself does not change."
+  [layout area]
+  (let [selected (window/window! layout (:selected layout))
+        alone [(assoc area :window/id (:window/id selected) :window/buffer (:window/buffer selected))]
+        fitted (try (window/layout layout area)
+                    (catch Exception error
+                      (when-not (= :window-too-small (:error (ex-data error))) (throw error))
+                      alone))]
+    ;; Each window has at most a content element and a modeline. The echo takes one more.
+    (if (> (* 2 (count fitted)) (dec max-elements)) alone fitted)))
+
+(defn pane-elements
+  "Returns the elements of one window: its content, then its modeline when both fit."
+  [rectangle pane selected]
+  (let [x (:x rectangle) y (:y rectangle) width (:width rectangle) height (:height rectangle)
+        modeline (and (:modeline pane) (> height modeline-height))
+        content-height (if modeline (- height modeline-height) height)
+        place {:ui/id (:window/id rectangle) :x x :y y :width width :height content-height}
+        content (if (= :web (:kind pane))
+                  (assoc place :ui/kind :web :webview (:view pane))
+                  (assoc place :ui/kind :text :text (clip (or (:text pane) "") max-text-characters)))]
+    (if modeline
+      [content {:ui/kind :line :x x :y (+ y content-height) :width width :height modeline-height
+                :text (clip (:modeline pane) max-line-characters) :emphasis selected}]
+      [content])))
+
+(defn describe
+  "Returns a description without a revision. Panes map each window id to
+  {:kind :view :text :modeline}. The selected window's content owns the focus.
+  A nil layout leaves only the echo line."
+  [layout panes viewport]
+  (let [area (window-area viewport)
+        echo {:ui/kind :echo :x 0 :y (:height area) :width (:width area) :height echo-height}
+        windows (if layout
+                  (vec (mapcat (fn [rectangle]
+                                 (pane-elements rectangle
+                                                (get panes (:window/id rectangle))
+                                                (= (:window/id rectangle) (:selected layout))))
+                               (rectangles layout area)))
+                  [])]
+    {:focus (when layout (:selected layout)) :elements (conj windows echo)}))
+
+(defn structure
+  "Returns the part of a description that a revision names."
+  [description]
+  {:focus (:focus description)
+   :elements (mapv (fn [element] (dissoc element :text :emphasis)) (:elements description))})
+
+(defn ^:async present!
+  "Publishes the description of a layout and its panes. An unchanged description sends
+  nothing. A new structure takes the next revision. A failed publication raises, and the
+  next call publishes again."
+  [layout panes]
+  (let [description (describe layout panes (viewport))
+        previous @issued]
+    (when-not (= description (:description previous))
+      (let [shape (structure description)
+            revision (if (= shape (:structure previous)) (:revision previous) (inc (:revision previous)))]
+        ;; Issue the revision before parking, so concurrent publications stay ordered.
+        (reset! issued {:revision revision :structure shape :description description})
+        (when-let [publish (:publish @host)]
+          (let [reply (await (publish (assoc description :revision revision)))]
+            (when-not (:ok reply)
+              (swap! issued (fn [current]
+                              (if (= description (:description current))
+                                (assoc current :structure nil :description nil)
+                                current)))
+              (throw (ex-info "Native UI publication failed" reply)))))))
+    nil))
+
+(defn current?
+  "Returns true when a native interaction saw the issued revision."
+  [event]
+  (= (:revision event) (:revision @issued)))
+
+(defn drop-obsolete!
+  "Counts a discarded interaction with an older structure."
+  []
+  (swap! dropped inc)
+  nil)

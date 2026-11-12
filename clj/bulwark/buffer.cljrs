@@ -1,6 +1,8 @@
 (ns bulwark.buffer
   (:require [bulwark.hooks :as hooks]
-            [bulwark.keymap :as keymap]))
+            [bulwark.keymap :as keymap]
+            [bulwark.ui :as ui]
+            [bulwark.window :as window]))
 
 ;; Registry state is one immutable map:
 ;;   :buffers  id -> buffer record
@@ -9,15 +11,20 @@
 ;;   :owners   webview handle -> owning buffer id
 ;;   :pages    webview handle -> page state from engine events
 ;;   :closing  handles of killed web buffers whose close event is outstanding
+;;   :layout   the bulwark.window layout state, or nil while no buffer is selected
+;; With a layout, :selected is the buffer of the layout's selected window, every window
+;; shows a live buffer, and at most one window shows a web buffer.
 ;; The transitions below are pure. They accept supplied identifiers and need no engine.
 
 (def kinds #{:web :text :repl})
 (def default-major-modes {:web :web-mode :text :text-mode :repl :repl-mode})
-(def empty-registry {:buffers {} :recent [] :selected nil :owners {} :pages {} :closing #{}})
+(def empty-registry {:buffers {} :recent [] :selected nil :owners {} :pages {} :closing #{} :layout nil})
 (def registry (atom empty-registry))
 (def host (atom nil))
 (def last-web-buffer-policy (atom nil))
 (def portable-ids (atom 0))
+(def modeline-format (atom nil))
+(def refresh-failure (atom nil))
 
 (defn id?
   "Returns true for a positive integer identifier."
@@ -66,30 +73,143 @@
                        :recent (conj (:recent state) id))]
       (if view (assoc added :owners (assoc (:owners state) view id)) added))))
 
-(defn select
-  "Selects a live buffer and moves it to the front of the recency order."
+(defn web?
+  "Returns true when an id names a live web buffer in a registry state."
   [state id]
-  (when-not (contains? (:buffers state) id) (stale! id))
+  (= :web (:buffer/kind (get (:buffers state) id))))
+
+(defn web-windows
+  "Returns the windows of a layout that show a web buffer of a registry state."
+  [state layout]
+  (window/web-windows layout (fn [id] (web? state id))))
+
+(defn touch
+  "Marks a live buffer as selected and moves it to the front of the recency order."
+  [state id]
   (assoc state
          :selected id
          :recent (vec (cons id (remove (fn [other] (= id other)) (:recent state))))))
 
+(defn display-window
+  "Returns the window that takes a newly selected buffer. A web buffer goes to the window
+  that already shows a page, so one page stays visible. Any other buffer, and a web buffer
+  without a visible page, goes to the selected window."
+  [state id]
+  (let [layout (:layout state) pages (web-windows state layout)]
+    (if (and (web? state id) (seq pages))
+      (:window/id (first pages))
+      (:selected layout))))
+
+(defn show
+  "Shows a buffer in a window and selects that window. An unchanged layout keeps its revision."
+  [layout target id]
+  (let [shown (if (= id (:window/buffer (window/window! layout target)))
+                layout
+                (window/set-buffer layout target id))]
+    (if (= target (:selected shown)) shown (window/select shown target))))
+
+(defn select
+  "Selects a live buffer and moves it to the front of the recency order. The buffer takes
+  its display window. Without a layout, a supplied window id creates the first window."
+  ([state id] (select state id nil))
+  ([state id window-id]
+   (when-not (contains? (:buffers state) id) (stale! id))
+   (let [layout (:layout state)]
+     (assoc (touch state id)
+            :layout (cond
+                      layout (show layout (display-window state id) id)
+                      window-id (window/initial window-id id)
+                      :else nil)))))
+
+(defn replacement
+  "Returns the most recent buffer that a window can show without a second visible page, or nil."
+  [state layout window-id]
+  (first (filter (fn [candidate]
+                   (<= (count (web-windows state (window/set-buffer layout window-id candidate))) 1))
+                 (:recent state))))
+
+(defn release-windows
+  "Returns the layout after a buffer's removal from a registry state. Each window that
+  showed the buffer takes its replacement. A window without one is deleted. Deleting the
+  only window leaves no layout."
+  [state id]
+  (loop [layout (:layout state)]
+    (let [leaf (when layout
+                 (first (filter (fn [leaf] (= id (:window/buffer leaf))) (window/windows layout))))
+          heir (when leaf (replacement state layout (:window/id leaf)))]
+      (cond
+        (nil? leaf) layout
+        heir (recur (window/set-buffer layout (:window/id leaf) heir))
+        (window/leaf? (:root layout)) nil
+        :else (recur (window/delete layout (:window/id leaf)))))))
+
 (defn remove-buffer
-  "Removes a live buffer and every reference to it. A removed selected buffer leaves no selection.
-  The buffer's view enters :closing until its close event arrives, so late events cannot revive it."
+  "Removes a live buffer and every reference to it, including its windows. With a layout,
+  the selected window's buffer becomes the selection. Without one, a removed selected
+  buffer leaves no selection. The buffer's view enters :closing until its close event
+  arrives, so late events cannot revive it."
   [state id]
   (when-not (contains? (:buffers state) id) (stale! id))
   (let [view (:buffer/view (get (:buffers state) id))
         removed (assoc state
                        :buffers (dissoc (:buffers state) id)
                        :recent (vec (remove (fn [other] (= id other)) (:recent state)))
-                       :selected (when-not (= id (:selected state)) (:selected state)))]
+                       :selected (when-not (= id (:selected state)) (:selected state)))
+        layout (release-windows removed id)
+        shown (when layout (:window/buffer (window/window layout (:selected layout))))
+        settled (assoc (if (and shown (not= shown (:selected removed))) (touch removed shown) removed)
+                       :layout layout)]
     (if view
-      (assoc removed
+      (assoc settled
              :owners (dissoc (:owners state) view)
              :pages (dissoc (:pages state) view)
              :closing (conj (:closing state) view))
-      removed)))
+      settled)))
+
+(defn change-layout
+  "Applies a pure bulwark.window operation and arguments to the layout. The result must
+  show live buffers and at most one page. The selected window's buffer becomes the selection."
+  [state operation & args]
+  (when-not (:layout state)
+    (throw (ex-info "No window exists" {:error :no-window})))
+  (let [layout (apply operation (:layout state) args)
+        shown (:window/buffer (window/window! layout (:selected layout)))]
+    (doseq [leaf (window/windows layout)]
+      (when-not (contains? (:buffers state) (:window/buffer leaf)) (stale! (:window/buffer leaf))))
+    (window/check-web-limit layout (fn [id] (web? state id)))
+    (assoc (if (= shown (:selected state)) state (touch state shown)) :layout layout)))
+
+(defn label
+  "Returns a buffer's explicit name, else its page title, else its URL, else a numbered label."
+  [state id]
+  (let [record (get (:buffers state) id) page (get (:pages state) (:buffer/view record))]
+    (or (:buffer/name record)
+        (when (seq (:title page)) (:title page))
+        (:url page)
+        (str "buffer " id))))
+
+(defn default-modeline
+  "Formats a modeline from {:buffer :page :name :selected}: the name, then a page's URL."
+  [context]
+  (str " " (:name context) (when (:url (:page context)) (str "  " (:url (:page context))))))
+
+(defn panes
+  "Returns each window's pane for bulwark.ui/describe: {:kind :view :text :modeline}.
+  @modeline-format, or default-modeline, formats the modeline."
+  [state]
+  (let [layout (:layout state) format (or @modeline-format default-modeline)]
+    (reduce (fn [result leaf]
+              (let [id (:window/buffer leaf)
+                    record (get (:buffers state) id)
+                    context {:buffer record
+                             :page (get (:pages state) (:buffer/view record))
+                             :name (label state id)
+                             :selected (= (:window/id leaf) (:selected layout))}]
+                (assoc result (:window/id leaf)
+                       {:kind (:buffer/kind record) :view (:buffer/view record)
+                        :text (:buffer/text record) :modeline (format context)})))
+            {}
+            (if layout (window/windows layout) []))))
 
 (defn page-event
   "Applies an engine page event to its own view's page state. Events never create or change a buffer.
@@ -215,11 +335,18 @@
 (defn display-name
   "Returns a buffer's explicit name, else its page title, else its URL, else a numbered label."
   [id]
-  (let [record (buffer! id) state (view-page (:buffer/view record))]
-    (or (:buffer/name record)
-        (when (seq (:title state)) (:title state))
-        (:url state)
-        (str "buffer " id))))
+  (buffer! id)
+  (label @registry id))
+
+(defn layout
+  "Returns the window layout, or nil while no buffer is selected."
+  []
+  (:layout @registry))
+
+(defn selected-window
+  "Returns the selected window's id, or nil."
+  []
+  (:selected (layout)))
 
 (defn local
   "Returns a buffer-local variable, or the default."
@@ -236,13 +363,17 @@
 (defn set-major-mode! "Replaces a buffer's major mode." [id mode] (alter! set-major-mode id mode))
 (defn enable-minor-mode! "Enables a minor mode in a buffer." [id mode] (alter! enable-minor-mode id mode))
 (defn disable-minor-mode! "Disables a minor mode in a buffer." [id mode] (alter! disable-minor-mode id mode))
-(defn set-text! "Replaces a non-web buffer's text." [id text] (alter! set-text id text))
+(defn set-text!
+  "Replaces a non-web buffer's text. Await refresh! to show the change in its windows."
+  [id text]
+  (alter! set-text id text))
 
 ;; Lifecycle operations use host-supplied native mechanisms.
 
 (defn set-host!
-  "Installs native mechanisms: :create [url], :close [view], and :select [view-or-nil] return
-  awaitable replies, and :next-id returns a fresh identifier. Nil keeps the namespace portable."
+  "Installs native mechanisms: :create [url] and :close [view] return awaitable replies,
+  and :next-id returns a fresh identifier. Nil keeps the namespace portable.
+  bulwark.ui publishes the windows, so the visible page follows the layout."
   [operations]
   (when-not (or (nil? operations)
                 (and (map? operations) (every? ifn? (vals operations))))
@@ -267,31 +398,45 @@
   (when-not (:ok reply) (throw (ex-info "Native buffer operation failed" reply)))
   (:value reply))
 
-(defn ^:async sync-selection!
-  "Makes the native selection match the registry: the selected web view, or no view."
+(defn ^:async present!
+  "Publishes the UI for a registry state."
+  [state]
+  (await (ui/present! (:layout state) (panes state))))
+
+(defn ^:async refresh!
+  "Makes the native frame match the registry: its windows, the visible page, the focus,
+  texts, and modelines. An unchanged frame sends nothing."
   []
-  (when-let [select (:select @host)]
-    (value! (await (select (selected-view)))))
+  (await (present! @registry)))
+
+(defn ^:async refresh-after-event!
+  "Refreshes inside event dispatch. A failed publication must not stop the dispatcher,
+  so the error stays in refresh-failure and the next refresh publishes again."
+  []
+  (try
+    (await (refresh!))
+    (reset! refresh-failure nil)
+    (catch Exception error
+      (reset! refresh-failure error)))
   nil)
 
 (defn ^:async commit-selection!
-  "Selects natively, then in the registry. A failure leaves both selections unchanged."
+  "Publishes the selection, then commits it. A failure leaves the registry unchanged."
   [id]
-  (let [record (buffer! id)]
-    (when-let [select (:select @host)]
-      (let [reply (await (select (:buffer/view record)))]
-        (when-not (:ok reply)
-          (throw (ex-info "Native webview selection failed" (assoc reply :buffer id))))))
+  (buffer! id)
+  (let [window-id (next-id!)]
+    (await (present! (select @registry id window-id)))
     (when-not (buffer id)
       ;; The buffer was killed while the native request was parked.
-      (await (sync-selection!))
+      (await (refresh!))
       (stale! id))
-    (swap! registry select id)
+    (swap! registry select id window-id)
+    (await (refresh!))
     (keymap/reset-prefix!)
     nil))
 
 (defn ^:async select!
-  "Selects a buffer, shows its webview or hides all webviews, and runs :buffer/selected hooks.
+  "Selects a buffer, shows it in its display window, and runs :buffer/selected hooks.
   The hook event contains :buffer and :previous, which can name a killed buffer."
   [id]
   (let [previous (selected-id)]
@@ -319,21 +464,21 @@
     (let [id (:id outcome)
           previous (selected-id)
           selecting (get options :select true)]
-      ;; The engine shows the first view of an empty registry. The registry decides instead.
-      (if selecting (await (commit-selection! id)) (await (sync-selection!)))
+      ;; An engine without a description shows its first view. The registry decides instead.
+      (if selecting (await (commit-selection! id)) (await (refresh!)))
       (await (hooks/run-hooks! {:event/type :buffer/created :buffer id}))
       (when (and selecting (not= previous id))
         (await (hooks/run-hooks! {:event/type :buffer/selected :buffer id :previous previous})))
       id)))
 
 (defn ^:async settle-removal!
-  "Selects the most recent remaining buffer after a selected buffer's removal, runs
-  :buffer/killed and :buffer/selected hooks, and applies the last-web-buffer policy."
+  "Publishes the windows after a removal, runs :buffer/killed hooks, then :buffer/selected
+  hooks when a removed selected buffer has a successor, and applies the last-web-buffer policy."
   [record was-selected]
   (let [id (:buffer/id record)
-        successor (when was-selected (first (:recent @registry)))]
-    (when was-selected
-      (if successor (await (commit-selection! successor)) (await (sync-selection!))))
+        successor (when was-selected (selected-id))]
+    (when was-selected (keymap/reset-prefix!))
+    (await (refresh!))
     (await (hooks/run-hooks! {:event/type :buffer/killed :buffer id :buffer/record record}))
     (when successor
       (await (hooks/run-hooks! {:event/type :buffer/selected :buffer successor :previous id})))
@@ -345,7 +490,9 @@
 
 (defn ^:async kill!
   "Kills a buffer. The registry forgets it first, so its id is stale at once and its webview
-  closes exactly once. A webview that the engine already closed is not an error."
+  closes exactly once. A webview that the engine already closed is not an error.
+  Each window that showed the buffer takes the most recent buffer that keeps one page
+  visible, or is deleted."
   [id]
   (let [record (buffer! id)
         was-selected (= id (selected-id))
@@ -366,5 +513,29 @@
       (let [record (buffer id) was-selected (= id (selected-id))]
         (swap! registry (fn [state] (page-event (remove-buffer state id) event)))
         (await (settle-removal! record was-selected)))
-      (swap! registry page-event event))
+      (let [before (:pages @registry)]
+        (swap! registry page-event event)
+        ;; Modelines show page titles and URLs.
+        (when-not (= before (:pages @registry))
+          (await (refresh-after-event!)))))
     id))
+
+(defn ^:async change-layout!
+  "Applies a pure bulwark.window operation and arguments to the layout, publishes the
+  result, and commits it. Raises before any change when the result needs a second visible
+  page or does not fit the frame. Runs :buffer/selected hooks when the selection moves."
+  [operation & args]
+  (let [previous (selected-id)
+        change (fn [state] (apply change-layout state operation args))
+        candidate (change @registry)]
+    (ui/check-fit! (:layout candidate))
+    (await (present! candidate))
+    (let [failure (try (swap! registry change) nil (catch Exception error error))]
+      ;; A registry that changed while the request was parked keeps its own layout.
+      (await (refresh!))
+      (when failure (throw failure)))
+    (let [selected (selected-id)]
+      (when-not (= previous selected)
+        (keymap/reset-prefix!)
+        (await (hooks/run-hooks! {:event/type :buffer/selected :buffer selected :previous previous}))))
+    nil))
