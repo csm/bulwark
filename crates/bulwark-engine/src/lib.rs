@@ -35,6 +35,12 @@ impl IdAllocator {
 }
 static HANDLES: IdAllocator = IdAllocator::new();
 
+/// Issues an identifier for a logical resource that the runtime owns, such as a buffer.
+/// It shares the handle allocator, so no identifier names two resources in one process.
+pub fn allocate_id() -> Result<u64, Fault> {
+    HANDLES.next()
+}
+
 /// Resource ids come from one process-wide allocator, even across registries.
 pub struct Registry<T>(BTreeMap<Handle, T>);
 impl<T> Default for Registry<T> {

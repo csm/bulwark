@@ -5,6 +5,7 @@ Phase 0 is complete. The native host and runtime experiments now have an accepte
 Phase 1 acceptance is complete. The product has a bounded engine/runtime bridge, a native Servo window, and an egui echo area.
 The [acceptance review](docs/phase-1-acceptance.md) records passing CI and physical macOS checks.
 Phase 2 is in progress. The [mechanism checkpoint](docs/phase-2-mechanisms.md) adds retained webviews and a standalone AOT test path.
+The [buffer checkpoint](docs/phase-2-buffers.md) adds the Clojure buffer registry, lifecycle hooks, and buffer commands.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -149,6 +150,8 @@ Use `--no-default-features` for the portable workspace checks without Servo.
 
 - [Phase 2 implementation plan](docs/phase-2-plan.md)
 - [Phase 2 mechanism checkpoint](docs/phase-2-mechanisms.md)
+- [Phase 2 buffer checkpoint](docs/phase-2-buffers.md)
+- [Phase 2 window model checkpoint](docs/phase-2-windows.md)
 - [Headless Linux test host and runner](docs/linux-testing.md)
 - [Phase 0 exit review](docs/phase-0-exit.md)
 - [Phase 1 foundation checkpoint and native API](docs/phase-1-foundation.md)

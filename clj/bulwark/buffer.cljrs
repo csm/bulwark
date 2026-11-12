@@ -1,0 +1,370 @@
+(ns bulwark.buffer
+  (:require [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]))
+
+;; Registry state is one immutable map:
+;;   :buffers  id -> buffer record
+;;   :recent   buffer ids, most recently selected first, then creation order
+;;   :selected the selected buffer id, or nil
+;;   :owners   webview handle -> owning buffer id
+;;   :pages    webview handle -> page state from engine events
+;;   :closing  handles of killed web buffers whose close event is outstanding
+;; The transitions below are pure. They accept supplied identifiers and need no engine.
+
+(def kinds #{:web :text :repl})
+(def default-major-modes {:web :web-mode :text :text-mode :repl :repl-mode})
+(def empty-registry {:buffers {} :recent [] :selected nil :owners {} :pages {} :closing #{}})
+(def registry (atom empty-registry))
+(def host (atom nil))
+(def last-web-buffer-policy (atom nil))
+(def portable-ids (atom 0))
+
+(defn id?
+  "Returns true for a positive integer identifier."
+  [value]
+  (and (integer? value) (pos? value)))
+
+(defn stale!
+  "Raises the error for a buffer id that names no live buffer."
+  [id]
+  (throw (ex-info "No live buffer has this id" {:error :stale-buffer :buffer id})))
+
+(defn make-buffer
+  "Builds a buffer record from a supplied id, a kind, and an options map.
+  Options: :name, :view (required for :web, forbidden otherwise), :major-mode, :locals, :text."
+  [id kind options]
+  (let [view (:view options)
+        name (:name options)
+        mode (get options :major-mode (get default-major-modes kind))
+        locals (get options :locals {})
+        text (when-not (= kind :web) (get options :text ""))]
+    (when-not (id? id)
+      (throw (ex-info "Buffer id must be a positive integer" {:buffer id})))
+    (when-not (contains? kinds kind)
+      (throw (ex-info "Buffer kind must be :web, :text, or :repl" {:kind kind})))
+    (when-not (if (= kind :web) (id? view) (nil? view))
+      (throw (ex-info "Exactly the web buffers own a webview handle" {:kind kind :view view})))
+    (when-not (or (nil? name) (and (string? name) (seq name)))
+      (throw (ex-info "Buffer name must be a nonempty string or nil" {:name name})))
+    (when-not (and (keyword? mode) (map? locals) (or (nil? text) (string? text)))
+      (throw (ex-info "Buffer mode, locals, or text has the wrong type" {:buffer id})))
+    {:buffer/id id :buffer/kind kind :buffer/name name :buffer/view view
+     :buffer/major-mode mode :buffer/minor-modes [] :buffer/locals locals :buffer/text text}))
+
+(defn add
+  "Publishes a buffer record. Rejects a reused id, an owned or closing view, and a duplicate name."
+  [state buffer]
+  (let [id (:buffer/id buffer) view (:buffer/view buffer) name (:buffer/name buffer)]
+    (when (contains? (:buffers state) id)
+      (throw (ex-info "Buffer id is already registered" {:buffer id})))
+    (when (and view (or (contains? (:owners state) view) (contains? (:closing state) view)))
+      (throw (ex-info "Webview handle already belongs to a buffer" {:view view})))
+    (when (and name (some (fn [other] (= name (:buffer/name other))) (vals (:buffers state))))
+      (throw (ex-info "Buffer name is already in use" {:name name})))
+    (let [added (assoc state
+                       :buffers (assoc (:buffers state) id buffer)
+                       :recent (conj (:recent state) id))]
+      (if view (assoc added :owners (assoc (:owners state) view id)) added))))
+
+(defn select
+  "Selects a live buffer and moves it to the front of the recency order."
+  [state id]
+  (when-not (contains? (:buffers state) id) (stale! id))
+  (assoc state
+         :selected id
+         :recent (vec (cons id (remove (fn [other] (= id other)) (:recent state))))))
+
+(defn remove-buffer
+  "Removes a live buffer and every reference to it. A removed selected buffer leaves no selection.
+  The buffer's view enters :closing until its close event arrives, so late events cannot revive it."
+  [state id]
+  (when-not (contains? (:buffers state) id) (stale! id))
+  (let [view (:buffer/view (get (:buffers state) id))
+        removed (assoc state
+                       :buffers (dissoc (:buffers state) id)
+                       :recent (vec (remove (fn [other] (= id other)) (:recent state)))
+                       :selected (when-not (= id (:selected state)) (:selected state)))]
+    (if view
+      (assoc removed
+             :owners (dissoc (:owners state) view)
+             :pages (dissoc (:pages state) view)
+             :closing (conj (:closing state) view))
+      removed)))
+
+(defn page-event
+  "Applies an engine page event to its own view's page state. Events never create or change a buffer.
+  A close event forgets the view. Events for a closing view are discarded."
+  [state event]
+  (let [view (:webview event)
+        type (:event/type event)
+        page (get (:pages state) view {})
+        put (fn [updated] (assoc state :pages (assoc (:pages state) view updated)))]
+    (cond
+      (not (id? view)) state
+      (= type :page/closed) (assoc state
+                                   :pages (dissoc (:pages state) view)
+                                   :closing (disj (:closing state) view))
+      (contains? (:closing state) view) state
+      (= type :page/url-changed) (put (assoc page :url (:url event)))
+      (= type :page/title-changed) (put (assoc page :title (:title event)))
+      (= type :page/load-status-changed) (put (assoc page :load-status (:load-status event)))
+      (= type :page/history-changed) (put (assoc page
+                                                 :can-go-back (:can-go-back event)
+                                                 :can-go-forward (:can-go-forward event)))
+      :else state)))
+
+(defn change
+  "Applies a function and arguments to one live buffer record."
+  [state id f & args]
+  (when-not (contains? (:buffers state) id) (stale! id))
+  (assoc state :buffers (assoc (:buffers state) id (apply f (get (:buffers state) id) args))))
+
+(defn set-local
+  "Sets a buffer-local variable."
+  [state id key value]
+  (change state id (fn [buffer] (assoc buffer :buffer/locals (assoc (:buffer/locals buffer) key value)))))
+
+(defn set-major-mode
+  "Replaces the buffer's major mode keyword."
+  [state id mode]
+  (when-not (keyword? mode) (throw (ex-info "Major mode must be a keyword" {:mode mode})))
+  (change state id assoc :buffer/major-mode mode))
+
+(defn enable-minor-mode
+  "Enables a minor mode. The most recently enabled mode comes first; an enabled mode keeps its place."
+  [state id mode]
+  (when-not (keyword? mode) (throw (ex-info "Minor mode must be a keyword" {:mode mode})))
+  (change state id
+          (fn [buffer]
+            (let [modes (:buffer/minor-modes buffer)]
+              (if (some (fn [enabled] (= mode enabled)) modes)
+                buffer
+                (assoc buffer :buffer/minor-modes (vec (cons mode modes))))))))
+
+(defn disable-minor-mode
+  "Disables a minor mode and keeps the order of the others."
+  [state id mode]
+  (change state id
+          (fn [buffer]
+            (assoc buffer :buffer/minor-modes
+                   (vec (remove (fn [enabled] (= mode enabled)) (:buffer/minor-modes buffer)))))))
+
+(defn set-text
+  "Replaces the text of a :text or :repl buffer."
+  [state id text]
+  (when-not (string? text) (throw (ex-info "Buffer text must be a string" {:buffer id})))
+  (change state id
+          (fn [buffer]
+            (when (= :web (:buffer/kind buffer))
+              (throw (ex-info "A web buffer has no text" {:buffer id})))
+            (assoc buffer :buffer/text text))))
+
+;; Accessors read the current registry.
+
+(defn buffer
+  "Returns the live buffer record for an id, or nil."
+  [id]
+  (get (:buffers @registry) id))
+
+(defn buffer!
+  "Returns the live buffer record for an id, or raises :stale-buffer."
+  [id]
+  (or (buffer id) (stale! id)))
+
+(defn buffers
+  "Returns live buffer records in creation order."
+  []
+  (let [live (:buffers @registry)]
+    (mapv (fn [id] (get live id)) (sort (keys live)))))
+
+(defn selected-id
+  "Returns the selected buffer id, or nil."
+  []
+  (:selected @registry))
+
+(defn selected
+  "Returns the selected buffer record, or nil."
+  []
+  (buffer (selected-id)))
+
+(defn selected-view
+  "Returns the selected web buffer's webview handle, or nil."
+  []
+  (:buffer/view (selected)))
+
+(defn owner
+  "Returns the id of the buffer that owns a webview handle, or nil."
+  [view]
+  (get (:owners @registry) view))
+
+(defn view-page
+  "Returns the page state recorded for a webview handle, or nil."
+  [view]
+  (get (:pages @registry) view))
+
+(defn page
+  "Returns a web buffer's page state: :url, :title, :load-status, :can-go-back, :can-go-forward."
+  [id]
+  (view-page (:buffer/view (buffer! id))))
+
+(defn find-named
+  "Returns the live buffer with an explicit name, or nil."
+  [name]
+  (first (filter (fn [candidate] (= name (:buffer/name candidate))) (buffers))))
+
+(defn display-name
+  "Returns a buffer's explicit name, else its page title, else its URL, else a numbered label."
+  [id]
+  (let [record (buffer! id) state (view-page (:buffer/view record))]
+    (or (:buffer/name record)
+        (when (seq (:title state)) (:title state))
+        (:url state)
+        (str "buffer " id))))
+
+(defn local
+  "Returns a buffer-local variable, or the default."
+  ([id key] (local id key nil))
+  ([id key default] (get (:buffer/locals (buffer! id)) key default)))
+
+(defn alter!
+  "Applies a pure transition with a buffer id and arguments to the registry."
+  [transition id & args]
+  (swap! registry (fn [state] (apply transition state id args)))
+  nil)
+
+(defn set-local! "Sets a buffer-local variable." [id key value] (alter! set-local id key value))
+(defn set-major-mode! "Replaces a buffer's major mode." [id mode] (alter! set-major-mode id mode))
+(defn enable-minor-mode! "Enables a minor mode in a buffer." [id mode] (alter! enable-minor-mode id mode))
+(defn disable-minor-mode! "Disables a minor mode in a buffer." [id mode] (alter! disable-minor-mode id mode))
+(defn set-text! "Replaces a non-web buffer's text." [id text] (alter! set-text id text))
+
+;; Lifecycle operations use host-supplied native mechanisms.
+
+(defn set-host!
+  "Installs native mechanisms: :create [url], :close [view], and :select [view-or-nil] return
+  awaitable replies, and :next-id returns a fresh identifier. Nil keeps the namespace portable."
+  [operations]
+  (when-not (or (nil? operations)
+                (and (map? operations) (every? ifn? (vals operations))))
+    (throw (ex-info "Buffer host must be nil or a map of callable mechanisms" {})))
+  (reset! host operations)
+  nil)
+
+(defn host-operation
+  "Returns a required host mechanism, or reports that this runtime has no engine."
+  [operation]
+  (or (get @host operation)
+      (throw (ex-info "This runtime has no native buffer host" {:operation operation}))))
+
+(defn next-id!
+  "Returns a fresh buffer id from the host, or from a local counter in a portable runtime."
+  []
+  (if-let [allocate (:next-id @host)] (allocate) (swap! portable-ids inc)))
+
+(defn value!
+  "Returns a successful native value, or raises an error containing the reply."
+  [reply]
+  (when-not (:ok reply) (throw (ex-info "Native buffer operation failed" reply)))
+  (:value reply))
+
+(defn ^:async sync-selection!
+  "Makes the native selection match the registry: the selected web view, or no view."
+  []
+  (when-let [select (:select @host)]
+    (value! (await (select (selected-view)))))
+  nil)
+
+(defn ^:async commit-selection!
+  "Selects natively, then in the registry. A failure leaves both selections unchanged."
+  [id]
+  (let [record (buffer! id)]
+    (when-let [select (:select @host)]
+      (let [reply (await (select (:buffer/view record)))]
+        (when-not (:ok reply)
+          (throw (ex-info "Native webview selection failed" (assoc reply :buffer id))))))
+    (when-not (buffer id)
+      ;; The buffer was killed while the native request was parked.
+      (await (sync-selection!))
+      (stale! id))
+    (swap! registry select id)
+    (keymap/reset-prefix!)
+    nil))
+
+(defn ^:async select!
+  "Selects a buffer, shows its webview or hides all webviews, and runs :buffer/selected hooks.
+  The hook event contains :buffer and :previous, which can name a killed buffer."
+  [id]
+  (let [previous (selected-id)]
+    (await (commit-selection! id))
+    (when-not (= previous id)
+      (await (hooks/run-hooks! {:event/type :buffer/selected :buffer id :previous previous})))
+    id))
+
+(defn ^:async create!
+  "Creates a buffer and returns its id. Options: :kind (default :web), :url for web buffers,
+  :select (default true), :name, :major-mode, :locals, and :text.
+  The buffer is published only after native creation succeeds. A failed publication closes
+  the new webview. Runs :buffer/created hooks, then :buffer/selected hooks."
+  [options]
+  (let [kind (get options :kind :web)
+        view (when (= kind :web) (value! (await ((host-operation :create) (:url options)))))
+        outcome (try
+                  (let [id (next-id!)]
+                    (swap! registry add (make-buffer id kind (assoc options :view view)))
+                    {:id id})
+                  (catch Exception error {:error error}))]
+    (when (:error outcome)
+      (when view (await ((host-operation :close) view)))
+      (throw (:error outcome)))
+    (let [id (:id outcome)
+          previous (selected-id)
+          selecting (get options :select true)]
+      ;; The engine shows the first view of an empty registry. The registry decides instead.
+      (if selecting (await (commit-selection! id)) (await (sync-selection!)))
+      (await (hooks/run-hooks! {:event/type :buffer/created :buffer id}))
+      (when (and selecting (not= previous id))
+        (await (hooks/run-hooks! {:event/type :buffer/selected :buffer id :previous previous})))
+      id)))
+
+(defn ^:async settle-removal!
+  "Selects the most recent remaining buffer after a selected buffer's removal, runs
+  :buffer/killed and :buffer/selected hooks, and applies the last-web-buffer policy."
+  [record was-selected]
+  (let [id (:buffer/id record)
+        successor (when was-selected (first (:recent @registry)))]
+    (when was-selected
+      (if successor (await (commit-selection! successor)) (await (sync-selection!))))
+    (await (hooks/run-hooks! {:event/type :buffer/killed :buffer id :buffer/record record}))
+    (when successor
+      (await (hooks/run-hooks! {:event/type :buffer/selected :buffer successor :previous id})))
+    (when (and (= :web (:buffer/kind record))
+               (not (some (fn [other] (= :web (:buffer/kind other))) (buffers))))
+      (when-let [policy @last-web-buffer-policy]
+        (await (policy record))))
+    nil))
+
+(defn ^:async kill!
+  "Kills a buffer. The registry forgets it first, so its id is stale at once and its webview
+  closes exactly once. A webview that the engine already closed is not an error."
+  [id]
+  (let [record (buffer! id)
+        was-selected (= id (selected-id))
+        view (:buffer/view record)]
+    (swap! registry remove-buffer id)
+    (let [reply (when view (await ((host-operation :close) view)))]
+      (await (settle-removal! record was-selected))
+      (when (and reply (not (:ok reply)) (not= :stale-handle (:error reply)))
+        (throw (ex-info "Native webview close failed" (assoc reply :buffer id))))
+      id)))
+
+(defn ^:async handle-event!
+  "Routes an engine event to its view's page state and returns the owning buffer id, or nil.
+  An engine-initiated close kills the owning buffer without a second native close."
+  [event]
+  (let [id (owner (:webview event))]
+    (if (and id (= :page/closed (:event/type event)))
+      (let [record (buffer id) was-selected (= id (selected-id))]
+        (swap! registry (fn [state] (page-event (remove-buffer state id) event)))
+        (await (settle-removal! record was-selected)))
+      (swap! registry page-event event))
+    id))

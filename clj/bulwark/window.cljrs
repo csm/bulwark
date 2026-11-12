@@ -1,0 +1,202 @@
+(ns bulwark.window)
+
+;; A window tree is immutable data.
+;;   leaf:  {:window/id id :window/buffer buffer-id}
+;;   split: {:split/direction :row | :column :split/share n :split/children [first second]}
+;; A :row split places its children left to right. A :column split places them top to bottom.
+;; :split/share is the first child's part of the extent, in thousandths.
+;; Layout state is {:root node :selected window-id :revision n}. Every change increments
+;; the revision, so a UI event from an older layout can be recognized and discarded.
+;; These functions are pure. They accept supplied identifiers and need no engine.
+
+(def directions #{:row :column})
+(def minimum-share 100)
+(def maximum-share 900)
+(def minimum-size {:width 80 :height 40})
+
+(defn id?
+  "Returns true for a positive integer identifier."
+  [value]
+  (and (integer? value) (pos? value)))
+
+(defn leaf?
+  "Returns true for a leaf window node."
+  [node]
+  (contains? node :window/id))
+
+(defn leaves
+  "Returns a node's leaf windows in layout order."
+  [node]
+  (if (leaf? node)
+    [node]
+    (vec (mapcat leaves (:split/children node)))))
+
+(defn windows
+  "Returns the layout's leaf windows in layout order."
+  [state]
+  (leaves (:root state)))
+
+(defn window
+  "Returns the leaf window with an id, or nil."
+  [state id]
+  (first (filter (fn [leaf] (= id (:window/id leaf))) (windows state))))
+
+(defn stale!
+  "Raises the error for a window id that names no live window."
+  [id]
+  (throw (ex-info "No live window has this id" {:error :stale-window :window id})))
+
+(defn window!
+  "Returns the leaf window with an id, or raises :stale-window."
+  [state id]
+  (or (window state id) (stale! id)))
+
+(defn initial
+  "Returns a layout with one selected window that shows a buffer."
+  [id buffer]
+  (when-not (and (id? id) (id? buffer))
+    (throw (ex-info "Window and buffer ids must be positive integers" {:window id :buffer buffer})))
+  {:root {:window/id id :window/buffer buffer} :selected id :revision 1})
+
+(defn revise
+  "Replaces the root and increments the revision."
+  [state root]
+  (assoc state :root root :revision (inc (:revision state))))
+
+(defn replace-leaf
+  "Replaces one leaf with the node that a function returns for it."
+  [node id f]
+  (if (leaf? node)
+    (if (= id (:window/id node)) (f node) node)
+    (assoc node :split/children
+           (mapv (fn [child] (replace-leaf child id f)) (:split/children node)))))
+
+(defn remove-leaf
+  "Removes one leaf. Its sibling takes the place of their split."
+  [node id]
+  (if (leaf? node)
+    node
+    (let [a (first (:split/children node)) b (second (:split/children node))]
+      (cond
+        (and (leaf? a) (= id (:window/id a))) b
+        (and (leaf? b) (= id (:window/id b))) a
+        :else (assoc node :split/children [(remove-leaf a id) (remove-leaf b id)])))))
+
+(defn select
+  "Selects a live window."
+  [state id]
+  (window! state id)
+  (assoc state :selected id :revision (inc (:revision state))))
+
+(defn set-buffer
+  "Shows a buffer in a live window."
+  [state id buffer]
+  (window! state id)
+  (when-not (id? buffer) (throw (ex-info "Buffer id must be a positive integer" {:buffer buffer})))
+  (revise state (replace-leaf (:root state) id (fn [leaf] (assoc leaf :window/buffer buffer)))))
+
+(defn split
+  "Splits a window in a direction. The existing window comes first and keeps the selection.
+  The new window takes the supplied id and shows the given buffer, or the same buffer."
+  ([state id new-id direction] (split state id new-id direction (:window/buffer (window! state id))))
+  ([state id new-id direction buffer]
+   (window! state id)
+   (when-not (and (id? new-id) (id? buffer) (nil? (window state new-id)))
+     (throw (ex-info "A new window needs a fresh id and a buffer id" {:window new-id :buffer buffer})))
+   (when-not (contains? directions direction)
+     (throw (ex-info "Split direction must be :row or :column" {:direction direction})))
+   (revise state
+           (replace-leaf (:root state) id
+                         (fn [leaf]
+                           {:split/direction direction :split/share 500
+                            :split/children [leaf {:window/id new-id :window/buffer buffer}]})))))
+
+(defn delete
+  "Deletes a window. Its sibling takes the freed space. A deleted selected window passes
+  the selection to the first window of that sibling. The only window cannot be deleted."
+  [state id]
+  (window! state id)
+  (when (leaf? (:root state))
+    (throw (ex-info "The only window cannot be deleted" {:error :sole-window :window id})))
+  (let [root (remove-leaf (:root state) id)
+        position (count (take-while (fn [leaf] (not= id (:window/id leaf))) (windows state)))
+        remaining (leaves root)
+        ;; The sibling's first leaf follows the deleted leaf, or precedes it at the end.
+        heir (:window/id (nth remaining (min position (dec (count remaining)))))]
+    (assoc (revise state root) :selected (if (= id (:selected state)) heir (:selected state)))))
+
+(defn resize-node
+  "Moves the nearest enclosing split of a direction toward growing a window by thousandths."
+  [node id direction amount]
+  (if (leaf? node)
+    {:node node :found (= id (:window/id node)) :done false}
+    (let [a (resize-node (first (:split/children node)) id direction amount)
+          b (resize-node (second (:split/children node)) id direction amount)
+          found (or (:found a) (:found b))
+          done (or (:done a) (:done b))
+          children (assoc node :split/children [(:node a) (:node b)])]
+      (if (and found (not done) (= direction (:split/direction node)))
+        (let [share (+ (:split/share node) (if (:found a) amount (- amount)))]
+          {:node (assoc children :split/share (max minimum-share (min maximum-share share)))
+           :found true :done true})
+        {:node children :found found :done done}))))
+
+(defn resize
+  "Grows a window by thousandths of its nearest enclosing split in a direction. A negative
+  amount shrinks it. Shares stay between 100 and 900."
+  [state id direction amount]
+  (window! state id)
+  (when-not (and (contains? directions direction) (integer? amount))
+    (throw (ex-info "Resize needs a direction and an integer amount" {:direction direction :amount amount})))
+  (let [result (resize-node (:root state) id direction amount)]
+    (when-not (:done result)
+      (throw (ex-info "No enclosing split has this direction" {:error :no-split :window id :direction direction})))
+    (revise state (:node result))))
+
+(defn layout-node
+  "Assigns integer rectangles to a node's leaves inside a rectangle."
+  [node x y width height]
+  (if (leaf? node)
+    [{:window/id (:window/id node) :window/buffer (:window/buffer node)
+      :x x :y y :width width :height height}]
+    (let [a (first (:split/children node)) b (second (:split/children node))
+          share (:split/share node)]
+      (if (= :row (:split/direction node))
+        (let [extent (quot (* share width) 1000)]
+          (into (layout-node a x y extent height)
+                (layout-node b (+ x extent) y (- width extent) height)))
+        (let [extent (quot (* share height) 1000)]
+          (into (layout-node a x y width extent)
+                (layout-node b x (+ y extent) width (- height extent))))))))
+
+(defn layout
+  "Returns one rectangle per window for a viewport {:x :y :width :height} in logical pixels.
+  Rectangles are integers, tile the viewport exactly, and carry the layout's :revision.
+  A window below the minimum size raises :window-too-small."
+  [state viewport]
+  (let [x (:x viewport) y (:y viewport) width (:width viewport) height (:height viewport)]
+    (when-not (and (integer? x) (integer? y) (integer? width) (integer? height)
+                   (<= 0 x) (<= 0 y) (pos? width) (pos? height))
+      (throw (ex-info "Viewport needs nonnegative integer origin and positive integer size" {:viewport viewport})))
+    (let [rectangles (layout-node (:root state) x y width height)]
+      (doseq [rectangle rectangles]
+        (when (or (< (:width rectangle) (:width minimum-size))
+                  (< (:height rectangle) (:height minimum-size)))
+          (throw (ex-info "A window is below the minimum size"
+                          {:error :window-too-small :window (:window/id rectangle)}))))
+      (mapv (fn [rectangle] (assoc rectangle :revision (:revision state))) rectangles))))
+
+(defn web-windows
+  "Returns the windows whose buffers satisfy a web-buffer predicate."
+  [state web?]
+  (filterv (fn [leaf] (web? (:window/buffer leaf))) (windows state)))
+
+(defn check-web-limit
+  "Returns the layout, or raises :multiple-visible-webviews when more than one window shows
+  a web buffer. Phase 2 keeps the single-visible-webview fallback."
+  [state web?]
+  (let [visible (web-windows state web?)]
+    (when (> (count visible) 1)
+      (throw (ex-info "This layout needs more than one visible webview"
+                      {:error :multiple-visible-webviews :windows (mapv :window/id visible)})))
+    state))

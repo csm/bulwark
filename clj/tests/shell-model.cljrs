@@ -1,8 +1,10 @@
 ;; The runtime tests and the pinned AOT compiler run this same source.
 (ns bulwark.tests.shell-model
-  (:require [bulwark.commands :as commands :refer [defcommand]]
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands :refer [defcommand]]
             [bulwark.keymap :as keymap]
-            [bulwark.hooks :as hooks]))
+            [bulwark.hooks :as hooks]
+            [bulwark.window :as window]))
 
 (defn check! [condition message]
   (when-not condition (throw (ex-info message {}))))
@@ -38,5 +40,139 @@
 (check! (= 1 (count (get @hooks/registry :buffer/created))) "Hook replacement duplicated an entry")
 (hooks/remove-hook! :buffer/created :sample)
 (check! (empty? (get @hooks/registry :buffer/created)) "Hook removal failed")
+;; Buffer registry transitions take supplied identifiers and need no engine.
+(defn fails? [f]
+  (try (f) false (catch Exception error true)))
+(let [web (buffer/make-buffer 10 :web {:view 3})
+      text (buffer/make-buffer 11 :text {:name "*Messages*" :text "ready"})
+      state (-> buffer/empty-registry (buffer/add web) (buffer/add text))]
+  (check! (= [:web-mode :text-mode] [(:buffer/major-mode web) (:buffer/major-mode text)])
+          "Buffer kinds lost their default major modes")
+  (check! (and (nil? (:buffer/text web)) (= "ready" (:buffer/text text))) "Buffer text followed the wrong kind")
+  (check! (and (nil? (:selected state)) (= [10 11] (:recent state)) (= 10 (get (:owners state) 3)))
+          "Publication changed selection or lost ownership")
+  (doseq [bad [(fn [] (buffer/make-buffer 0 :text {}))
+               (fn [] (buffer/make-buffer 12 :tab {}))
+               (fn [] (buffer/make-buffer 12 :web {}))
+               (fn [] (buffer/make-buffer 12 :text {:view 4}))
+               (fn [] (buffer/make-buffer 12 :text {:name ""}))
+               (fn [] (buffer/add state web))
+               (fn [] (buffer/add state (buffer/make-buffer 12 :web {:view 3})))
+               (fn [] (buffer/add state (buffer/make-buffer 12 :repl {:name "*Messages*"})))
+               (fn [] (buffer/select state 12))
+               (fn [] (buffer/remove-buffer state 12))
+               (fn [] (buffer/set-local state 12 :zoom 2))
+               (fn [] (buffer/set-text state 10 "page"))]]
+    (check! (fails? bad) "An invalid buffer transition was accepted"))
+  (let [chosen (-> state (buffer/select 11) (buffer/select 10))
+        titled (-> chosen
+                   (buffer/page-event {:event/type :page/url-changed :webview 3 :url "about:a"})
+                   (buffer/page-event {:event/type :page/title-changed :webview 3 :title "A"})
+                   (buffer/page-event {:event/type :page/title-changed :webview 4 :title "Unowned"})
+                   (buffer/page-event {:event/type :input/key :webview 3 :key "a"}))
+        killed (buffer/remove-buffer titled 10)
+        late (buffer/page-event killed {:event/type :page/title-changed :webview 3 :title "Late"})
+        closed (buffer/page-event late {:event/type :page/closed :webview 3})]
+    (check! (and (= 10 (:selected chosen)) (= [10 11] (:recent chosen))) "Selection did not update recency")
+    (check! (= {:url "about:a" :title "A"} (get (:pages titled) 3)) "Page events missed their view")
+    (check! (= text (get (:buffers titled) 11)) "A page event changed another buffer")
+    (check! (and (nil? (:selected killed)) (= [11] (:recent killed)) (empty? (:owners killed)))
+            "Removal retained a reference")
+    (check! (= {4 {:title "Unowned"}} (:pages late)) "A late event revived a killed buffer's page")
+    (check! (and (empty? (:buffers (buffer/remove-buffer late 11))) (= #{3} (:closing late)))
+            "A late event recreated a buffer")
+    (check! (fails? (fn [] (buffer/add late (buffer/make-buffer 12 :web {:view 3}))))
+            "A closing view accepted a new owner")
+    (check! (empty? (:closing closed)) "The close event did not release its view"))
+  (let [moded (-> state
+                  (buffer/set-local 11 :fill-column 72)
+                  (buffer/set-major-mode 11 :help-mode)
+                  (buffer/enable-minor-mode 11 :reader-mode)
+                  (buffer/enable-minor-mode 11 :vi-mode)
+                  (buffer/enable-minor-mode 11 :reader-mode)
+                  (buffer/set-text 11 "updated"))
+        record (get (:buffers moded) 11)]
+    (check! (= {:fill-column 72} (:buffer/locals record)) "Buffer-local variable was lost")
+    (check! (= {} (:buffer/locals (get (:buffers moded) 10))) "A local variable leaked between buffers")
+    (check! (= :help-mode (:buffer/major-mode record)) "Major mode did not change")
+    (check! (= [:vi-mode :reader-mode] (:buffer/minor-modes record)) "Minor modes are not most-recent-first")
+    (check! (= [:vi-mode] (:buffer/minor-modes (get (:buffers (buffer/disable-minor-mode moded 11 :reader-mode)) 11)))
+            "Minor mode was not disabled")
+    (check! (= "updated" (:buffer/text record)) "Buffer text did not change")))
+;; A portable runtime has no host: text buffers work, and web buffers report the missing engine.
+(reset! buffer/registry buffer/empty-registry)
+(buffer/set-host! nil)
+(let [id (buffer/next-id!)]
+  (swap! buffer/registry buffer/add (buffer/make-buffer id :text {:name "*scratch*"}))
+  (buffer/set-local! id :answer 42)
+  (check! (= 42 (buffer/local id :answer)) "Registry accessor missed a local variable")
+  (check! (= :fallback (buffer/local id :missing :fallback)) "Local default was ignored")
+  (check! (= id (:buffer/id (buffer/find-named "*scratch*"))) "Named lookup failed")
+  (check! (= "*scratch*" (buffer/display-name id)) "Display name ignored the explicit name")
+  (check! (> (buffer/next-id!) id) "Portable identifiers repeated")
+  (check! (fails? (fn [] (buffer/host-operation :create))) "A portable runtime claimed an engine")
+  (check! (fails? (fn [] (buffer/set-host! {:create 1}))) "An invalid host was installed"))
+(reset! buffer/registry buffer/empty-registry)
+;; Window trees and layout are pure data with supplied identifiers.
+(defn error-kind [f]
+  (try (f) nil (catch Exception error (:error (ex-data error)))))
+(let [viewport {:x 0 :y 0 :width 1001 :height 600}
+      one (window/initial 1 10)
+      two (window/split one 1 2 :row 11)
+      three (window/split two 2 3 :column)
+      rectangle (fn [state id] (first (filter (fn [r] (= id (:window/id r))) (window/layout state viewport))))]
+  (check! (= [{:window/id 1 :window/buffer 10 :x 0 :y 0 :width 1001 :height 600 :revision 1}]
+             (window/layout one viewport)) "A single window did not fill the viewport")
+  (check! (= [[1 10] [2 11] [3 11]] (mapv (fn [leaf] [(:window/id leaf) (:window/buffer leaf)]) (window/windows three)))
+          "Splits lost their order or buffers")
+  (check! (and (= 1 (:selected three)) (= 3 (:revision three))) "A split moved selection or kept its revision")
+  (check! (= [[0 0 500 600] [500 0 501 300] [500 300 501 300]]
+             (mapv (fn [r] [(:x r) (:y r) (:width r) (:height r)]) (window/layout three viewport)))
+          "Layout rectangles do not tile the viewport")
+  (check! (every? (fn [r] (= 3 (:revision r))) (window/layout three viewport)) "Rectangles lost the layout revision")
+  (check! (= [20 30] (mapv (first (window/layout one {:x 20 :y 30 :width 240 :height 100})) [:x :y]))
+          "Layout ignored the viewport origin")
+  (let [wider (window/resize three 1 :row 250)
+        taller (window/resize three 3 :column 100)
+        clamped (window/resize three 1 :row 5000)]
+    (check! (= [750 251] [(:width (rectangle wider 1)) (:width (rectangle wider 2))]) "Row resize failed")
+    (check! (= [240 360] [(:height (rectangle taller 2)) (:height (rectangle taller 3))])
+            "Growing a second child did not shrink the first")
+    (check! (= 500 (:width (rectangle taller 1))) "A column resize changed a row split")
+    (check! (= 900 (:width (rectangle clamped 1))) "Resize exceeded the maximum share")
+    (check! (= :no-split (error-kind (fn [] (window/resize three 1 :column 10)))) "Resize found a missing split")
+    (check! (= :no-split (error-kind (fn [] (window/resize one 1 :row 10)))) "A sole window was resized"))
+  (let [selected (window/select three 3)
+        without-three (window/delete selected 3)
+        without-one (window/delete three 1)
+        shown (window/set-buffer three 3 12)]
+    (check! (= 2 (:selected without-three)) "Deleting the selected window lost the selection")
+    (check! (= [1 2] (mapv :window/id (window/windows without-three))) "Delete removed the wrong window")
+    (check! (= [500 0 501 600] (mapv (rectangle without-three 2) [:x :y :width :height]))
+            "A sibling did not take the freed space")
+    (check! (= 2 (:selected without-one)) "Deleting the first window selected a stale window")
+    (check! (= :column (:split/direction (:root without-one))) "The surviving split was not promoted")
+    (check! (= 3 (:selected (window/delete selected 1))) "Deleting another window moved the selection")
+    (check! (= 12 (:window/buffer (window/window shown 3))) "Buffer assignment failed")
+    (check! (= 11 (:window/buffer (window/window shown 2))) "Buffer assignment changed another window")
+    (check! (> (:revision shown) (:revision three)) "A change kept an obsolete revision"))
+  (check! (= :sole-window (error-kind (fn [] (window/delete one 1)))) "The only window was deleted")
+  (doseq [bad [(fn [] (window/select three 9)) (fn [] (window/delete three 9))
+               (fn [] (window/split three 9 4 :row)) (fn [] (window/set-buffer three 9 10))
+               (fn [] (window/resize three 9 :row 10))]]
+    (check! (= :stale-window (error-kind bad)) "A stale window id was accepted"))
+  (doseq [bad [(fn [] (window/split three 1 2 :row)) (fn [] (window/split three 1 4 :diagonal))
+               (fn [] (window/initial 0 10)) (fn [] (window/layout one {:x 0 :y 0 :width 0 :height 600}))
+               (fn [] (window/layout one {:x 0 :y 0 :width 10.5 :height 600}))]]
+    (check! (fails? bad) "An invalid window operation was accepted"))
+  (check! (= :window-too-small (error-kind (fn [] (window/layout three {:x 0 :y 0 :width 150 :height 600}))))
+          "A window below the minimum size was laid out")
+  ;; Under the single-visible-webview fallback, text panes may sit beside one web pane.
+  (let [web? (fn [buffer] (contains? #{10 11} buffer))]
+    (check! (= :multiple-visible-webviews (error-kind (fn [] (window/check-web-limit three web?))))
+            "Two visible webviews were accepted")
+    (let [mixed (-> three (window/set-buffer 2 20) (window/set-buffer 3 21))]
+      (check! (= mixed (window/check-web-limit mixed web?)) "A mixed layout was rejected")
+      (check! (= [1] (mapv :window/id (window/web-windows mixed web?))) "Web windows were miscounted"))))
 (println "Shell model assertions passed")
 :shell-model-passed

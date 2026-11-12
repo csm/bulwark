@@ -53,6 +53,14 @@ impl RuntimeHost {
                 include_str!("../../../clj/bulwark/keymap.cljrs"),
             )
             .builtin_source(
+                "bulwark.buffer",
+                include_str!("../../../clj/bulwark/buffer.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.window",
+                include_str!("../../../clj/bulwark/window.cljrs"),
+            )
+            .builtin_source(
                 "bulwark.core",
                 include_str!("../../../clj/bulwark/core.cljrs"),
             )
@@ -78,6 +86,12 @@ impl RuntimeHost {
         host.eval("(require 'bulwark.core)")?;
         if has_bridge {
             host.eval("(bulwark.keymap/set-route-publisher! bulwark.native/set-key-routes!)")?;
+            host.eval(
+                "(bulwark.buffer/set-host! {:create bulwark.native/webview-create \
+                                           :close bulwark.native/webview-close \
+                                           :select bulwark.native/webview-select \
+                                           :next-id bulwark.native/allocate-id!})",
+            )?;
         }
         Ok(host)
     }

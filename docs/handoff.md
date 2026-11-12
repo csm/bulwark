@@ -1,6 +1,23 @@
 # Development handoff
 
-Snapshot: `codex/phase-2`, based on the accepted Phase 1 branch at `e49a8ec`, 2026-11-11.
+Snapshot: `claude/cool-faraday-q2ev46`, based on main at `283a925`, 2026-11-12.
+
+## Phase 2 buffer continuation
+
+The [buffer checkpoint](phase-2-buffers.md) implements P2.2.
+`bulwark.buffer` adds the registry, buffer-local variables, mode fields, lifecycle operations, and lifecycle hooks.
+Web buffers own explicit webview handles. Browser helpers look up the selected buffer's view.
+`bulwark.native/allocate-id!` issues buffer ids from the handle allocator.
+The last-web-buffer policy and the new buffer commands live in `bulwark.browser`.
+
+Local Linux checks passed: formatting, portable Clippy, all 43 portable tests, both foundation smokes, and both mock nREPL suites.
+The standalone AOT binary passed with the new buffer assertions.
+Servo was not built locally. [Linux CI](https://github.com/csm/bulwark/actions/runs/43155539808) passed all four jobs at `500170d`.
+That run covers the new `retained-buffers` native case, the native nREPL suite, and the AOT job.
+
+The [window model checkpoint](phase-2-windows.md) begins P2.3 with the immutable window tree and the pure layout function.
+Its assertions pass in the interpreter, Tiered mode, and the AOT binary.
+The next work connects the layout to the buffer registry, then adds the bounded UI descriptions and native mechanisms.
 
 ## Phase 2 mechanism continuation
 
@@ -10,7 +27,6 @@ Clojurust now pins `14bd7f9c`, a one-commit compiler fix after the accepted runt
 The separate upstream branch is `codex/bulwark-phase-2-aot`.
 The fix and its regression checks preserve qualified symbol identity during native compilation.
 
-The next work is P2.2 buffers and lifecycle hooks.
 The [Ubuntu test host](linux-testing.md) passed all 42 portable tests and all 17 portable checks.
 Its AOT validation runs before the queued Servo suite. The ignored `target/linux-host.json` records the connection and queue paths.
 GitHub Linux CI and physical input checks across retained views remain open.

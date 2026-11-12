@@ -556,6 +556,7 @@ adjusting; decide which before Phase 2.
 The [Phase 2 implementation plan](phase-2-plan.md) expands this scope into ordered milestones and acceptance evidence.
 It uses the accepted Phase 1 baseline and records the owner's confirmed Phase 2 scope.
 The [mechanism checkpoint](phase-2-mechanisms.md) begins P2.1 with retained webviews and standalone AOT assertions.
+The [buffer checkpoint](phase-2-buffers.md) implements P2.2 with the buffer registry and explicit lifecycles.
 
 Goal: the Emacs-inspired application model, with default browser behavior moved into Clojure.
 
@@ -748,9 +749,8 @@ The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072)
 The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
 All Phase 1 acceptance criteria now pass.
 
-1. Run remote CI for the Phase 2 mechanism checkpoint, including the new AOT job.
-2. Add P2.2 buffers and lifecycle hooks on the retained-view mechanisms.
-3. Continue the ordered milestones in the [Phase 2 plan](phase-2-plan.md).
+1. Complete P2.3 from the [window model checkpoint](phase-2-windows.md): registry integration and the data-driven UI boundary.
+2. Continue the ordered milestones in the [Phase 2 plan](phase-2-plan.md).
 
 E5 remains mandatory for simultaneous web content splits.
 Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.

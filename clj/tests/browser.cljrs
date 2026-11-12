@@ -1,5 +1,6 @@
 (ns bulwark.tests.browser
   (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
             [bulwark.commands :as commands]
             [bulwark.core :as core]
             [bulwark.hooks :as hooks]
@@ -17,8 +18,7 @@
 (defn ^:async browser! []
   (browser/install!)
   (browser/install!)
-  (reset! browser/active-view
-          (browser/value! (await (native/webview-create "https://example.com/first"))))
+  (await (browser/open! "https://example.com/first"))
   (await (wait-history! 1))
   (await (browser/navigate! "https://example.com/second"))
   (await (wait-history! 2))
@@ -35,11 +35,11 @@
   (await (browser/visit-history! 0))
   (await (wait-history! 5))
   (check! (= "https://example.com/first"
-             (:url (browser/value! (await (native/webview-info @browser/active-view)))))
+             (:url (browser/value! (await (native/webview-info (browser/active-view))))))
           "History visit did not navigate the active page")
   (check! (= 5 (count @browser/history)) "Reload recorded a duplicate visit")
   (await (commands/invoke! 'bulwark.browser/history-list))
-  ;; The hook tracks every view by its own URL, independently of active-view startup.
+  ;; The registry tracks every view by its own URL, including views that no buffer owns.
   (await (core/dispatch! {:event/type :page/title-changed :webview 999 :title "Unknown"}))
   (check! (= 5 (count @browser/history)) "Unknown view polluted history")
   (doseq [n (range 300)]
@@ -47,10 +47,14 @@
     (await (core/dispatch! {:event/type :page/title-changed :webview 999 :title (str n)})))
   (check! (= 256 (count @browser/history)) "History retention limit failed")
   (check! (= "44" (:title (first @browser/history))) "History discarded newest entries")
-  (let [view @browser/active-view]
+  ;; An engine-initiated close kills the owning buffer. The default policy opens a replacement.
+  (let [view (browser/active-view) killed (buffer/selected-id)]
     (browser/value! (await (native/webview-close view)))
-    (loop [] (when @browser/active-view (await (timeout 1)) (recur)))
-    (check! (nil? (get @browser/pages view)) "Closed page remained tracked"))
+    (loop [] (when (or (= view (browser/active-view)) (nil? (browser/active-view)))
+               (await (timeout 1)) (recur)))
+    (check! (nil? (buffer/buffer killed)) "Closed page kept its buffer")
+    (check! (nil? (buffer/view-page view)) "Closed page remained tracked")
+    (check! (= 1 (count (buffer/buffers))) "Last-buffer policy did not open one replacement"))
   :browser-passed)
 
 (browser!)

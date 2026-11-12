@@ -52,16 +52,16 @@
     (fn [event]
       (when (= :complete (:load-status event)) (swap! completed-loads inc))))
   (let [shell-program (shell/run! user/initial-url)]
-    (await (wait-for! "active view" (fn [] @browser/active-view)))
+    (await (wait-for! "active view" (fn [] (browser/active-view))))
     (await (wait-load! "initial load" 0))
     (await (wait-title! "Bulwark Servo fixture"))
     (keymap/bind-key! "C-c r" 'reload-twice)
-    (await (core/dispatch! {:event/type :input/key :webview @browser/active-view
+    (await (core/dispatch! {:event/type :input/key :webview (browser/active-view)
                             :key "c" :control true :pressed true}))
-    (await (core/dispatch! {:event/type :input/key :webview @browser/active-view
+    (await (core/dispatch! {:event/type :input/key :webview (browser/active-view)
                             :key "r" :pressed true}))
     (check! (= 1 @reloads) "Live command binding did not reload twice")
-    (let [view @browser/active-view]
+    (let [view (browser/active-view)]
       (browser/value! (await (native/eval-js view "document.title = 'Clojure history visit'; 'ok'")))
       (await (wait-title! "Clojure history visit"))
       (check! (some (fn [visit] (= "Clojure history visit" (:title visit))) @browser/history)
