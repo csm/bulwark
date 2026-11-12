@@ -10,23 +10,28 @@ The implementation covers mixed web/text panes, modelines, the echo area, and ed
 Clojure owns the tree, selection, split fallback, commands, and bindings.
 
 The continuation preserves mouse releases across focus changes within the same visible page.
+The NUC continuation also serializes UI publications and waits for complete lifecycle hooks in its assertions.
 It bounds the combined Unicode text of all panes and replaces recursive window traversal with explicit paths and pending lists.
 A stale-handle assertion now allocates an unused id, so it also passes when the test runs alone.
 The new native mixed-window fixture runs in both evaluator modes through the existing process runner.
 `--artifacts-dir` retains screenshots for review.
 
-The Unicode regression required [Clojurust draft PR #491](https://github.com/csm/clojurust/pull/491).
-The product and AOT compiler now pin `174557b3`, one commit after `14bd7f9c`.
+The Unicode regression required [Clojurust PR #491](https://github.com/csm/clojurust/pull/491).
+The first continuation pinned `174557b3`, one commit after `14bd7f9c`.
+The current pin is `540e4218`, with the additional atom update fix from [draft PR #496](https://github.com/csm/clojurust/pull/496).
+The NUC exposed a registry update that disappeared while another fiber ran inside `swap!`.
+The upstream fix adds compare-and-set retries and covers direct, applied, parked, and AOT calls.
 The earlier pin counted UTF-8 bytes in compiled strings, which broke character budgets and clipping.
 Three upstream ABI tests and a standalone AOT regression pass with the fix.
 
-Local automated coverage includes 50 portable tests, 17 native unit tests, the Servo contract, and ten native process cases per evaluator mode.
+Local automated coverage includes 51 portable tests, 17 native unit tests, the Servo contract, and ten native process cases per evaluator mode.
 The AOT model includes six compiled shell namespaces. Portable and native formatting and Clippy checks cover the changes.
 The window checkpoint records the exact evidence and remaining limits.
 
-Computer Use reported a locked Mac. Physical mixed-pane input checks remain open.
-Current Linux CI also remains open. P2.3 is not yet an accepted milestone.
-After those checks pass, continue with P2.4 modes and contextual keymaps.
+The [physical input report](phase-2-window-acceptance.md) records passing macOS checks on 2026-11-12.
+The NUC passed all 50 portable tests and all 17 portable runner commands on `fb30e86`. Its native and AOT validation continues.
+[GitHub run 43277594137](https://github.com/csm/bulwark/actions/runs/43277594137) passed all four jobs on the same commit.
+After the Linux checks pass, continue with P2.4 modes and contextual keymaps.
 
 ## Phase 2 buffer continuation
 

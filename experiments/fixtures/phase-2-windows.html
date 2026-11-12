@@ -1,0 +1,48 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bulwark window input fixture</title>
+<style>
+  body { font: 18px sans-serif; margin: 20px; background: #ecf3f8; color: #152c42; }
+  input, button { font: inherit; max-width: 100%; box-sizing: border-box; }
+  input { display: block; width: 260px; }
+  #pulse { width: 60px; height: 10px; background: #1967d2; }
+  section { height: 1200px; }
+</style>
+<h1>Window input checks</h1>
+<p>Frame: <output id="frame">0</output></p>
+<div id="pulse"></div>
+<p><label>Page text <input id="text"></label></p>
+<button id="button">Clicks: 0</button>
+<p>Mouse: <output id="mouse">0 down / 0 up</output></p>
+<p>Last key: <output id="key">none</output></p>
+<section>Scroll to the end marker.</section>
+<p>End marker</p>
+<script>
+  window.frames = 0;
+  window.clicks = 0;
+  window.downs = 0;
+  window.ups = 0;
+  window.keyEvents = [];
+  document.addEventListener('keydown', event => {
+    const key = `${event.ctrlKey ? 'C-' : ''}${event.key}`;
+    window.keyEvents.push(key);
+    if (window.keyEvents.length > 64) window.keyEvents.shift();
+    document.getElementById('key').textContent = key;
+  });
+  for (const name of ['mousedown', 'mouseup']) {
+    document.addEventListener(name, () => {
+      if (name === 'mousedown') ++window.downs;
+      else ++window.ups;
+      document.getElementById('mouse').textContent = `${window.downs} down / ${window.ups} up`;
+    });
+  }
+  document.getElementById('button').addEventListener('click', () => {
+    document.getElementById('button').textContent = `Clicks: ${++window.clicks}`;
+  });
+  function animate() {
+    document.getElementById('frame').textContent = ++window.frames;
+    document.getElementById('pulse').style.transform = `translateX(${40 + 40 * Math.sin(window.frames / 20)}px)`;
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+</script>

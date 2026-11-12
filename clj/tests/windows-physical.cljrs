@@ -1,0 +1,66 @@
+;; Interactive acceptance setup. Supply experiments/fixtures/phase-2-windows.html as the URL.
+;; Keep the program alive and inspect it through the opt-in product nREPL.
+(ns bulwark.tests.windows-physical
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.hooks :as hooks]
+            [bulwark.native :as native]
+            [bulwark.ui :as ui]
+            [bulwark.window :as window]
+            [clojure.core.async :refer [timeout]]))
+
+(def state (atom {}))
+(def interactions (atom []))
+
+(defn record! [event]
+  (swap! interactions (fn [events] (vec (take-last 64 (conj events event))))))
+
+(defn ^:async js! [buffer script]
+  (browser/value! (await (native/eval-js (:buffer/view (buffer/buffer! buffer)) script))))
+
+(defn ^:async observe! []
+  (let [script "JSON.stringify({text:document.getElementById('text').value,clicks:window.clicks,downs:window.downs,ups:window.ups,keys:window.keyEvents,frames:window.frames,scrollY:scrollY,focus:document.hasFocus(),width:innerWidth,height:innerHeight})"]
+    {:selected-window (buffer/selected-window)
+     :selected-buffer (buffer/selected-id)
+     :viewport (ui/viewport)
+     :description @ui/issued
+     :a (await (js! (:a @state) script))
+     :b (await (js! (:b @state) script))
+     :interactions @interactions}))
+
+(defn ^:async input! []
+  (let [id (buffer/next-id!)
+        revision (inc (:revision @ui/issued))
+        current (:description @ui/issued)
+        description (assoc current :focus id
+                           :elements (mapv (fn [element]
+                                             (if (= :echo (:ui/kind element))
+                                               (assoc element :ui/kind :input :ui/id id :text "")
+                                               element))
+                                           (:elements current)))]
+    (browser/value! (await (native/set-ui! (assoc description :revision revision))))
+    (reset! ui/issued {:revision revision :structure (ui/structure description) :description description})
+    (swap! state assoc :input id)
+    id))
+
+(defn ^:async run! []
+  (browser/install!)
+  (reset! buffer/last-web-buffer-policy nil)
+  (doseq [type [:ui/pressed :ui/input-changed :ui/input-submitted :input/key :input/reset]]
+    (hooks/add-hook! type :physical/record #'record!))
+  (let [a (await (browser/open! user/initial-url))
+        b (await (browser/open! user/initial-url {:select false}))
+        notes (await (buffer/create! {:kind :text :select false :name "*window checks*"
+                                     :text (str "Physical window checks\n\nClick the page button while this pane is selected.\nThe page must receive both the press and release.\n\nC-x o changes windows.\nC-x 3 splits a text window.\nC-x 1 keeps the selected window.\n\n"
+                                                (apply str (map (fn [n] (str "Text line " n "\n")) (range 1 101))))}))
+        left (buffer/selected-window)
+        right (await (browser/split-window! :row))]
+    (await (buffer/change-layout!
+             (fn [layout]
+               (-> layout (window/set-buffer left notes) (window/set-buffer right a) (window/select left)))))
+    (reset! state {:a a :b b :notes notes :left left :right right})
+    (await (browser/set-echo! "Physical window checks ready"))
+    (await (native/log "Physical window checks ready")))
+  (loop [] (await (timeout 60000)) (recur)))
+
+(run!)

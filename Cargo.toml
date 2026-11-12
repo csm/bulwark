@@ -12,14 +12,14 @@ publish = false
 anyhow = "1"
 bulwark-engine = { path = "crates/bulwark-engine" }
 bulwark-runtime = { path = "crates/bulwark-runtime" }
-cljrs-runtime = { git = "https://github.com/csm/clojurust", rev = "174557b3eec18117f0b4886076961fe3223316c0", default-features = false, features = ["regex-full"] }
-cljrs-stdlib = { git = "https://github.com/csm/clojurust", rev = "174557b3eec18117f0b4886076961fe3223316c0", default-features = false, features = ["regex-full"] }
-cljrs-reader = { git = "https://github.com/csm/clojurust", rev = "174557b3eec18117f0b4886076961fe3223316c0" }
-cljrs-value = { git = "https://github.com/csm/clojurust", rev = "174557b3eec18117f0b4886076961fe3223316c0", default-features = false, features = ["regex-full"] }
-cljrs-gc = { git = "https://github.com/csm/clojurust", rev = "174557b3eec18117f0b4886076961fe3223316c0" }
-cljrs-async = { git = "https://github.com/csm/clojurust", rev = "174557b3eec18117f0b4886076961fe3223316c0", default-features = false }
-cljrs-nrepl = { git = "https://github.com/csm/clojurust", rev = "174557b3eec18117f0b4886076961fe3223316c0", default-features = false }
-cljrs-compiler = { git = "https://github.com/csm/clojurust", rev = "174557b3eec18117f0b4886076961fe3223316c0", default-features = false, features = ["regex-full"] }
+cljrs-runtime = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false, features = ["regex-full"] }
+cljrs-stdlib = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false, features = ["regex-full"] }
+cljrs-reader = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65" }
+cljrs-value = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false, features = ["regex-full"] }
+cljrs-gc = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65" }
+cljrs-async = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false }
+cljrs-nrepl = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false }
+cljrs-compiler = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false, features = ["regex-full"] }
 servo = { version = "=0.7.0", default-features = false, features = ["bundled", "js_jit"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 winit = "0.30.13"

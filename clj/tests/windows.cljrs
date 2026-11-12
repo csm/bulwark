@@ -7,7 +7,8 @@
             [bulwark.hooks :as hooks]
             [bulwark.native :as native]
             [bulwark.ui :as ui]
-            [bulwark.window :as window]))
+            [bulwark.window :as window]
+            [clojure.core.async :refer [timeout]]))
 
 (defn check! [condition message]
   (when-not condition (throw (ex-info message {}))))
@@ -15,6 +16,29 @@
 (def published (atom []))
 (def selections (atom []))
 (def kept (atom nil))
+(def entered (promise))
+(def resume-publication (promise))
+(def active-publications (atom 0))
+(def completed-publications (atom 0))
+(def loaded (atom #{}))
+
+(defn ^:async loaded! [id]
+  (let [deadline (+ (System/currentTimeMillis) 5000)]
+    (loop []
+      (when-not (contains? @loaded id)
+        (check! (< (System/currentTimeMillis) deadline) "Timed out waiting for ordered page events")
+        (await (timeout 1))
+        (recur)))))
+
+(defn ^:async gated-publish! [description]
+  (swap! active-publications inc)
+  (deliver entered true)
+  @resume-publication
+  (try
+    (await (native/set-ui! description))
+    (finally
+      (swap! active-publications dec)
+      (swap! completed-publications inc))))
 
 (defn record! [description]
   (swap! published conj description)
@@ -36,8 +60,23 @@
        (catch Exception error (= expected (:error (ex-data error))))))
 
 (defn ^:async windows! []
+  ;; A parked publisher must exclude a second frame, even before native submission.
+  (ui/set-host! {:publish gated-publish! :viewport native/ui-viewport})
+  (let [first-frame (ui/present! nil {})]
+    @entered
+    (let [id (native/allocate-id!)
+          second-frame (ui/present! (window/initial id 1) {id {:kind :text :text "second"}})]
+      (await (timeout 20))
+      (let [active @active-publications]
+        (deliver resume-publication true)
+        (await first-frame)
+        (await second-frame)
+        (check! (= 1 active) "UI publications overlapped while the first publisher was parked")
+        (check! (= 2 @completed-publications) "A waiting UI publication did not complete"))))
   (ui/set-host! recording-host)
   (browser/install!)
+  (hooks/add-hook! :page/history-changed :test/loaded
+    (fn [event] (swap! loaded conj (:buffer event))))
   (hooks/add-hook! :buffer/selected :test/selections
     (fn [event] (swap! selections conj [(:buffer event) (:previous event)])))
   (doseq [name ["set-ui!" "ui-viewport"]]
@@ -46,6 +85,7 @@
   (let [page (await (browser/open! "https://example.com/a"))
         view (:buffer/view (buffer/buffer page))
         left (buffer/selected-window)]
+    (await (loaded! page))
     (check! (and (= [[left page]] (shown)) (= view (:webview (web))) (= left (:focus (frame))))
             "The first buffer did not get a focused window")
     (check! (= [0 0 1000 710] (mapv (web) [:x :y :width :height])) "The page did not fill the frame above its modeline")
@@ -72,6 +112,7 @@
       ;; A page opened from the text window takes the page's window.
       (let [other (await (browser/open! "https://example.com/b"))
             other-view (:buffer/view (buffer/buffer other))]
+        (await (loaded! other))
         (check! (and (= [[left other] [right scratch]] (shown)) (= left (buffer/selected-window)))
                 "A new page did not take the page's window")
         (check! (= other-view (:webview (web))) "The frame shows the wrong page")
@@ -174,9 +215,10 @@
                        (window/initial 1 12) [[1 2] [1 3] [2 4] [1 5] [3 6] [2 7] [4 8]])
         text (apply str (repeat 20000 "😀"))
         panes (reduce (fn [panes id] (assoc panes id {:kind :text :text text :modeline text})) {} (range 1 9))
-        description (assoc (ui/describe layout panes {:width 32768 :height 760 :scale 1.0})
-                           :revision (inc (:revision (frame))))]
-    (check! (:ok (await (native/set-ui! description))) "The native frame rejected bounded Unicode panes"))
+        viewport {:width 32768 :height 760 :scale 1.0}]
+    (ui/set-host! {:publish record! :viewport (fn [] viewport)})
+    (await (ui/present! layout panes))
+    (check! (= 17 (count (:elements (frame)))) "The native frame lost bounded Unicode panes"))
   :windows-passed)
 
 (windows!)

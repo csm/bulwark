@@ -137,7 +137,10 @@
     (browser/install!)
     (reset! lifecycle [])
     (browser/value! (await (native/webview-close view-b)))
-    (await (wait-for! "replacement buffer" (fn [] (and (buffer/selected-id) (not= b (buffer/selected-id))))))
+    (await (wait-for! "replacement buffer hooks"
+                      (fn [] (let [selected (buffer/selected-id)]
+                               (and selected (not= b selected)
+                                    (= [:buffer/selected selected nil] (last @lifecycle)))))))
     (let [replacement (buffer/selected-id)]
       (check! (= [[:buffer/killed b nil] [:buffer/created replacement nil] [:buffer/selected replacement nil]]
                  @lifecycle)
