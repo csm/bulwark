@@ -36,18 +36,27 @@ fn run(
     source: String,
     mode: ExecutionMode,
     interrupt: Arc<InterruptFlag>,
-    cancelled: oneshot::Receiver<()>,
+    mut cancelled: oneshot::Receiver<()>,
     nrepl: Option<crate::nrepl::Config>,
 ) -> Result<String> {
-    let _exit = OnExit(endpoint.control.clone());
+    let control = endpoint.control.clone();
+    let _exit = OnExit(control.clone());
     let executor = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()?;
     let local = tokio::task::LocalSet::new();
     let local_ref = &local;
     executor.block_on(local.run_until(async move {
-        let _interrupt = InterruptGuard::install(interrupt);
+        if control.is_stopped() || cancelled.try_recv().is_ok() {
+            return Err(anyhow!("Runtime cancelled"));
+        }
+        // Bootstrap installs runtime internals whose construction is not interruptible.
+        // A close during startup must not turn those internal expectations into panics.
         let mut host = RuntimeHost::with_bridge(mode, endpoint)?;
+        if control.is_stopped() || cancelled.try_recv().is_ok() {
+            return Err(anyhow!("Runtime cancelled"));
+        }
+        let _interrupt = InterruptGuard::install(interrupt);
         let events = host.eval("(require 'bulwark.bridge) (bulwark.bridge/run-events!)")?;
         let _events_root = gc_roots::root_value(&events);
         let program = host.eval(&source)?;
@@ -58,7 +67,6 @@ fn run(
             .transpose()?;
         let mut program = Box::pin(cljrs_async::await_value(program));
         let mut events = Box::pin(cljrs_async::await_value(events));
-        let mut cancelled = cancelled;
         loop {
             tokio::select! {
                 result = &mut program => {

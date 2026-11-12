@@ -63,7 +63,8 @@ The runner uses one build job, one Rust test thread, and a 60-second Clojure ass
 |---|---|
 | `c4bd370` | The window suite exposed overlapping UI publications. A lifecycle assertion also read state before replacement hooks completed. |
 | `e01cd60` | The publication and lifecycle regressions passed. Startup then exposed a lost atom update. |
-| `fb30e86` | The final run uses the atom retry fix. Its result remains in progress. |
+| `fb30e86` | Native unit checks, the Servo contract, both software Servo modes, and timed closure passed. The 250 ms close case interrupted bootstrap and panicked. |
+| Startup cancellation correction | The worker now separates runtime construction from user-code interruption. The full NUC rerun remains pending. |
 
 A publication gate now covers revision assignment, native submission, and settlement.
 A contender parks on the current publisher's promise, without blocking the engine thread.
@@ -78,9 +79,22 @@ Its tests cover direct and applied calls, watches, parked fibers, AOT, and no-GC
 The product model suite also requires the conflicting update to survive.
 
 The NUC reports remain under the dedicated checkout's `target/linux-runs/` directory.
-The final report name is `p23-fb30e86`.
+The `p23-fb30e86` report retains the cold native build and the early-close failure.
 Local failure reports are `target/linux-runs/nuc-p23-c4bd370/` and `target/linux-runs/nuc-p23-e01cd60/`.
-The final report will use `target/linux-runs/nuc-p23-fb30e86/`.
+The cold native report will use `target/linux-runs/nuc-p23-fb30e86/`.
+The corrected run will have its own report directory.
+
+## Early startup cancellation
+
+The NUC's 250 ms close interrupted Clojurust during bootstrap and produced a terminal panic.
+The worker now checks cancellation before runtime construction and again after it.
+It installs the user interrupt guard only after runtime construction completes.
+An early close therefore skips user code without interrupting internal macro installation.
+
+The new regression stops both evaluator modes after 0, 1, 5, 25, and 100 milliseconds.
+Each worker must join within the existing two-second deadline and leave no terminal panic.
+The regression failed before the correction and passed afterward.
+The updated portable workspace contains 51 tests.
 
 ## GitHub Actions
 

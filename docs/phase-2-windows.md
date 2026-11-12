@@ -177,7 +177,7 @@ The local macOS checks cover these areas:
 
 | Check | Evidence |
 |---|---|
-| Portable workspace | 50 tests, including the model and mock bridge suites in both evaluator modes |
+| Portable workspace | 51 tests, including the model and mock bridge suites in both evaluator modes |
 | Native unit checks | 17 tests, including egui editing, clipping, scaled geometry, pointer ownership, and hidden-view notifications |
 | Servo contract | Real retained views, UI revisions, rejected frames, visibility, focus, scale, resource cleanup, and shutdown |
 | Native processes | Ten cases per evaluator mode, including the new mixed-window fixture |

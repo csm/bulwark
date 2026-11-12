@@ -24,7 +24,7 @@ The upstream fix adds compare-and-set retries and covers direct, applied, parked
 The earlier pin counted UTF-8 bytes in compiled strings, which broke character budgets and clipping.
 Three upstream ABI tests and a standalone AOT regression pass with the fix.
 
-Local automated coverage includes 50 portable tests, 17 native unit tests, the Servo contract, and ten native process cases per evaluator mode.
+Local automated coverage includes 51 portable tests, 17 native unit tests, the Servo contract, and ten native process cases per evaluator mode.
 The AOT model includes six compiled shell namespaces. Portable and native formatting and Clippy checks cover the changes.
 The window checkpoint records the exact evidence and remaining limits.
 
