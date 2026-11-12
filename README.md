@@ -4,6 +4,7 @@ Bulwark is a programmable browser built with Rust, Servo, and Clojurust.
 Phase 0 is complete. The native host and runtime experiments now have an accepted architecture.
 Phase 1 acceptance is complete. The product has a bounded engine/runtime bridge, a native Servo window, and an egui echo area.
 The [acceptance review](docs/phase-1-acceptance.md) records passing CI and physical macOS checks.
+Phase 2 is in progress. The [mechanism checkpoint](docs/phase-2-mechanisms.md) adds retained webviews and a standalone AOT test path.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -36,9 +37,9 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    ```
 
    This uses `SoftwareRenderingContext` and the same product bridge and runtime worker.
-   Clojure assertions cover real JavaScript, title events, navigation history, and stale handles.
+   Clojure assertions cover real JavaScript, title events, navigation history, stale handles, and retained page state.
    The host also requires a painted frame and a joined worker.
-   The adapter currently accepts one live webview per context.
+   The adapter retains multiple live webviews with one visible view per context.
    Open a native browser window:
 
    ```sh
@@ -146,6 +147,9 @@ Use `--no-default-features` for the portable workspace checks without Servo.
 
 ## Project references
 
+- [Phase 2 implementation plan](docs/phase-2-plan.md)
+- [Phase 2 mechanism checkpoint](docs/phase-2-mechanisms.md)
+- [Headless Linux test host and runner](docs/linux-testing.md)
 - [Phase 0 exit review](docs/phase-0-exit.md)
 - [Phase 1 foundation checkpoint and native API](docs/phase-1-foundation.md)
 - [Phase 1 native window and egui checkpoint](docs/phase-1-native.md)

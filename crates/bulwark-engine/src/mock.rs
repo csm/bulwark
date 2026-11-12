@@ -22,6 +22,7 @@ impl View {
 }
 pub struct MockEngine {
     views: Registry<View>,
+    selected: Option<Handle>,
     events: EventSink,
     pending: Vec<(Handle, Request)>,
 }
@@ -29,6 +30,7 @@ impl MockEngine {
     pub fn new(events: EventSink) -> Self {
         Self {
             views: Registry::default(),
+            selected: None,
             events,
             pending: Vec::new(),
         }
@@ -50,6 +52,9 @@ impl MockEngine {
     }
     fn close(&mut self, view: Handle) -> Result<Data, Fault> {
         self.views.remove(view)?;
+        if self.selected == Some(view) {
+            self.selected = None;
+        }
         let mut remaining = Vec::new();
         for (owner, request) in self.pending.drain(..) {
             if owner == view {
@@ -71,14 +76,25 @@ impl Engine for MockEngine {
         }
         let result = (|| match &request.command {
             Command::Create { url } => {
+                let first = self.views.iter().next().is_none();
                 let view = self.views.insert(View {
                     urls: vec![url.clone()],
                     cursor: 0,
                 })?;
+                if first {
+                    self.selected = Some(view);
+                }
                 self.changed(view)?;
                 Ok(Data::Handle(view))
             }
             Command::Close(view) => self.close(*view),
+            Command::Select(view) => {
+                if let Some(view) = view {
+                    self.views.get(*view)?;
+                }
+                self.selected = *view;
+                Ok(Data::Nil)
+            }
             Command::Navigate { view, url } => {
                 let state = self.views.get_mut(*view)?;
                 state.urls.truncate(state.cursor + 1);
@@ -138,6 +154,7 @@ impl Engine for MockEngine {
         }
     }
     fn shutdown(&mut self) {
+        self.selected = None;
         self.views.clear();
         for (_, request) in self.pending.drain(..) {
             request.complete(Err(Fault::ShuttingDown));
@@ -150,6 +167,48 @@ mod tests {
     use super::*;
     use crate::bridge::{DEFAULT_TIMEOUT, channel};
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn selection_preserves_other_views_and_stale_selection_changes_nothing() {
+        let (runtime, mut endpoint) = channel(Arc::new(|| {}));
+        let mut engine = MockEngine::new(endpoint.events.clone());
+        let mut views = Vec::new();
+        for url in ["about:first", "about:second"] {
+            let pending = runtime
+                .client
+                .submit(Command::Create { url: url.into() }, DEFAULT_TIMEOUT)
+                .unwrap();
+            endpoint.admit(|r| engine.handle(r));
+            let Data::Handle(view) = pending.wait().await.unwrap() else {
+                panic!("Expected handle")
+            };
+            views.push(view);
+        }
+        assert_eq!(engine.selected, Some(views[0]));
+        for (command, selected) in [
+            (Command::Select(Some(views[1])), Some(views[1])),
+            (Command::Close(views[0]), Some(views[1])),
+            (Command::Select(None), None),
+            (Command::Select(Some(views[1])), Some(views[1])),
+        ] {
+            let pending = runtime.client.submit(command, DEFAULT_TIMEOUT).unwrap();
+            endpoint.admit(|r| engine.handle(r));
+            assert_eq!(pending.wait().await, Ok(Data::Nil));
+            assert_eq!(engine.selected, selected);
+        }
+        let stale = runtime
+            .client
+            .submit(Command::Select(Some(views[0])), DEFAULT_TIMEOUT)
+            .unwrap();
+        endpoint.admit(|r| engine.handle(r));
+        assert_eq!(stale.wait().await, Err(Fault::StaleHandle));
+        assert_eq!(engine.selected, Some(views[1]));
+        assert_eq!(
+            engine.views.get(views[1]).unwrap().info().url,
+            "about:second"
+        );
+    }
+
     #[tokio::test]
     async fn close_invalidates_pending_evaluation_and_stale_handle() {
         let (runtime, mut endpoint) = channel(Arc::new(|| {}));

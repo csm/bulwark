@@ -51,6 +51,10 @@ def main():
         run_case(args.binary, "close-parked-runtime", [*mode, "--close-after-ms", "250"],
                  True, ["window-ready"], args.timeout)
         programs = [
+            ("retained-views", "(def retained-fixture-url user/initial-url)\n" +
+             (root / "clj/tests/retained-views.cljrs").read_text() +
+             "\n(bulwark.tests.retained-views/retained-views!)",
+             True, ["Retained webview assertions passed"]),
             ("clojure-browser", (root / "clj/tests/browser-native.cljrs").read_text(),
              True, ["Native Clojure commands and history passed"]),
             ("hook-failure", '''
@@ -79,7 +83,7 @@ def main():
             script = directory / f"{name}.cljrs"
             script.write_text(source)
             flags = [*mode, "--script", str(script)]
-            if name == "clojure-browser":
+            if name in {"clojure-browser", "retained-views"}:
                 flags.append((root / "clj/tests/fixtures/servo.html").as_uri())
             run_case(args.binary, name, flags, success, expected, args.timeout)
 

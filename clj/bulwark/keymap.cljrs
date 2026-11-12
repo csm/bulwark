@@ -5,6 +5,16 @@
 (def bindings (atom {}))
 (def pending (atom {:webview nil :keys []}))
 (def cancel-strokes #{"C-g" "Escape"})
+(def route-publisher (atom nil))
+
+(defn set-route-publisher!
+  "Installs the host's route publisher. A nil publisher keeps the keymap portable."
+  [publish]
+  (when-not (or (nil? publish) (ifn? publish))
+    (throw (ex-info "Route publisher must be callable or nil" {})))
+  (when publish (publish (vec (keys @bindings)) (vec cancel-strokes)))
+  (reset! route-publisher publish)
+  nil)
 
 (defn update-bindings!
   "Publishes native reservations inside the atom update. Failure retains the old map."
@@ -12,7 +22,7 @@
   (swap! bindings
     (fn [current]
       (let [updated (update current)]
-        (when-let [publish (resolve 'bulwark.native/set-key-routes!)]
+        (when-let [publish @route-publisher]
           (publish (vec (keys updated)) (vec cancel-strokes)))
         updated))))
 

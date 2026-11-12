@@ -16,7 +16,7 @@
   (let [qualified (symbol (str (ns-name *ns*)) (name command))]
     `(do
        (defn ~command ~doc ~args ~@body)
-       (bulwark.commands/register! '~qualified ~doc (resolve '~qualified)))))
+       (bulwark.commands/register! '~qualified ~doc (var ~qualified)))))
 
 (defn command-info
   "Finds a qualified command, or an unqualified name with exactly one match."

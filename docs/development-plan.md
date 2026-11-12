@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: active v0.18 (2026-11-11), Phases 0 and 1 complete on the acceptance branch.
+Status: active v0.19 (2026-11-11), Phases 0 and 1 complete and accepted. Phase 2 is in progress.
 Phase 1 includes the foundation, Servo adapter, native window, and egui echo area.
 Clojure commands, keymaps, hooks, title history, product nREPL, and key interception are implemented.
 The [acceptance review](phase-1-acceptance.md) records passing physical checks, CI, and the Phase 1 exit disposition.
@@ -32,8 +32,8 @@ The plan is only as good as its assumptions about Servo and Clojurust. This sect
 what was verified against upstream sources on 2026-10-27, and what it implies. Re-verify at the
 start of Phase 0; both projects move quickly.
 
-Bootstrap update: the workspace pins the published Servo 0.7.0 crate and Clojurust commit
-`b847a29b46e2b6b3fbe624f6d2394cb656ea5882`. The initial main-branch inspection remains
+Current pins: the workspace uses the published Servo 0.7.0 crate and Clojurust commit
+`14bd7f9c6e05eed0349d802275cb7950f5a56f90`. The initial main-branch inspection remains
 background context. [Upstream notes](upstream.md) record the pinned-source inspection.
 The [Phase 0 exit review](phase-0-exit.md) records accepted evidence, fallbacks, and Phase 1 entry.
 Section 10 preserves earlier experiment results.
@@ -553,6 +553,10 @@ adjusting; decide which before Phase 2.
 
 ### Phase 2: Programmable browser shell
 
+The [Phase 2 implementation plan](phase-2-plan.md) expands this scope into ordered milestones and acceptance evidence.
+It uses the accepted Phase 1 baseline and records the owner's confirmed Phase 2 scope.
+The [mechanism checkpoint](phase-2-mechanisms.md) begins P2.1 with retained webviews and standalone AOT assertions.
+
 Goal: the Emacs-inspired application model, with default browser behavior moved into Clojure.
 
 Deliverables:
@@ -744,8 +748,9 @@ The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072)
 The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
 All Phase 1 acceptance criteria now pass.
 
-1. Review and merge the Phase 1 acceptance branch.
-2. Begin Phase 2 with the accepted single-visible-view fallback.
+1. Run remote CI for the Phase 2 mechanism checkpoint, including the new AOT job.
+2. Add P2.2 buffers and lifecycle hooks on the retained-view mechanisms.
+3. Continue the ordered milestones in the [Phase 2 plan](phase-2-plan.md).
 
 E5 remains mandatory for simultaneous web content splits.
 Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.

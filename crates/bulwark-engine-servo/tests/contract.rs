@@ -59,10 +59,84 @@ fn main() {
             url: "about:blank".into(),
         },
     );
-    assert!(matches!(
-        executor.block_on(extra.wait()),
-        Err(Fault::Engine(_))
-    ));
+    let Data::Handle(extra) = executor.block_on(extra.wait()).unwrap() else {
+        panic!("Expected retained view handle")
+    };
+    assert_eq!(engine.active_webview().unwrap().0, view);
+    let selected = admit(
+        &client,
+        &mut endpoint,
+        &mut engine,
+        Command::Select(Some(extra)),
+    );
+    assert_eq!(executor.block_on(selected.wait()), Ok(Data::Nil));
+    assert_eq!(engine.active_webview().unwrap().0, extra);
+    assert!(!engine.active_webview().unwrap().1.focused());
+    engine.set_window_state(1.5, true);
+    assert!(engine.active_webview().unwrap().1.focused());
+    let selected = admit(
+        &client,
+        &mut endpoint,
+        &mut engine,
+        Command::Select(Some(view)),
+    );
+    assert_eq!(executor.block_on(selected.wait()), Ok(Data::Nil));
+    assert_eq!(engine.active_webview().unwrap().0, view);
+    assert_eq!(
+        engine
+            .active_webview()
+            .unwrap()
+            .1
+            .hidpi_scale_factor()
+            .get(),
+        1.5
+    );
+    let hidden = admit(&client, &mut endpoint, &mut engine, Command::Select(None));
+    assert_eq!(executor.block_on(hidden.wait()), Ok(Data::Nil));
+    assert!(engine.active_webview().is_none());
+    assert!(!engine.needs_repaint());
+    assert!(!engine.paint_frame(true));
+    let background = admit(
+        &client,
+        &mut endpoint,
+        &mut engine,
+        Command::Create {
+            url: "about:blank".into(),
+        },
+    );
+    let Data::Handle(background) = executor.block_on(background.wait()).unwrap() else {
+        panic!("Expected background handle")
+    };
+    assert!(
+        engine.active_webview().is_none(),
+        "Creation must preserve a hidden layout"
+    );
+    let closed = admit(
+        &client,
+        &mut endpoint,
+        &mut engine,
+        Command::Close(background),
+    );
+    assert_eq!(executor.block_on(closed.wait()), Ok(Data::Nil));
+    let selected = admit(
+        &client,
+        &mut endpoint,
+        &mut engine,
+        Command::Select(Some(view)),
+    );
+    assert_eq!(executor.block_on(selected.wait()), Ok(Data::Nil));
+    let closed = admit(&client, &mut endpoint, &mut engine, Command::Close(extra));
+    assert_eq!(executor.block_on(closed.wait()), Ok(Data::Nil));
+    assert_eq!(engine.active_webview().unwrap().0, view);
+    let stale = admit(
+        &client,
+        &mut endpoint,
+        &mut engine,
+        Command::Select(Some(extra)),
+    );
+    assert_eq!(executor.block_on(stale.wait()), Err(Fault::StaleHandle));
+    assert_eq!(engine.active_webview().unwrap().0, view);
+    engine.set_window_state(2.0, false);
 
     // Close before the next Servo turn. Deferred replies must be invalidated explicitly.
     let evaluated = admit(
@@ -160,6 +234,6 @@ fn main() {
     assert_eq!(executor.block_on(stopped.wait()), Err(Fault::ShuttingDown));
     engine.shutdown();
     println!(
-        "Servo contract passed: close, stale handles, cancellation, deadline cleanup, shutdown"
+        "Servo contract passed: retained views, selection, close, stale handles, cancellation, deadline cleanup, shutdown"
     );
 }

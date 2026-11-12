@@ -1,7 +1,20 @@
 # Development handoff
 
-Snapshot: Bulwark `main` at `0e86c4a`, followed by the acceptance continuation and physical checks through 2026-11-11.
-This clean worktree fast-forwarded from `7781d87` to `0e86c4a` before development.
+Snapshot: `codex/phase-2`, based on the accepted Phase 1 branch at `e49a8ec`, 2026-11-11.
+
+## Phase 2 mechanism continuation
+
+The owner accepted Phases 0 and 1 and confirmed the [Phase 2 scope](phase-2-plan.md).
+The [mechanism checkpoint](phase-2-mechanisms.md) adds retained webviews, explicit selection, and standalone AOT assertions.
+Clojurust now pins `14bd7f9c`, a one-commit compiler fix after the accepted runtime pin.
+The separate upstream branch is `codex/bulwark-phase-2-aot`.
+The fix and its regression checks preserve qualified symbol identity during native compilation.
+
+The next work is P2.2 buffers and lifecycle hooks.
+The [Ubuntu test host](linux-testing.md) passed all 42 portable tests and all 17 portable checks.
+Its AOT validation runs before the queued Servo suite. The ignored `target/linux-host.json` records the connection and queue paths.
+GitHub Linux CI and physical input checks across retained views remain open.
+The sections that follow retain the accepted Phase 1 evidence.
 
 ## Phase 1 physical acceptance and exit
 
@@ -9,7 +22,7 @@ The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11
 This branch includes current main. No product-code fix was necessary during the interactive checks.
 All A1–A8 criteria now pass, including the earlier three-job acceptance CI run.
 The [exit disposition](phase-1-acceptance.md#exit-disposition) marks Phase 1 complete on this branch.
-Review and merge remain before Phase 2 work.
+The owner accepted this review before Phase 2 work began.
 
 Computer Use sent native macOS input to a temporary bundle with a byte-identical copy of the product executable.
 Visible startup, navigation through nREPL, live title hooks, command binding, and command redefinition passed.
@@ -327,8 +340,9 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Review and merge `codex/phase-1-acceptance` after the completed [Phase 1 exit review](phase-1-acceptance.md#exit-disposition).
-2. Begin Phase 2 with the accepted single-visible-view fallback and existing runtime/engine limits.
+1. Run remote CI for the Phase 2 mechanism checkpoint and its AOT job.
+2. Add P2.2 buffers with the accepted single-visible-view fallback and existing runtime/engine limits.
+3. Continue the [Phase 2 implementation plan](phase-2-plan.md).
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.

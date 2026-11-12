@@ -1,0 +1,42 @@
+;; The runtime tests and the pinned AOT compiler run this same source.
+(ns bulwark.tests.shell-model
+  (:require [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.keymap :as keymap]
+            [bulwark.hooks :as hooks]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defcommand sample "Returns the current implementation." [] :first)
+(check! (= "Returns the current implementation."
+           (:doc (commands/command-info 'bulwark.tests.shell-model/sample)))
+        "Command documentation is missing")
+(keymap/bind-key! "C-x b" 'bulwark.tests.shell-model/sample)
+(check! (= 'bulwark.tests.shell-model/sample (get @keymap/bindings ["C-x" "b"]))
+        "The keymap did not retain the command symbol")
+(defn sample [] :second)
+(check! (= :second ((deref (:var (commands/command-info 'bulwark.tests.shell-model/sample)))))
+        "A command binding retained an obsolete function")
+(check! (= ["C-x" "C-f"] (keymap/parse-keys "C-x C-f")) "Prefix parsing failed")
+(check! (= ["M-x"] (keymap/parse-keys "M-x")) "Meta parsing failed")
+(check! (= ["S-a"] (keymap/parse-keys "A")) "Shift parsing failed")
+(keymap/unbind-key! "C-x b")
+(check! (nil? (get @keymap/bindings ["C-x" "b"])) "Unbinding failed")
+(let [published (atom [])]
+  (keymap/set-route-publisher! (fn [sequences cancel] (swap! published conj sequences)))
+  (keymap/bind-key! "C-x b" 'bulwark.tests.shell-model/sample)
+  (check! (= [["C-x" "b"]] (last @published)) "The injected publisher did not receive reservations")
+  (let [before @keymap/bindings]
+    (check! (try (keymap/set-route-publisher! (fn [sequences cancel] (throw (ex-info "Rejected snapshot" {}))))
+                 false (catch Exception error true)) "A rejected publisher was installed")
+    (check! (= before @keymap/bindings) "Publisher failure changed bindings"))
+  (keymap/unbind-key! "C-x b")
+  (check! (= [] (last @published)) "Failed publisher replacement discarded the old publisher")
+  (keymap/set-route-publisher! nil))
+(hooks/add-hook! :buffer/created :sample (fn [event] nil))
+(hooks/add-hook! :buffer/created :sample (fn [event] :replacement))
+(check! (= 1 (count (get @hooks/registry :buffer/created))) "Hook replacement duplicated an entry")
+(hooks/remove-hook! :buffer/created :sample)
+(check! (empty? (get @hooks/registry :buffer/created)) "Hook removal failed")
+(println "Shell model assertions passed")
+:shell-model-passed

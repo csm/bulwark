@@ -1,0 +1,53 @@
+;; The native and software hosts supply user/retained-fixture-url.
+(ns bulwark.tests.retained-views
+  (:require [bulwark.native :as native]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+(defn value! [reply]
+  (check! (:ok reply) (str "Native operation failed: " reply))
+  (:value reply))
+(defn ^:async loaded! [view]
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (let [info (value! (await (native/webview-info view)))]
+        (when-not (and (= :complete (:load-status info))
+                       (= "Bulwark Servo fixture" (:title info)))
+          (check! (< (System/currentTimeMillis) deadline) "Retained view did not finish loading")
+          (await (timeout 5))
+          (recur))))))
+
+(defn ^:async retained-views! []
+  (let [view-a (value! (await (native/webview-create user/retained-fixture-url)))
+        view-b (value! (await (native/webview-create user/retained-fixture-url)))]
+    (await (loaded! view-a))
+    (await (loaded! view-b))
+    (value! (await (native/log "Retained views: loaded both documents")))
+    (value! (await (native/eval-js view-a
+      "window.retained = 'view-a'; var field = document.createElement('input'); field.id = 'retained'; field.value = 'form state'; document.body.appendChild(field); 'ok'")))
+    (value! (await (native/eval-js view-b "window.retained = 'view-b'; 'ok'")))
+    (value! (await (native/eval-js view-a "history.pushState(null, '', '#retained'); 'ok'")))
+    (doseq [view [view-b view-a view-b view-a]]
+      (value! (await (native/webview-select view)))
+      ;; The event loop paints the selected page between switches.
+      (await (timeout 80)))
+    (value! (await (native/log "Retained views: switched between both documents")))
+    (check! (= "view-a" (value! (await (native/eval-js view-a "String(window.retained)"))))
+            "Switching discarded the first document")
+    (check! (= "form state" (value! (await (native/eval-js view-a "document.getElementById('retained').value"))))
+            "Switching discarded form state")
+    (check! (= "view-b" (value! (await (native/eval-js view-b "String(window.retained)"))))
+            "Documents shared global state")
+    (check! (:can-go-back (value! (await (native/webview-info view-a)))) "First view lost its history")
+    (check! (not (:can-go-back (value! (await (native/webview-info view-b))))) "History leaked between views")
+    (value! (await (native/webview-select nil)))
+    (await (timeout 80))
+    (value! (await (native/webview-select view-b)))
+    (value! (await (native/webview-close view-a)))
+    (check! (= :stale-handle (:error (await (native/webview-select view-a)))) "A stale selection succeeded")
+    (check! (= "view-b" (value! (await (native/eval-js view-b "window.retained"))))
+            "Closing another view invalidated the selected document")
+    (value! (await (native/webview-close view-b))))
+  (value! (await (native/log "Retained webview assertions passed")))
+  :retained-views-passed)

@@ -27,6 +27,7 @@ impl EventLoopWaker for Waker {
 struct ViewState {
     revoked: Cell<bool>,
     dirty: Cell<bool>,
+    visible: Cell<bool>,
 }
 struct View {
     webview: WebView,
@@ -53,7 +54,8 @@ impl Delegate {
     fn frame_ready(&self) {
         // Servo can repeat this callback until paint. Wake only on a transition
         // so an occluded native window does not spin on duplicate proxy events.
-        if !self.state.revoked.get() && !self.state.dirty.replace(true) {
+        if !self.state.revoked.get() && !self.state.dirty.replace(true) && self.state.visible.get()
+        {
             (self.wake)();
         }
     }
@@ -96,10 +98,11 @@ fn load_status(status: servo::LoadStatus) -> LoadStatus {
 type Pending = Rc<RefCell<BTreeMap<u64, (Handle, Request)>>>;
 
 /// Owns Servo, its views, and deferred replies on the creating thread.
-/// The initial adapter accepts one live view per context (the Phase 0 fallback).
+/// Retains multiple views with at most one visible view per rendering context.
 pub struct ServoEngine {
     // Resources and callbacks drop before Servo and its rendering context.
     views: Registry<View>,
+    selected: Option<Handle>,
     pending: Pending,
     servo: Servo,
     context: Rc<dyn RenderingContext>,
@@ -133,6 +136,7 @@ impl ServoEngine {
             .build();
         Ok(Self {
             views: Registry::default(),
+            selected: None,
             pending: Rc::default(),
             servo,
             context,
@@ -157,11 +161,7 @@ impl ServoEngine {
 
     fn create(&mut self, url: &str) -> Result<Data, Fault> {
         let url = url::Url::parse(url).map_err(|error| Fault::Engine(error.to_string()))?;
-        if self.views.iter().next().is_some() {
-            return Err(Fault::Engine(
-                "One live webview per rendering context is supported".into(),
-            ));
-        }
+        let first = self.views.iter().next().is_none();
         let handle = self.views.insert_with(|handle| {
             let state = Rc::new(ViewState {
                 dirty: Cell::new(true),
@@ -177,15 +177,54 @@ impl ServoEngine {
                     wake: self.wake.clone(),
                 }))
                 .build();
-            webview.show();
-            webview.set_focused(self.focused);
+            webview.hide();
+            webview.set_focused(false);
             View { webview, state }
         })?;
+        // Preserve Phase 1 startup. Further views stay hidden until explicitly selected.
+        if first {
+            self.select(Some(handle))?;
+        }
         Ok(Data::Handle(handle))
+    }
+
+    fn select(&mut self, handle: Option<Handle>) -> Result<Data, Fault> {
+        // Validate before hiding the current view, so stale selections change nothing.
+        if let Some(handle) = handle {
+            self.view(handle)?;
+        }
+        if self.selected == handle {
+            return Ok(Data::Nil);
+        }
+        if let Some((_, previous)) = self.active_webview() {
+            previous.set_focused(false);
+            previous.hide();
+        }
+        if let Some(previous) = self.selected
+            && let Ok(view) = self.views.get(previous)
+        {
+            view.state.visible.set(false);
+        }
+        self.selected = handle;
+        if let Some(handle) = handle {
+            let view = self.view(handle)?;
+            view.webview
+                .set_hidpi_scale_factor(euclid::Scale::new(self.scale));
+            view.webview.resize(self.context.size());
+            view.webview.show();
+            view.webview.set_focused(self.focused);
+            view.state.visible.set(true);
+            view.state.dirty.set(true);
+        }
+        (self.wake)();
+        Ok(Data::Nil)
     }
 
     fn invalidate(&mut self, handle: Handle) -> Result<(), Fault> {
         let view = self.views.remove(handle)?;
+        if self.selected == Some(handle) {
+            self.selected = None;
+        }
         // Suppress late delegate callbacks before dropping the final embedder reference.
         view.state.revoked.set(true);
         self.reject_pending(Some(handle), Fault::StaleHandle);
@@ -208,16 +247,17 @@ impl ServoEngine {
 
     /// Native host access on the engine thread; no Servo value crosses the runtime bridge.
     pub fn active_webview(&self) -> Option<(Handle, WebView)> {
-        self.views.iter().find_map(|(handle, view)| {
-            (!view.state.revoked.get()).then(|| (handle, view.webview.clone()))
-        })
+        let handle = self.selected?;
+        self.view(handle)
+            .ok()
+            .map(|view| (handle, view.webview.clone()))
     }
 
     /// Whether a live view needs a new frame, including its initial paint.
     pub fn needs_repaint(&self) -> bool {
-        self.views
-            .iter()
-            .any(|(_, view)| !view.state.revoked.get() && view.state.dirty.get())
+        self.selected
+            .and_then(|handle| self.view(handle).ok())
+            .is_some_and(|view| view.state.dirty.get())
     }
 
     /// Persist native scale and focus so replacement views inherit the window state.
@@ -240,12 +280,13 @@ impl ServoEngine {
     /// The host can composite chrome before its single buffer swap.
     /// Force repaint for native exposure events even if no new frame is pending.
     pub fn paint_frame(&mut self, force: bool) -> bool {
-        for (_, view) in self.views.iter() {
-            if !view.state.revoked.get() && (view.state.dirty.replace(false) || force) {
-                view.webview.paint();
-                self.frames += 1;
-                return true;
-            }
+        if let Some(handle) = self.selected
+            && let Ok(view) = self.view(handle)
+            && (view.state.dirty.replace(false) || force)
+        {
+            view.webview.paint();
+            self.frames += 1;
+            return true;
         }
         false
     }
@@ -281,6 +322,7 @@ impl Engine for ServoEngine {
                 self.events.emit(*handle, EventKind::Closed)?;
                 Ok(Data::Nil)
             }
+            Command::Select(handle) => self.select(*handle),
             Command::Navigate { view, url } => {
                 let view = self.view(*view)?;
                 let url = url::Url::parse(url).map_err(|error| Fault::Engine(error.to_string()))?;
@@ -378,6 +420,7 @@ impl Engine for ServoEngine {
 
     fn shutdown(&mut self) {
         self.stopped = true;
+        self.selected = None;
         for (_, view) in self.views.iter() {
             view.state.revoked.set(true);
         }
@@ -404,7 +447,10 @@ mod tests {
         let count = wakes.clone();
         let delegate = Delegate {
             handle: Handle(1),
-            state: Rc::default(),
+            state: Rc::new(ViewState {
+                visible: Cell::new(true),
+                ..Default::default()
+            }),
             events: endpoint.events,
             wake: Arc::new(move || {
                 count.fetch_add(1, Ordering::Relaxed);
@@ -442,5 +488,19 @@ mod tests {
         );
         assert!(runtime.events.try_recv().is_err());
         assert!(runtime.control.error().is_none());
+    }
+
+    #[test]
+    fn hidden_frame_notifications_retain_dirty_state_without_requesting_paint() {
+        let (_, endpoint) = bulwark_engine::bridge::channel(Arc::new(|| {}));
+        let delegate = Delegate {
+            handle: Handle(1),
+            state: Rc::default(),
+            events: endpoint.events,
+            wake: Arc::new(|| panic!("A hidden frame must not request a repaint")),
+        };
+        delegate.frame_ready();
+        delegate.frame_ready();
+        assert!(delegate.state.dirty.get());
     }
 }

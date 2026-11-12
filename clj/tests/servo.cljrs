@@ -49,7 +49,10 @@
     (let [info (value! (await (native/webview-info view)))]
       (check! (= user/servo-fixture-url (:url info)) "Wrong fixture URL")
       (check! (= "Bulwark Servo fixture" (:title info)) "Wrong fixture title"))
-    (check! (= :engine-error (:error (await (native/webview-create "about:blank")))) "Single-view fallback missing")
+    (let [other (value! (await (native/webview-create "about:blank")))]
+      (value! (await (native/webview-select other)))
+      (value! (await (native/webview-select view)))
+      (value! (await (native/webview-close other))))
     (let [a (native/eval-js view "document.querySelector('h1').textContent")
           b (native/eval-js view "'second reply'")]
       (check! (= "Product Servo integration" (value! (await a))) "DOM evaluation failed")
@@ -85,5 +88,3 @@
       (await (wait-closed! replacement))))
   (value! (await (native/log "Clojure Servo assertions passed")))
   :servo-passed)
-
-(servo-test!)
