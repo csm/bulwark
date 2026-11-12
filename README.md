@@ -6,6 +6,7 @@ Phase 1 acceptance is complete. The product has a bounded engine/runtime bridge,
 The [acceptance review](docs/phase-1-acceptance.md) records passing CI and physical macOS checks.
 Phase 2 is in progress. The [mechanism checkpoint](docs/phase-2-mechanisms.md) adds retained webviews and a standalone AOT test path.
 The [buffer checkpoint](docs/phase-2-buffers.md) adds the Clojure buffer registry, lifecycle hooks, and buffer commands.
+The [window checkpoint](docs/phase-2-windows.md) adds mixed panes, modelines, and bounded UI descriptions.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -20,7 +21,7 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    cargo run --locked
    ```
 
-   This command opens a native Servo window at `about:blank` with an egui echo area.
+   This command opens a native Servo window at `about:blank` with a modeline and an egui echo area.
    To omit Servo and run the namespace bootstrap, use `cargo run --locked --no-default-features`.
 
    Run the product foundation check without a native display:
@@ -63,6 +64,7 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    The [native shell checkpoint](docs/phase-1-native.md) records the implementation and validation limits.
    The [command checkpoint](docs/phase-1-commands.md) describes Clojure commands, keymaps, hooks, and title history.
    Default keys include `C-c r` for reload and `C-x h` for recent page titles.
+   `C-x 3` splits a page beside text. `C-x o` selects the next window, and `C-x 1` keeps only that window.
    The native shell reserves command sequences before Servo receives them.
    Unbound keys reach Servo without a runtime wait.
    The [key interception checkpoint](docs/phase-1-keys.md) records ownership rules and coverage.
@@ -151,7 +153,7 @@ Use `--no-default-features` for the portable workspace checks without Servo.
 - [Phase 2 implementation plan](docs/phase-2-plan.md)
 - [Phase 2 mechanism checkpoint](docs/phase-2-mechanisms.md)
 - [Phase 2 buffer checkpoint](docs/phase-2-buffers.md)
-- [Phase 2 window model checkpoint](docs/phase-2-windows.md)
+- [Phase 2 window and UI checkpoint](docs/phase-2-windows.md)
 - [Headless Linux test host and runner](docs/linux-testing.md)
 - [Phase 0 exit review](docs/phase-0-exit.md)
 - [Phase 1 foundation checkpoint and native API](docs/phase-1-foundation.md)

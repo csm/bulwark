@@ -183,6 +183,67 @@ fn main() {
     assert_eq!(native_view.size(), euclid::Size2D::new(800.0, 500.0));
     drop(native_view);
 
+    // A described frame owns visibility. Rejected frames leave the current one intact.
+    let description = |revision, handle: Option<bulwark_engine::Handle>| {
+        use bulwark_engine::ui::{Element, Rect, Ui, Widget};
+        Ui::new(
+            revision,
+            Some(1),
+            vec![Element {
+                id: Some(1),
+                rect: Rect {
+                    x: 400,
+                    y: 0,
+                    width: 400,
+                    height: 500,
+                },
+                widget: handle.map_or(Widget::Text("notes".into()), Widget::Web),
+            }],
+        )
+        .unwrap()
+    };
+    for (ui, expected, visible, revision) in [
+        (
+            description(2, Some(replacement)),
+            Ok(Data::Nil),
+            Some(replacement),
+            2,
+        ),
+        (
+            description(1, None),
+            Err(Fault::StaleRevision),
+            Some(replacement),
+            2,
+        ),
+        (
+            description(2, None),
+            Err(Fault::StaleRevision),
+            Some(replacement),
+            2,
+        ),
+        (
+            description(3, Some(view)),
+            Err(Fault::StaleHandle),
+            Some(replacement),
+            2,
+        ),
+        (description(3, None), Ok(Data::Nil), None, 3),
+        (
+            description(4, Some(replacement)),
+            Ok(Data::Nil),
+            Some(replacement),
+            4,
+        ),
+    ] {
+        let reply = admit(&client, &mut endpoint, &mut engine, Command::SetUi(ui));
+        assert_eq!(executor.block_on(reply.wait()), expected);
+        assert_eq!(engine.active_webview().map(|(id, _)| id), visible);
+        assert_eq!(engine.ui().unwrap().revision(), revision);
+        if visible.is_none() {
+            assert!(!engine.paint_frame(true));
+        }
+    }
+
     let cancelled = admit(
         &client,
         &mut endpoint,
@@ -234,6 +295,6 @@ fn main() {
     assert_eq!(executor.block_on(stopped.wait()), Err(Fault::ShuttingDown));
     engine.shutdown();
     println!(
-        "Servo contract passed: retained views, selection, close, stale handles, cancellation, deadline cleanup, shutdown"
+        "Servo contract passed: retained views, selection, UI revisions, visibility, close, stale handles, cancellation, deadline cleanup, shutdown"
     );
 }

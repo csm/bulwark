@@ -4,11 +4,13 @@
             [bulwark.commands :refer [defcommand]]
             [bulwark.hooks :as hooks]
             [bulwark.keymap :as keymap]
+            [bulwark.window :as window]
             [clojure.string :as string]))
 
 (def history (atom []))
 (def history-limit 256)
 (def new-buffer-url (atom "about:blank"))
+(def resize-step 50)
 
 (defn value!
   "Returns a successful native value, or raises an error containing the reply."
@@ -118,15 +120,114 @@
   []
   (await (cycle-buffer! -1)))
 
+(defn selected-window!
+  "Returns the selected window's id, or reports that no window exists."
+  []
+  (or (buffer/selected-window) (throw (ex-info "No selected window" {:error :no-window}))))
+
+(defn ^:async split-buffer!
+  "Returns the buffer for a new window. Only one page can be visible, so the split of a
+  page's window shows the most recent text or REPL buffer, or a new *scratch* buffer."
+  []
+  (let [selected (buffer/selected)
+        other (first (filter (fn [id] (not= :web (:buffer/kind (buffer/buffer id))))
+                             (:recent @buffer/registry)))]
+    (cond
+      (not= :web (:buffer/kind selected)) (:buffer/id selected)
+      other other
+      :else (await (buffer/create! {:kind :text :name "*scratch*" :select false})))))
+
+(defn ^:async split-window!
+  "Splits the selected window in a direction and returns the new window's id."
+  [direction]
+  (let [id (selected-window!)
+        shown (await (split-buffer!))
+        new-id (buffer/next-id!)]
+    (await (buffer/change-layout! window/split id new-id direction shown))
+    new-id))
+
+(defn ^:async select-window!
+  "Selects a live window. Its buffer becomes the selected buffer."
+  [id]
+  (when-not (= id (buffer/selected-window))
+    (await (buffer/change-layout! window/select id))))
+
+(defn ^:async resize-window!
+  "Grows the selected window by thousandths of its enclosing split in a direction."
+  [direction amount]
+  (await (buffer/change-layout! window/resize (selected-window!) direction amount)))
+
+(defn ^:async select-pressed-window!
+  "Default pointer policy: a press in another window selects it."
+  [event]
+  (let [layout (buffer/layout)]
+    (when (and layout (window/window layout (:ui/id event)))
+      (await (select-window! (:ui/id event))))))
+
+(defcommand ^:async split-window-below
+  "Splits the selected window into an upper and a lower window."
+  []
+  (await (split-window! :column)))
+
+(defcommand ^:async split-window-right
+  "Splits the selected window into a left and a right window."
+  []
+  (await (split-window! :row)))
+
+(defcommand ^:async delete-window
+  "Deletes the selected window. Its buffer stays alive."
+  []
+  (await (buffer/change-layout! window/delete (selected-window!))))
+
+(defcommand ^:async delete-other-windows
+  "Deletes every window except the selected one."
+  []
+  (await (buffer/change-layout! window/only (selected-window!))))
+
+(defcommand ^:async other-window
+  "Selects the next window in layout order."
+  []
+  (selected-window!)
+  (await (select-window! (window/following (buffer/layout) 1))))
+
+(defcommand ^:async enlarge-window
+  "Makes the selected window taller."
+  []
+  (await (resize-window! :column resize-step)))
+
+(defcommand ^:async shrink-window
+  "Makes the selected window shorter."
+  []
+  (await (resize-window! :column (- resize-step))))
+
+(defcommand ^:async enlarge-window-horizontally
+  "Makes the selected window wider."
+  []
+  (await (resize-window! :row resize-step)))
+
+(defcommand ^:async shrink-window-horizontally
+  "Makes the selected window narrower."
+  []
+  (await (resize-window! :row (- resize-step))))
+
 (defn install!
   "Installs browser hooks, the last-buffer policy, and default keys. Repeated installation replaces them."
   []
   (hooks/add-hook! :page/title-changed :bulwark.browser/track-page #'track-page!)
+  (hooks/add-hook! :ui/pressed :bulwark.browser/select-window #'select-pressed-window!)
   (reset! buffer/last-web-buffer-policy #'replace-last-buffer!)
   (keymap/bind-key! "C-c n" 'bulwark.browser/new-buffer)
   (keymap/bind-key! "C-x k" 'bulwark.browser/kill-buffer)
   (keymap/bind-key! "C-x ArrowRight" 'bulwark.browser/next-buffer)
   (keymap/bind-key! "C-x ArrowLeft" 'bulwark.browser/previous-buffer)
+  (keymap/bind-key! "C-x 2" 'bulwark.browser/split-window-below)
+  (keymap/bind-key! "C-x 3" 'bulwark.browser/split-window-right)
+  (keymap/bind-key! "C-x 0" 'bulwark.browser/delete-window)
+  (keymap/bind-key! "C-x 1" 'bulwark.browser/delete-other-windows)
+  (keymap/bind-key! "C-x o" 'bulwark.browser/other-window)
+  (keymap/bind-key! "C-x ^" 'bulwark.browser/enlarge-window)
+  (keymap/bind-key! "C-x }" 'bulwark.browser/enlarge-window-horizontally)
+  (keymap/bind-key! "C-x {" 'bulwark.browser/shrink-window-horizontally)
   (keymap/bind-key! "C-c r" 'bulwark.browser/reload)
   (keymap/bind-key! "C-c b" 'bulwark.browser/back)
   (keymap/bind-key! "C-c f" 'bulwark.browser/forward)

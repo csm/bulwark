@@ -1,21 +1,23 @@
 # Upstream dependencies
 
-Last inspection: 2026-11-11.
+Last inspection: 2026-11-12.
 
 ## Pins
 
 | Dependency | Pin | Source |
 |---|---|---|
 | Servo | `=0.7.0`, published 2026-10-05 | [Published crate](https://crates.io/crates/servo/0.7.0) |
-| Clojurust | `14bd7f9c6e05eed0349d802275cb7950f5a56f90` | [Pinned commit](https://github.com/csm/clojurust/commit/14bd7f9c6e05eed0349d802275cb7950f5a56f90) |
+| Clojurust | `174557b3eec18117f0b4886076961fe3223316c0` | [Pinned commit](https://github.com/csm/clojurust/commit/174557b3eec18117f0b4886076961fe3223316c0) |
 
 `Cargo.toml` records direct pins. `Cargo.lock` records the complete dependency graph.
 Clojurust packages use one git revision. No dependency points at a local checkout.
 The bootstrap disables Clojurust's git-backed package loader through `default-features = false`.
 It enables the full regex implementation.
 
-Phase 2 adopts one compiler fix after `b847a29b`: compiled symbol literals now retain namespace and version fields.
+Phase 2 adopts two compiler fixes after `b847a29b`.
+Compiled symbol literals retain namespace and version fields. Compiled string counts use Unicode characters instead of UTF-8 bytes.
 The [mechanism checkpoint](phase-2-mechanisms.md#aot-path-and-upstream-fix) records the failing reproduction and passing upstream checks.
+The [window checkpoint](phase-2-windows.md#unicode-compiler-fix) records the Unicode regression and upstream draft PR.
 The optional AOT test feature uses the same revision as the product runtime.
 
 Servo enables `bundled` and `js_jit` with default features disabled.

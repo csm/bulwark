@@ -1,0 +1,182 @@
+;; Windows and UI descriptions against the product bridge and the mock engine, in both evaluator modes.
+(ns bulwark.tests.windows
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands]
+            [bulwark.core :as core]
+            [bulwark.hooks :as hooks]
+            [bulwark.native :as native]
+            [bulwark.ui :as ui]
+            [bulwark.window :as window]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(def published (atom []))
+(def selections (atom []))
+(def kept (atom nil))
+
+(defn record! [description]
+  (swap! published conj description)
+  (native/set-ui! description))
+
+(def recording-host {:publish record! :viewport native/ui-viewport})
+
+(defn ^:async refuse! [description]
+  {:ok false :error :busy})
+
+(defn frame [] (last @published))
+(defn kinds [] (mapv :ui/kind (:elements (frame))))
+(defn web [] (first (filter (fn [element] (= :web (:ui/kind element))) (:elements (frame)))))
+(defn shown []
+  (mapv (fn [leaf] [(:window/id leaf) (:window/buffer leaf)]) (window/windows (buffer/layout))))
+
+(defn ^:async fails-with? [expected operation]
+  (try (await (operation)) false
+       (catch Exception error (= expected (:error (ex-data error))))))
+
+(defn ^:async windows! []
+  (ui/set-host! recording-host)
+  (browser/install!)
+  (hooks/add-hook! :buffer/selected :test/selections
+    (fn [event] (swap! selections conj [(:buffer event) (:previous event)])))
+  (doseq [name ["set-ui!" "ui-viewport"]]
+    (check! (string? (:doc (meta (ns-resolve 'bulwark.native (symbol name))))) (str "Missing docstring: " name)))
+  (check! (= ui/default-viewport (ui/viewport)) "A headless host reported a window")
+  (let [page (await (browser/open! "https://example.com/a"))
+        view (:buffer/view (buffer/buffer page))
+        left (buffer/selected-window)]
+    (check! (and (= [[left page]] (shown)) (= view (:webview (web))) (= left (:focus (frame))))
+            "The first buffer did not get a focused window")
+    (check! (= [0 0 1000 710] (mapv (web) [:x :y :width :height])) "The page did not fill the frame above its modeline")
+    ;; A page's window splits beside a text buffer, because one page can be visible.
+    (let [right (await (commands/invoke! 'bulwark.browser/split-window-right))
+          scratch (:buffer/id (buffer/find-named "*scratch*"))]
+      (check! (and scratch (= [[left page] [right scratch]] (shown))) "The split did not show a scratch buffer")
+      (check! (and (= page (buffer/selected-id)) (= left (:focus (frame)))) "A split moved the selection")
+      (check! (and (= [:web :line :text :line :echo] (kinds)) (= 500 (:width (web))))
+              "The mixed frame is wrong")
+      (await (commands/invoke! 'bulwark.browser/other-window))
+      (check! (and (= scratch (buffer/selected-id)) (= right (:focus (frame)))) "other-window did not move the focus")
+      (check! (= [scratch page] (last @selections)) "A window selection ran no buffer hook")
+      (check! (= view (:webview (web))) "Selecting a text window hid the page")
+      ;; A change of text keeps the revision. An unchanged frame sends nothing.
+      (let [revision (:revision (frame)) sent (count @published)]
+        (buffer/set-text! scratch "notes")
+        (await (buffer/refresh!))
+        (check! (and (= revision (:revision (frame))) (= (inc sent) (count @published)))
+                "A text change took a new revision or sent nothing")
+        (check! (= "notes" (:text (nth (:elements (frame)) 2))) "The text pane kept old text")
+        (await (buffer/refresh!))
+        (check! (= (inc sent) (count @published)) "An unchanged frame was sent again"))
+      ;; A page opened from the text window takes the page's window.
+      (let [other (await (browser/open! "https://example.com/b"))
+            other-view (:buffer/view (buffer/buffer other))]
+        (check! (and (= [[left other] [right scratch]] (shown)) (= left (buffer/selected-window)))
+                "A new page did not take the page's window")
+        (check! (= other-view (:webview (web))) "The frame shows the wrong page")
+        ;; A background title reaches no modeline. The visible page's title does.
+        (let [sent (count @published)]
+          (await (core/dispatch! {:event/type :page/title-changed :webview view :title "Hidden"}))
+          (check! (= sent (count @published)) "A hidden page's title changed the frame")
+          (await (core/dispatch! {:event/type :page/title-changed :webview other-view :title "Visible"}))
+          (check! (= " Visible  https://example.com/b" (:text (second (:elements (frame)))))
+                  "The modeline missed the visible page's title"))
+        ;; A second visible page is a clear error before any change.
+        (let [sent (count @published) before @buffer/registry]
+          (check! (await (fails-with? :multiple-visible-webviews
+                                      (fn [] (buffer/change-layout! window/set-buffer right page))))
+                  "A second visible page was accepted")
+          (check! (and (= before @buffer/registry) (= sent (count @published))) "A rejected layout changed state"))
+        (await (commands/invoke! 'bulwark.browser/enlarge-window-horizontally))
+        (check! (= 550 (:width (web))) "Resize did not reach the frame")
+        ;; A failed publication changes neither the registry nor the issued description.
+        (let [before @buffer/registry sent (count @published) revision (:revision (frame))]
+          (ui/set-host! {:publish refuse! :viewport native/ui-viewport})
+          (check! (await (fails-with? :busy (fn [] (buffer/select! page)))) "A refused publication was ignored")
+          (check! (and (= before @buffer/registry) (= sent (count @published))) "A refused selection changed state")
+          (ui/set-host! recording-host)
+          (await (buffer/refresh!))
+          (check! (and (> (:revision (frame)) revision) (= other-view (:webview (web))))
+                  "The frame did not recover after a refused publication"))
+        ;; The frame follows the viewport. Text and layout state stay unchanged.
+        (ui/set-host! {:publish record! :viewport (fn [] {:width 600 :height 400 :scale 2.0})})
+        (await (core/dispatch! {:event/type :ui/viewport-changed}))
+        (check! (= [0 0 330 350] (mapv (web) [:x :y :width :height])) "The frame ignored its viewport")
+        (ui/set-host! {:publish record! :viewport (fn [] {:width 100 :height 60 :scale 2.0})})
+        (await (core/dispatch! {:event/type :ui/viewport-changed}))
+        (check! (and (= [:web :line :echo] (kinds)) (= 2 (count (shown)))) "A small frame changed the layout")
+        (ui/set-host! recording-host)
+        (await (core/dispatch! {:event/type :ui/viewport-changed}))
+        (check! (= 550 (:width (web))) "The frame did not return to its windows")
+        ;; An interaction with an older structure is discarded. A current one selects its window.
+        (let [revision (:revision (frame)) dropped @ui/dropped]
+          (await (core/dispatch! {:event/type :ui/pressed :ui/id right :revision (dec revision)}))
+          (check! (and (= left (buffer/selected-window)) (= (inc dropped) @ui/dropped))
+                  "An obsolete interaction was dispatched")
+          (await (core/dispatch! {:event/type :ui/pressed :ui/id right :revision revision}))
+          (check! (and (= right (buffer/selected-window)) (= scratch (buffer/selected-id)))
+                  "A press did not select its window")
+          (check! (= (inc dropped) @ui/dropped) "A current interaction was discarded"))
+        ;; Windows below the minimum size are refused before any change.
+        (await (commands/invoke! 'bulwark.browser/split-window-right))
+        (await (commands/invoke! 'bulwark.browser/split-window-right))
+        (let [before @buffer/registry sent (count @published)]
+          (check! (await (fails-with? :window-too-small
+                                      (fn [] (commands/invoke! 'bulwark.browser/split-window-right))))
+                  "A window below the minimum size was created")
+          (check! (and (= before @buffer/registry) (= sent (count @published)) (= 4 (count (shown))))
+                  "A refused split changed state"))
+        (await (commands/invoke! 'bulwark.browser/split-window-below))
+        (check! (= 5 (count (shown))) "A column split failed")
+        (await (commands/invoke! 'bulwark.browser/delete-window))
+        (check! (= 4 (count (shown))) "delete-window failed")
+        (await (commands/invoke! 'bulwark.browser/delete-other-windows))
+        (check! (and (= [[(buffer/selected-window) scratch]] (shown)) (= [:text :line :echo] (kinds)) (nil? (web)))
+                "delete-other-windows left a page visible")
+        (check! (await (fails-with? :sole-window (fn [] (commands/invoke! 'bulwark.browser/delete-window))))
+                "The only window was deleted")
+        ;; The native side rejects malformed and obsolete descriptions.
+        (check! (try (native/set-ui! {:revision 1 :elements [{:ui/kind :text :x 0 :y 0 :width 1 :height 1}]}) false
+                     (catch Exception error true))
+                "A text element without an id was accepted")
+        (check! (try (native/set-ui! {:revision 1 :elements [{:ui/kind :button :x 0 :y 0 :width 1 :height 1}]}) false
+                     (catch Exception error true))
+                "An unknown widget was accepted")
+        (check! (= :stale-revision (:error (await (native/set-ui! {:revision 1 :elements []}))))
+                "An obsolete revision was accepted")
+        (check! (= :stale-handle
+                   (:error (await (native/set-ui!
+                                    {:revision (inc (:revision (frame)))
+                                     :elements [{:ui/kind :web :ui/id 1 :x 0 :y 0 :width 9 :height 9
+                                                 :webview (native/allocate-id!)}]}))))
+                "A dead webview was accepted")
+        ;; A killed buffer's window takes the most recent buffer. The last kill leaves the echo line.
+        (reset! selections [])
+        (await (buffer/kill! scratch))
+        (check! (and (= [[(buffer/selected-window) other]] (shown)) (= other-view (:webview (web))) (= [[other scratch]] @selections))
+                "A kill did not show the most recent buffer")
+        (reset! kept (buffer/selected-window))
+        (reset! buffer/last-web-buffer-policy nil)
+        (await (buffer/kill! other))
+        (check! (= [[(buffer/selected-window) page]] (shown)) "A kill did not show the remaining page")
+        (await (buffer/kill! page))
+        (check! (and (nil? (buffer/layout)) (= [:echo] (kinds)) (nil? (:focus (frame))))
+                "The last kill left a window")
+        (check! (await (fails-with? :no-window (fn [] (commands/invoke! 'bulwark.browser/split-window-right))))
+                "A split ran without a window")
+        ;; A buffer selected after an empty frame gets a new window.
+        (let [text (await (buffer/create! {:kind :text :name "*Messages*" :text "ready"}))]
+          (check! (and (= [text] (mapv second (shown))) (not= @kept (buffer/selected-window)))
+                  "A window id was reused or no window was created")))))
+  ;; The Clojure budget also fits the Rust byte limit for four-byte characters.
+  (let [layout (reduce (fn [state pair] (window/split state (first pair) (second pair) :row 12))
+                       (window/initial 1 12) [[1 2] [1 3] [2 4] [1 5] [3 6] [2 7] [4 8]])
+        text (apply str (repeat 20000 "😀"))
+        panes (reduce (fn [panes id] (assoc panes id {:kind :text :text text :modeline text})) {} (range 1 9))
+        description (assoc (ui/describe layout panes {:width 32768 :height 760 :scale 1.0})
+                           :revision (inc (:revision (frame))))]
+    (check! (:ok (await (native/set-ui! description))) "The native frame rejected bounded Unicode panes"))
+  :windows-passed)
+
+(windows!)

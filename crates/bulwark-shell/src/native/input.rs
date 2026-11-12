@@ -9,7 +9,26 @@ use std::cell::Cell;
 use std::sync::Arc;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 
+/// The page's rectangle inside the window, in physical pixels from the top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The owned key event for the runtime, and whether the key is free for the focus owner.
+/// A reserved command key is never free.
+#[derive(Debug, Default)]
+pub struct Routed {
+    pub key: Option<KeyInput>,
+    pub free: bool,
+}
+
 pub struct Input {
+    // The pointer in window coordinates, and the same point relative to the page.
+    position: Option<(f64, f64)>,
     cursor: Cell<DevicePoint>,
     modifiers: Cell<servo::Modifiers>,
     pointer: PointerRoute,
@@ -18,6 +37,7 @@ pub struct Input {
 impl Default for Input {
     fn default() -> Self {
         Self {
+            position: None,
             cursor: Cell::new(DevicePoint::zero()),
             modifiers: Cell::new(servo::Modifiers::empty()),
             pointer: PointerRoute::default(),
@@ -36,6 +56,11 @@ impl Input {
         self.pointer.buttons.clear();
         self.keys.reset();
     }
+    /// A focus change within the frame cancels keys but preserves an ongoing page drag.
+    /// The page can receive the press before Clojure selects its window.
+    pub fn change_focus(&mut self) {
+        self.keys.reset();
+    }
     pub fn update_modifiers(&self, keys: winit::keyboard::ModifiersState) {
         let mut flags = servo::Modifiers::empty();
         flags.set(servo::Modifiers::SHIFT, keys.shift_key());
@@ -49,29 +74,48 @@ impl Input {
     pub fn sync_routes(&mut self, routes: Arc<KeyRoutes>, view: Handle) -> bool {
         self.keys.sync(routes, view)
     }
+    /// The pointer in physical window coordinates, when it is inside the window.
+    pub fn position(&self) -> Option<(f64, f64)> {
+        self.position
+    }
+    /// Recomputes the page-relative pointer after the pointer or the page moves.
+    /// Returns true when the page takes the movement.
+    pub fn place(&mut self, page: Option<PageRect>) -> bool {
+        let inside = match (self.position, page) {
+            (Some((x, y)), Some(page)) => {
+                let (x, y) = (x - page.x as f64, y - page.y as f64);
+                self.cursor.set(DevicePoint::new(x as f32, y as f32));
+                x >= 0.0 && y >= 0.0 && x < page.width as f64 && y < page.height as f64
+            }
+            _ => false,
+        };
+        let forward = self.pointer.inside || inside || !self.pointer.buttons.is_empty();
+        self.pointer.inside = inside;
+        forward
+    }
+    /// Routes one native event. The page receives pointer input inside its rectangle and
+    /// free keys. A missing view still routes keys, so commands work without a page.
+    /// `consumed` means that chrome covers the pointer.
     pub fn forward(
         &mut self,
-        view: &WebView,
+        view: Option<&WebView>,
         event: WindowEvent,
-        size: winit::dpi::PhysicalSize<u32>,
+        page: Option<PageRect>,
         consumed: bool,
-    ) -> Option<KeyInput> {
+    ) -> Routed {
+        let notify = |event: InputEvent| {
+            if let Some(view) = view {
+                view.notify_input_event(event);
+            }
+        };
         match event {
             WindowEvent::CursorMoved { position, .. } => {
-                let point = DevicePoint::new(position.x as f32, position.y as f32);
-                self.cursor.set(point);
-                let inside = position.x >= 0.0
-                    && position.y >= 0.0
-                    && position.x < size.width as f64
-                    && position.y < size.height as f64;
-                let forward = self.pointer.inside || inside || !self.pointer.buttons.is_empty();
-                self.pointer.inside = inside;
-                if !forward {
-                    return None;
+                self.position = Some((position.x, position.y));
+                if self.place(page) {
+                    notify(InputEvent::MouseMove(servo::MouseMoveEvent::new(
+                        self.cursor.get().into(),
+                    )));
                 }
-                view.notify_input_event(InputEvent::MouseMove(servo::MouseMoveEvent::new(
-                    point.into(),
-                )));
             }
             WindowEvent::MouseInput {
                 state: button_state,
@@ -79,7 +123,7 @@ impl Input {
                 ..
             } => {
                 if !self.pointer.button(button, button_state, consumed) {
-                    return None;
+                    return Routed::default();
                 }
                 let button = match button {
                     winit::event::MouseButton::Left => servo::MouseButton::Primary,
@@ -94,7 +138,7 @@ impl Input {
                 } else {
                     servo::MouseButtonAction::Up
                 };
-                view.notify_input_event(InputEvent::MouseButton(servo::MouseButtonEvent::new(
+                notify(InputEvent::MouseButton(servo::MouseButtonEvent::new(
                     action,
                     button,
                     self.cursor.get().into(),
@@ -102,7 +146,7 @@ impl Input {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if !self.pointer.inside || consumed {
-                    return None;
+                    return Routed::default();
                 }
                 // Keep line deltas in line units. Servo converts them to pixels.
                 let (x, y, mode) = match delta {
@@ -111,7 +155,7 @@ impl Input {
                     }
                     MouseScrollDelta::PixelDelta(p) => (p.x, p.y, servo::WheelMode::DeltaPixel),
                 };
-                view.notify_input_event(InputEvent::Wheel(servo::WheelEvent::new(
+                notify(InputEvent::Wheel(servo::WheelEvent::new(
                     servo::WheelDelta { x, y, z: 0., mode },
                     self.cursor.get().into(),
                 )));
@@ -158,9 +202,9 @@ impl Input {
                     meta: flags.contains(servo::Modifiers::META),
                     pressed: event.state == ElementState::Pressed,
                 };
-                let route = self.keys.route(event.physical_key, &owned, consumed);
+                let route = self.keys.route(event.physical_key, &owned, false);
                 if route.page {
-                    view.notify_input_event(InputEvent::Keyboard(
+                    notify(InputEvent::Keyboard(
                         servo::KeyboardEvent::new_without_event(
                             key_state,
                             key,
@@ -172,15 +216,18 @@ impl Input {
                         ),
                     ));
                 }
-                if !route.emit {
-                    return None;
-                }
-                return Some(owned);
+                return Routed {
+                    key: route.emit.then_some(owned),
+                    free: route.page,
+                };
             }
-            WindowEvent::CursorLeft { .. } => self.pointer.inside = false,
+            WindowEvent::CursorLeft { .. } => {
+                self.position = None;
+                self.pointer.inside = false;
+            }
             _ => {}
         }
-        None
+        Routed::default()
     }
 }
 
@@ -312,6 +359,55 @@ mod tests {
         assert!(input.keys.held.is_empty());
         input.update_modifiers(winit::keyboard::ModifiersState::empty());
         assert!(input.modifiers.get().is_empty());
+    }
+    #[test]
+    fn pointer_coordinates_are_relative_to_the_page_rectangle() {
+        let mut input = Input::default();
+        let page = PageRect {
+            x: 500,
+            y: 20,
+            width: 400,
+            height: 300,
+        };
+        assert!(!input.place(Some(page)), "No pointer is inside the window");
+        input.position = Some((510.0, 50.0));
+        assert!(input.place(Some(page)));
+        assert_eq!(input.cursor.get(), DevicePoint::new(10.0, 30.0));
+        assert!(input.pointer.inside);
+        // The page moved away from a resting pointer. It sees the leave once.
+        let moved = PageRect { x: 0, ..page };
+        assert!(input.place(Some(moved)));
+        assert!(!input.pointer.inside);
+        assert!(!input.place(Some(moved)));
+        for outside in [(499.0, 50.0), (900.0, 50.0), (510.0, 19.0), (510.0, 320.0)] {
+            input.position = Some(outside);
+            assert!(!input.place(Some(page)), "{outside:?}");
+        }
+        input.position = Some((899.0, 319.0));
+        assert!(input.place(Some(page)));
+        assert!(input.place(None), "A hidden page sees the pointer leave");
+        assert!(!input.pointer.inside);
+        // A drag that began on the page keeps reaching it outside the rectangle.
+        input.pointer.buttons.push(Left);
+        input.position = Some((0.0, 0.0));
+        assert!(input.place(Some(page)));
+    }
+    #[test]
+    fn selecting_the_visible_page_preserves_its_pending_mouse_release() {
+        let mut input = Input::default();
+        input.pointer.inside = true;
+        assert!(input.pointer.button(Left, ElementState::Pressed, false));
+        input.keys.sync(routes(), Handle(1));
+        input
+            .keys
+            .route(PhysicalKey::Code(KeyCode::KeyX), &key("x", true), false);
+        input.change_focus();
+        assert!(input.keys.pending.is_empty());
+        assert!(input.keys.held.is_empty());
+        // The release still reaches the page even if the pointer crossed into text.
+        input.pointer.inside = false;
+        assert!(input.pointer.button(Left, ElementState::Released, true));
+        assert!(input.pointer.buttons.is_empty());
     }
     #[test]
     fn command_keys_and_invalid_tails_never_reach_the_page() {

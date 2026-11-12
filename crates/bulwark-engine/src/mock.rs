@@ -23,6 +23,7 @@ impl View {
 pub struct MockEngine {
     views: Registry<View>,
     selected: Option<Handle>,
+    ui: Option<crate::ui::Ui>,
     events: EventSink,
     pending: Vec<(Handle, Request)>,
 }
@@ -31,9 +32,14 @@ impl MockEngine {
         Self {
             views: Registry::default(),
             selected: None,
+            ui: None,
             events,
             pending: Vec::new(),
         }
+    }
+    /// The presented UI description.
+    pub fn ui(&self) -> Option<&crate::ui::Ui> {
+        self.ui.as_ref()
     }
     fn changed(&self, view: Handle) -> Result<(), Fault> {
         let info = self.views.get(view)?.info();
@@ -81,7 +87,8 @@ impl Engine for MockEngine {
                     urls: vec![url.clone()],
                     cursor: 0,
                 })?;
-                if first {
+                // A UI description decides visibility once one exists.
+                if first && self.ui.is_none() {
                     self.selected = Some(view);
                 }
                 self.changed(view)?;
@@ -93,6 +100,17 @@ impl Engine for MockEngine {
                     self.views.get(*view)?;
                 }
                 self.selected = *view;
+                Ok(Data::Nil)
+            }
+            Command::SetUi(ui) => {
+                // Validate before any change, so a rejected description changes nothing.
+                ui.check_revision(self.ui.as_ref())?;
+                let web = ui.web().map(|(view, _)| view);
+                if let Some(view) = web {
+                    self.views.get(view)?;
+                }
+                self.selected = web;
+                self.ui = Some(ui.clone());
                 Ok(Data::Nil)
             }
             Command::Navigate { view, url } => {
@@ -207,6 +225,96 @@ mod tests {
             engine.views.get(views[1]).unwrap().info().url,
             "about:second"
         );
+    }
+
+    #[tokio::test]
+    async fn ui_descriptions_select_the_web_element_and_reject_stale_input() {
+        use crate::ui::{Element, Rect, Ui, Widget};
+        let (runtime, mut endpoint) = channel(Arc::new(|| {}));
+        let mut engine = MockEngine::new(endpoint.events.clone());
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        };
+        let describe = |revision, view: Option<Handle>| {
+            let widget = view.map_or(Widget::Text("text".into()), Widget::Web);
+            Command::SetUi(
+                Ui::new(
+                    revision,
+                    Some(1),
+                    vec![Element {
+                        id: Some(1),
+                        rect,
+                        widget,
+                    }],
+                )
+                .unwrap(),
+            )
+        };
+        let mut views = Vec::new();
+        for url in ["about:a", "about:b"] {
+            let pending = runtime
+                .client
+                .submit(Command::Create { url: url.into() }, DEFAULT_TIMEOUT)
+                .unwrap();
+            endpoint.admit(|r| engine.handle(r));
+            let Data::Handle(view) = pending.wait().await.unwrap() else {
+                panic!("Expected handle")
+            };
+            views.push(view);
+        }
+        for (command, result, selected, revision) in [
+            (
+                describe(2, Some(views[1])),
+                Ok(Data::Nil),
+                Some(views[1]),
+                2,
+            ),
+            (
+                describe(1, Some(views[0])),
+                Err(Fault::StaleRevision),
+                Some(views[1]),
+                2,
+            ),
+            (
+                describe(2, Some(views[0])),
+                Err(Fault::StaleRevision),
+                Some(views[1]),
+                2,
+            ),
+            (
+                describe(3, Some(Handle(u64::MAX >> 1))),
+                Err(Fault::StaleHandle),
+                Some(views[1]),
+                2,
+            ),
+            (describe(3, None), Ok(Data::Nil), None, 3),
+            (
+                Command::Create {
+                    url: "about:c".into(),
+                },
+                Ok(Data::Nil),
+                None,
+                3,
+            ),
+        ] {
+            let creating = matches!(command, Command::Create { .. });
+            let pending = runtime.client.submit(command, DEFAULT_TIMEOUT).unwrap();
+            endpoint.admit(|r| engine.handle(r));
+            let reply = pending.wait().await;
+            if creating {
+                assert!(matches!(reply, Ok(Data::Handle(_))));
+            } else {
+                assert_eq!(reply, result);
+            }
+            assert_eq!(
+                engine.selected, selected,
+                "A described frame decides visibility"
+            );
+            assert_eq!(engine.ui().unwrap().revision(), revision);
+        }
     }
 
     #[tokio::test]

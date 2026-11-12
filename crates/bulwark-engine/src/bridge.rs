@@ -27,6 +27,8 @@ struct State {
     error: Mutex<Option<Fault>>,
     wake: Wake,
     key_routes: Mutex<Arc<crate::keys::KeyRoutes>>,
+    // The latest window snapshot, and whether its change notification is outstanding.
+    viewport: Mutex<(Option<crate::ui::Viewport>, bool)>,
 }
 /// Terminal state lives outside the event queue, so a full queue cannot hide it.
 /// Stopping requests host shutdown; the host cancels the runtime after engine cleanup.
@@ -44,6 +46,23 @@ impl Control {
     }
     pub fn key_routes(&self) -> Arc<crate::keys::KeyRoutes> {
         self.0.key_routes.lock().unwrap().clone()
+    }
+    /// Host side. Records the window snapshot and returns true when the host must emit one
+    /// viewport event. Further changes stay coalesced until the runtime reads the snapshot,
+    /// so a resize during a runtime stall cannot fill the event queue.
+    pub fn set_viewport(&self, viewport: crate::ui::Viewport) -> bool {
+        let mut state = self.0.viewport.lock().unwrap();
+        if state.0 == Some(viewport) {
+            return false;
+        }
+        state.0 = Some(viewport);
+        !std::mem::replace(&mut state.1, true)
+    }
+    /// Runtime side. Returns the latest snapshot and rearms the change notification.
+    pub fn viewport(&self) -> Option<crate::ui::Viewport> {
+        let mut state = self.0.viewport.lock().unwrap();
+        state.1 = false;
+        state.0
     }
     pub fn is_stopped(&self) -> bool {
         self.0.stopped.load(Ordering::Acquire)
@@ -247,6 +266,7 @@ pub fn channel(wake: Wake) -> (RuntimeEndpoint, EngineEndpoint) {
         stopped: AtomicBool::new(false),
         error: Mutex::new(None),
         key_routes: Mutex::new(Arc::default()),
+        viewport: Mutex::new((None, false)),
         wake,
     }));
     let (sender, requests) = mpsc::channel(REQUEST_CAPACITY);
@@ -451,6 +471,24 @@ mod tests {
         );
         assert!(runtime.events.try_recv().is_err());
         assert_eq!(runtime.control.error(), Some(Fault::PayloadTooLarge));
+    }
+    #[test]
+    fn viewport_changes_coalesce_until_the_runtime_reads_the_snapshot() {
+        let (runtime, engine) = pair();
+        let viewport = |width| crate::ui::Viewport {
+            width,
+            height: 760,
+            scale: 2.0,
+        };
+        assert_eq!(runtime.control.viewport(), None);
+        assert!(engine.control.set_viewport(viewport(1000)));
+        assert!(!engine.control.set_viewport(viewport(1000)));
+        assert!(!engine.control.set_viewport(viewport(900)));
+        assert!(!engine.control.set_viewport(viewport(800)));
+        assert_eq!(runtime.control.viewport(), Some(viewport(800)));
+        assert!(!engine.control.set_viewport(viewport(800)));
+        assert!(engine.control.set_viewport(viewport(700)));
+        assert_eq!(runtime.control.viewport(), Some(viewport(700)));
     }
     #[tokio::test]
     async fn shutdown_rejects_queued_and_new_work() {

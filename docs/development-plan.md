@@ -749,7 +749,7 @@ The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072)
 The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
 All Phase 1 acceptance criteria now pass.
 
-1. Complete P2.3 from the [window model checkpoint](phase-2-windows.md): registry integration and the data-driven UI boundary.
+1. Complete P2.3 evidence from the [window checkpoint](phase-2-windows.md): current Linux CI and physical mixed-pane input checks.
 2. Continue the ordered milestones in the [Phase 2 plan](phase-2-plan.md).
 
 E5 remains mandatory for simultaneous web content splits.

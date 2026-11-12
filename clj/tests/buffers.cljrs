@@ -6,6 +6,7 @@
             [bulwark.core :as core]
             [bulwark.hooks :as hooks]
             [bulwark.native :as native]
+            [bulwark.ui :as ui]
             [clojure.core.async :refer [timeout]]))
 
 (defn check! [condition message]
@@ -26,6 +27,11 @@
         (await (timeout 1))
         (recur)))))
 
+(defn shown
+  "Returns the webview of the last published description, or nil for a frame without a page."
+  []
+  (second (last (filter (fn [call] (= :show (first call))) @native-calls))))
+
 (defn ^:async fails-with? [expected operation]
   (try (await (operation)) false
        (catch Exception error (= expected (:error (ex-data error))))))
@@ -35,8 +41,14 @@
   (buffer/set-host!
     {:create (fn [url] (swap! native-calls conj [:create url]) (native/webview-create url))
      :close (fn [view] (swap! native-calls conj [:close view]) (native/webview-close view))
-     :select (fn [view] (swap! native-calls conj [:select view]) (native/webview-select view))
      :next-id native/allocate-id!})
+  (ui/set-host!
+    {:publish (fn [description]
+                (swap! native-calls conj
+                       [:show (:webview (first (filter (fn [element] (= :web (:ui/kind element)))
+                                                       (:elements description))))])
+                (native/set-ui! description))
+     :viewport native/ui-viewport})
   (check! (string? (:doc (meta #'native/allocate-id!))) "Missing identifier docstring")
   (doseq [event-type [:buffer/created :buffer/selected :buffer/killed]]
     (hooks/add-hook! event-type :test/lifecycle #'record-lifecycle!))
@@ -52,7 +64,7 @@
             "Creation hooks ran in the wrong order")
     (check! (and (= a (buffer/selected-id)) (= view-a (browser/active-view)))
             "A background buffer took the selection")
-    (check! (= [:select view-a] (last @native-calls)) "Background creation changed the visible view")
+    (check! (= view-a (shown)) "Background creation changed the visible view")
     (check! (= [:web :web-mode []] (mapv (buffer/buffer b) [:buffer/kind :buffer/major-mode :buffer/minor-modes]))
             "A web buffer lacks its default metadata")
     ;; A background navigation reaches its own buffer and leaves the selected one alone.
@@ -68,7 +80,7 @@
     (buffer/enable-minor-mode! b :reader-mode)
     (await (buffer/select! b))
     (check! (and (= b (buffer/selected-id)) (= view-b (browser/active-view))) "Selection did not move")
-    (check! (= [:select view-b] (last @native-calls)) "Selection did not show the buffer's webview")
+    (check! (= view-b (shown)) "Selection did not show the buffer's webview")
     (check! (= [:buffer/selected b a] (last @lifecycle)) "Selection hook lost the previous buffer")
     (await (buffer/select! b))
     (check! (= [:buffer/selected b a] (last @lifecycle)) "Reselecting ran the selection hook again")
@@ -83,7 +95,7 @@
     ;; Text buffers own no webview. Selecting one hides every page.
     (let [text (await (buffer/create! {:kind :text :name "*Messages*" :text "ready"}))]
       (check! (and (= text (buffer/selected-id)) (nil? (browser/active-view))) "Text buffer was not selected")
-      (check! (= [:select nil] (last @native-calls)) "Text selection left a page visible")
+      (check! (nil? (shown)) "Text selection left a page visible")
       (check! (= text (:buffer/id (buffer/find-named "*Messages*"))) "Named buffer lookup failed")
       (check! (await (fails-with? nil (fn [] (browser/navigate! "about:blank"))))
               "Navigation succeeded without a visible page")
@@ -103,7 +115,7 @@
       (await (buffer/kill! text))
       (check! (= [[:buffer/killed text nil] [:buffer/selected b text]] @lifecycle)
               "Kill hooks ran in the wrong order")
-      (check! (and (= b (buffer/selected-id)) (= [:select view-b] (last @native-calls)))
+      (check! (and (= b (buffer/selected-id)) (= view-b (shown)))
               "Kill did not select the most recent buffer")
       (check! (await (fails-with? :stale-buffer (fn [] (buffer/select! text)))) "A killed id stayed selectable")
       (check! (await (fails-with? :stale-buffer (fn [] (buffer/kill! text)))) "A buffer was killed twice"))
