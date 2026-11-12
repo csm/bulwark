@@ -18,7 +18,7 @@ Phase 2 adopts three fixes after `b847a29b`.
 Compiled symbol literals retain namespace and version fields. Compiled string counts use Unicode characters instead of UTF-8 bytes.
 Local atom swaps retry after a conflicting update, including updates from another fiber.
 The [mechanism checkpoint](phase-2-mechanisms.md#aot-path-and-upstream-fix) records the failing reproduction and passing upstream checks.
-The [window checkpoint](phase-2-windows.md#unicode-compiler-fix) records the Unicode regression and upstream draft PR.
+The [window checkpoint](phase-2-windows.md#unicode-compiler-fix) records the Unicode regression and upstream changes.
 The NUC exposed a lost registry update during startup.
 The bootstrap `swap!` wrapper used an unconditional `reset!` after its update function returned.
 A sibling fiber could change the atom during that function and lose its update.

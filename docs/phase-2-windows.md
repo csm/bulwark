@@ -1,12 +1,12 @@
 # Phase 2 window and UI checkpoint
 
-Status: implementation complete, 2026-11-12. Physical input and current Linux CI evidence remain open.
+Status: implementation and physical macOS checks complete, 2026-11-12. Final NUC validation remains in progress.
 Base: `main` at `c1fef4d`, followed by the inherited WIP commit `9b0eb20`.
 
 This checkpoint implements the six P2.3 items in the [implementation plan](phase-2-plan.md).
 The inherited WIP adds registry integration, UI descriptions, native rendering, and initial regression suites.
 The continuation fixes pointer ownership, description limits, deep tree traversal, and Unicode counts in AOT code.
-P2.3 remains open until its physical input and Linux checks pass.
+The [validation report](phase-2-window-acceptance.md) records physical input results, Linux runs, and the resulting corrections.
 
 ## Window tree
 
@@ -148,12 +148,28 @@ The Unicode budget regression exposed an upstream AOT defect.
 Compiled `(count "😀")` returned 4 bytes, while the interpreter returned one character.
 This also made short Unicode strings fail `subs` during clipping.
 
-Bulwark now pins [`174557b3`](https://github.com/csm/clojurust/commit/174557b3eec18117f0b4886076961fe3223316c0), one commit after the previous pin.
-[Draft PR #491](https://github.com/csm/clojurust/pull/491) targets the existing AOT fix branch.
+The Unicode fix is [`174557b3`](https://github.com/csm/clojurust/commit/174557b3eec18117f0b4886076961fe3223316c0), one commit after the earlier pin.
+[PR #491](https://github.com/csm/clojurust/pull/491) merged into the existing AOT integration branch.
 It changes `rt_count` to count Unicode scalar values, as the interpreter does.
 The ABI regression failed before the fix. Three count ABI tests and an actual AOT executable pass after it.
 The product regression describes eight Unicode panes and exercises the native byte limit.
 No local dependency override supplies these results.
+
+## Concurrent publication and atom updates
+
+The NUC exposed overlapping publications before native submission.
+A publication gate now covers revision assignment, submission, and settlement.
+Contenders park on a promise, so neither the runtime carrier nor the engine thread blocks.
+The mock bridge suite holds one publisher and requires the next publisher to wait.
+It also waits for complete page events and replacement hooks before assertions.
+
+A later startup failure exposed a lost atom update in Clojurust.
+The bootstrap `swap!` wrapper used `reset!` after its update function returned.
+Another fiber could change the registry during that function and lose its update.
+[Draft PR #496](https://github.com/csm/clojurust/pull/496) adds compare-and-set retries through the native evaluator entry.
+Bulwark now pins [`540e4218`](https://github.com/csm/clojurust/commit/540e42181ad06046116f0e2007e7f0c449efaa65).
+The upstream tests cover direct and applied calls, watches, parked fibers, AOT, and no-GC execution.
+The product model suite includes the conflicting-update regression in both evaluator modes and the AOT binary.
 
 ## Checks and remaining evidence
 
@@ -188,9 +204,11 @@ This continuation retains both modes under `target/window-evidence/`.
 The runner joins the runtime in every case, including expected failures.
 The existing GL texture diagnostic and large `__eh_frame` linker warning remain.
 
-Computer Use reported a locked Mac during this continuation.
-Physical pointer routing, held mouse release during window selection, keyboard focus changes, and interactive resize remain open.
-The automated checks do not establish physical IME, clipboard, display-scale transitions, or Linux input behavior.
-Current Linux CI remains open. The workflow already includes the extended portable, native process, and AOT suites.
+The [physical macOS checks](phase-2-window-acceptance.md#physical-macos-results) passed on 2026-11-12.
+They cover held mouse release, keyboard focus, command capture, independent scrolling, resize, split fallback, hidden input isolation, editing, and physical close.
+The NUC passed all 50 portable tests on `fb30e86`. Its remaining checks continue in the full runner.
+IME, clipboard, display-scale transitions, and physical Linux input remain outside this evidence.
+[GitHub run 43277594137](https://github.com/csm/bulwark/actions/runs/43277594137) passed all four jobs at `fb30e86`.
+GitHub Actions and the NUC supply separate Linux results.
 
 After these P2.3 checks pass, the next milestone is P2.4: modes and contextual keymaps.
