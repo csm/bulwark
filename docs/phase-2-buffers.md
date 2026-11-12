@@ -119,7 +119,13 @@ Local Linux results on 2026-11-12:
 
 `clj/tests/buffers-native.cljrs` is a new native process case, `retained-buffers`.
 It checks retained JavaScript state, form values, and history across buffer switches, a text buffer, and kills.
-This checkpoint did not build Servo locally. The native case, native Clippy, and the native nREPL suite need Linux CI.
+This checkpoint did not build Servo locally.
+
+The [buffer CI run](https://github.com/csm/bulwark/actions/runs/43155228894) passed all four jobs at `c4b2caf`.
+The [window model CI run](https://github.com/csm/bulwark/actions/runs/43155539808) passed all four jobs at `500170d`.
+Both runtime jobs passed on Linux and macOS. The Linux AOT job passed.
+The Linux Servo job passed native Clippy, both software Servo smokes, and the native process suite in both evaluator modes.
+That suite includes the `retained-buffers` case. The native nREPL suite also passed in both modes.
 Physical input checks across buffers remain open, with the existing IME, clipboard, and display-scale limits.
 
 The next milestone is P2.3. The [window model checkpoint](phase-2-windows.md) begins it.
