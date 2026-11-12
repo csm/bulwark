@@ -122,4 +122,4 @@ It checks retained JavaScript state, form values, and history across buffer swit
 This checkpoint did not build Servo locally. The native case, native Clippy, and the native nREPL suite need Linux CI.
 Physical input checks across buffers remain open, with the existing IME, clipboard, and display-scale limits.
 
-The next milestone is P2.3: windows, the pure layout function, and the data-driven UI boundary.
+The next milestone is P2.3. The [window model checkpoint](phase-2-windows.md) begins it.

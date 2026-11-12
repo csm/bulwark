@@ -3,7 +3,8 @@
   (:require [bulwark.buffer :as buffer]
             [bulwark.commands :as commands :refer [defcommand]]
             [bulwark.keymap :as keymap]
-            [bulwark.hooks :as hooks]))
+            [bulwark.hooks :as hooks]
+            [bulwark.window :as window]))
 
 (defn check! [condition message]
   (when-not condition (throw (ex-info message {}))))
@@ -112,5 +113,66 @@
   (check! (fails? (fn [] (buffer/host-operation :create))) "A portable runtime claimed an engine")
   (check! (fails? (fn [] (buffer/set-host! {:create 1}))) "An invalid host was installed"))
 (reset! buffer/registry buffer/empty-registry)
+;; Window trees and layout are pure data with supplied identifiers.
+(defn error-kind [f]
+  (try (f) nil (catch Exception error (:error (ex-data error)))))
+(let [viewport {:x 0 :y 0 :width 1001 :height 600}
+      one (window/initial 1 10)
+      two (window/split one 1 2 :row 11)
+      three (window/split two 2 3 :column)
+      rectangle (fn [state id] (first (filter (fn [r] (= id (:window/id r))) (window/layout state viewport))))]
+  (check! (= [{:window/id 1 :window/buffer 10 :x 0 :y 0 :width 1001 :height 600 :revision 1}]
+             (window/layout one viewport)) "A single window did not fill the viewport")
+  (check! (= [[1 10] [2 11] [3 11]] (mapv (fn [leaf] [(:window/id leaf) (:window/buffer leaf)]) (window/windows three)))
+          "Splits lost their order or buffers")
+  (check! (and (= 1 (:selected three)) (= 3 (:revision three))) "A split moved selection or kept its revision")
+  (check! (= [[0 0 500 600] [500 0 501 300] [500 300 501 300]]
+             (mapv (fn [r] [(:x r) (:y r) (:width r) (:height r)]) (window/layout three viewport)))
+          "Layout rectangles do not tile the viewport")
+  (check! (every? (fn [r] (= 3 (:revision r))) (window/layout three viewport)) "Rectangles lost the layout revision")
+  (check! (= [20 30] (mapv (first (window/layout one {:x 20 :y 30 :width 240 :height 100})) [:x :y]))
+          "Layout ignored the viewport origin")
+  (let [wider (window/resize three 1 :row 250)
+        taller (window/resize three 3 :column 100)
+        clamped (window/resize three 1 :row 5000)]
+    (check! (= [750 251] [(:width (rectangle wider 1)) (:width (rectangle wider 2))]) "Row resize failed")
+    (check! (= [240 360] [(:height (rectangle taller 2)) (:height (rectangle taller 3))])
+            "Growing a second child did not shrink the first")
+    (check! (= 500 (:width (rectangle taller 1))) "A column resize changed a row split")
+    (check! (= 900 (:width (rectangle clamped 1))) "Resize exceeded the maximum share")
+    (check! (= :no-split (error-kind (fn [] (window/resize three 1 :column 10)))) "Resize found a missing split")
+    (check! (= :no-split (error-kind (fn [] (window/resize one 1 :row 10)))) "A sole window was resized"))
+  (let [selected (window/select three 3)
+        without-three (window/delete selected 3)
+        without-one (window/delete three 1)
+        shown (window/set-buffer three 3 12)]
+    (check! (= 2 (:selected without-three)) "Deleting the selected window lost the selection")
+    (check! (= [1 2] (mapv :window/id (window/windows without-three))) "Delete removed the wrong window")
+    (check! (= [500 0 501 600] (mapv (rectangle without-three 2) [:x :y :width :height]))
+            "A sibling did not take the freed space")
+    (check! (= 2 (:selected without-one)) "Deleting the first window selected a stale window")
+    (check! (= :column (:split/direction (:root without-one))) "The surviving split was not promoted")
+    (check! (= 3 (:selected (window/delete selected 1))) "Deleting another window moved the selection")
+    (check! (= 12 (:window/buffer (window/window shown 3))) "Buffer assignment failed")
+    (check! (= 11 (:window/buffer (window/window shown 2))) "Buffer assignment changed another window")
+    (check! (> (:revision shown) (:revision three)) "A change kept an obsolete revision"))
+  (check! (= :sole-window (error-kind (fn [] (window/delete one 1)))) "The only window was deleted")
+  (doseq [bad [(fn [] (window/select three 9)) (fn [] (window/delete three 9))
+               (fn [] (window/split three 9 4 :row)) (fn [] (window/set-buffer three 9 10))
+               (fn [] (window/resize three 9 :row 10))]]
+    (check! (= :stale-window (error-kind bad)) "A stale window id was accepted"))
+  (doseq [bad [(fn [] (window/split three 1 2 :row)) (fn [] (window/split three 1 4 :diagonal))
+               (fn [] (window/initial 0 10)) (fn [] (window/layout one {:x 0 :y 0 :width 0 :height 600}))
+               (fn [] (window/layout one {:x 0 :y 0 :width 10.5 :height 600}))]]
+    (check! (fails? bad) "An invalid window operation was accepted"))
+  (check! (= :window-too-small (error-kind (fn [] (window/layout three {:x 0 :y 0 :width 150 :height 600}))))
+          "A window below the minimum size was laid out")
+  ;; Under the single-visible-webview fallback, text panes may sit beside one web pane.
+  (let [web? (fn [buffer] (contains? #{10 11} buffer))]
+    (check! (= :multiple-visible-webviews (error-kind (fn [] (window/check-web-limit three web?))))
+            "Two visible webviews were accepted")
+    (let [mixed (-> three (window/set-buffer 2 20) (window/set-buffer 3 21))]
+      (check! (= mixed (window/check-web-limit mixed web?)) "A mixed layout was rejected")
+      (check! (= [1] (mapv :window/id (window/web-windows mixed web?))) "Web windows were miscounted"))))
 (println "Shell model assertions passed")
 :shell-model-passed

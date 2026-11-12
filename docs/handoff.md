@@ -13,7 +13,10 @@ The last-web-buffer policy and the new buffer commands live in `bulwark.browser`
 Local Linux checks passed: formatting, portable Clippy, all 43 portable tests, both foundation smokes, and both mock nREPL suites.
 The standalone AOT binary passed with the new buffer assertions.
 Servo was not built locally. The new `retained-buffers` native case and the existing native suites need Linux CI.
-The next work is P2.3 windows and the data-driven UI boundary.
+
+The [window model checkpoint](phase-2-windows.md) begins P2.3 with the immutable window tree and the pure layout function.
+Its assertions pass in the interpreter, Tiered mode, and the AOT binary.
+The next work connects the layout to the buffer registry, then adds the bounded UI descriptions and native mechanisms.
 
 ## Phase 2 mechanism continuation
 

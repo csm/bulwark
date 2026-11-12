@@ -750,7 +750,7 @@ The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11
 All Phase 1 acceptance criteria now pass.
 
 1. Run remote CI for the Phase 2 buffer checkpoint, including the AOT job and the `retained-buffers` native case.
-2. Add P2.3 windows, the pure layout function, and the data-driven UI boundary.
+2. Complete P2.3 from the [window model checkpoint](phase-2-windows.md): registry integration and the data-driven UI boundary.
 3. Continue the ordered milestones in the [Phase 2 plan](phase-2-plan.md).
 
 E5 remains mandatory for simultaneous web content splits.
