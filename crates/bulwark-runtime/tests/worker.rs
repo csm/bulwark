@@ -17,6 +17,36 @@ fn wait(worker: &mut Worker) -> anyhow::Result<String> {
 }
 
 #[test]
+fn stopping_during_bootstrap_joins_without_a_terminal_panic() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        for delay_ms in [0, 1, 5, 25, 100] {
+            let (runtime, mut endpoint) = bridge::channel(Arc::new(|| {}));
+            let mut worker = Worker::spawn_with_mode(
+                runtime,
+                "(require 'clojure.core.async)
+                 (defn ^:async parked! [] (await (clojure.core.async/timeout 60000)))
+                 (parked!)"
+                    .into(),
+                mode,
+            )
+            .unwrap();
+            thread::sleep(Duration::from_millis(delay_ms));
+            endpoint.stop_admission();
+            worker.stop();
+            assert!(wait(&mut worker).is_err());
+            assert!(
+                endpoint.control.error().is_none(),
+                "Cancellation became a terminal panic in {mode:?} after {delay_ms} ms: {:?}",
+                endpoint.control.error()
+            );
+        }
+    }
+}
+
+#[test]
 fn runtime_errors_wake_the_host_and_remain_visible_at_join() {
     let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = wakes.clone();

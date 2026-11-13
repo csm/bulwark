@@ -7,17 +7,24 @@ Last inspection: 2026-11-12.
 | Dependency | Pin | Source |
 |---|---|---|
 | Servo | `=0.7.0`, published 2026-10-05 | [Published crate](https://crates.io/crates/servo/0.7.0) |
-| Clojurust | `174557b3eec18117f0b4886076961fe3223316c0` | [Pinned commit](https://github.com/csm/clojurust/commit/174557b3eec18117f0b4886076961fe3223316c0) |
+| Clojurust | `540e42181ad06046116f0e2007e7f0c449efaa65` | [Pinned commit](https://github.com/csm/clojurust/commit/540e42181ad06046116f0e2007e7f0c449efaa65) |
 
 `Cargo.toml` records direct pins. `Cargo.lock` records the complete dependency graph.
 Clojurust packages use one git revision. No dependency points at a local checkout.
 The bootstrap disables Clojurust's git-backed package loader through `default-features = false`.
 It enables the full regex implementation.
 
-Phase 2 adopts two compiler fixes after `b847a29b`.
+Phase 2 adopts three fixes after `b847a29b`.
 Compiled symbol literals retain namespace and version fields. Compiled string counts use Unicode characters instead of UTF-8 bytes.
+Local atom swaps retry after a conflicting update, including updates from another fiber.
 The [mechanism checkpoint](phase-2-mechanisms.md#aot-path-and-upstream-fix) records the failing reproduction and passing upstream checks.
-The [window checkpoint](phase-2-windows.md#unicode-compiler-fix) records the Unicode regression and upstream draft PR.
+The [window checkpoint](phase-2-windows.md#unicode-compiler-fix) records the Unicode regression and upstream changes.
+The NUC exposed a lost registry update during startup.
+The bootstrap `swap!` wrapper used an unconditional `reset!` after its update function returned.
+A sibling fiber could change the atom during that function and lose its update.
+[Draft PR #496](https://github.com/csm/clojurust/pull/496) restores compare-and-set retries through the native evaluator entry.
+It covers direct calls, applied calls, parked fibers, watches, AOT, and no-GC execution.
+The product model suite includes the conflicting-update regression.
 The optional AOT test feature uses the same revision as the product runtime.
 
 Servo enables `bundled` and `js_jit` with default features disabled.

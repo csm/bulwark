@@ -25,6 +25,7 @@
 (def host (atom nil))
 (def issued (atom {:revision 0 :structure nil :description nil}))
 (def dropped (atom 0))
+(def publication (atom nil))
 
 (defn set-host!
   "Installs native mechanisms: :publish [description] returns an awaitable reply, and
@@ -118,7 +119,16 @@
   {:focus (:focus description)
    :elements (mapv (fn [element] (dissoc element :text :emphasis)) (:elements description))})
 
-(defn ^:async present!
+(defn acquire-publication!
+  "Takes the publication gate. A contender parks on the owner's promise."
+  []
+  (loop []
+    (if-let [owner @publication]
+      (do @owner (recur))
+      (let [release (promise)]
+        (if (compare-and-set! publication nil release) release (recur))))))
+
+(defn ^:async publish-description!
   "Publishes the description of a layout and its panes. An unchanged description sends
   nothing. A new structure takes the next revision. A failed publication raises, and the
   next call publishes again."
@@ -128,7 +138,7 @@
     (when-not (= description (:description previous))
       (let [shape (structure description)
             revision (if (= shape (:structure previous)) (:revision previous) (inc (:revision previous)))]
-        ;; Issue the revision before parking, so concurrent publications stay ordered.
+        ;; The publication gate covers revision assignment, submission, and settlement.
         (reset! issued {:revision revision :structure shape :description description})
         (when-let [publish (:publish @host)]
           (let [reply (await (publish (assoc description :revision revision)))]
@@ -139,6 +149,17 @@
                                 current)))
               (throw (ex-info "Native UI publication failed" reply)))))))
     nil))
+
+(defn ^:async present!
+  "Publishes one frame at a time. Concurrent callers park without blocking the runtime
+  or the engine. A finally clause releases the gate after the publication settles."
+  [layout panes]
+  (let [release (acquire-publication!)]
+    (try
+      (await (publish-description! layout panes))
+      (finally
+        (reset! publication nil)
+        (deliver release true)))))
 
 (defn current?
   "Returns true when a native interaction saw the issued revision."

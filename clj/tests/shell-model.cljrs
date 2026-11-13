@@ -287,6 +287,14 @@
       (check! (= :window-too-small (error-kind (fn [] (ui/check-fit! crowded)))) "A crowded layout fit the frame")
       (check! (= [:web :line :echo] (kinds (ui/describe crowded (buffer/panes split) viewport)))
               "A crowded layout did not fall back to its selected window"))))
+;; A registry update must retry when another writer commits during its transition.
+(let [state (atom {:left 0}) first-call (atom true) calls (atom 0)]
+  (swap! state (fn [before]
+                 (swap! calls inc)
+                 (when (compare-and-set! first-call true false)
+                   (reset! state {:left 0 :right 1}))
+                 (assoc before :left 1)))
+  (check! (and (= {:left 1 :right 1} @state) (= 2 @calls)) "A registry swap lost a concurrent update"))
 ;; Deep trees do not consume the interpreter's native call stack.
 (let [deep (reduce (fn [state id] (window/split state 1 id :row 12))
                    (window/initial 1 12) (range 2 65))
