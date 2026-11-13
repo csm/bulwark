@@ -4,6 +4,7 @@
             [bulwark.commands :refer [defcommand]]
             [bulwark.hooks :as hooks]
             [bulwark.keymap :as keymap]
+            [bulwark.mode :refer [define-major-mode]]
             [bulwark.window :as window]
             [clojure.string :as string]))
 
@@ -11,6 +12,10 @@
 (def history-limit 256)
 (def new-buffer-url (atom "about:blank"))
 (def resize-step 50)
+
+(define-major-mode web-mode "Major mode for buffers that show a web page." {})
+(define-major-mode text-mode "Major mode for buffers that show read-only text." {})
+(define-major-mode repl-mode "Major mode for buffers that evaluate Clojure forms." {})
 
 (defn value!
   "Returns a successful native value, or raises an error containing the reply."

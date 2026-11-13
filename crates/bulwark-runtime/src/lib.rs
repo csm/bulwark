@@ -56,6 +56,10 @@ impl RuntimeHost {
                 "bulwark.buffer",
                 include_str!("../../../clj/bulwark/buffer.cljrs"),
             )
+            .builtin_source(
+                "bulwark.mode",
+                include_str!("../../../clj/bulwark/mode.cljrs"),
+            )
             .builtin_source("bulwark.ui", include_str!("../../../clj/bulwark/ui.cljrs"))
             .builtin_source(
                 "bulwark.window",

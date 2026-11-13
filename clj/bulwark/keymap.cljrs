@@ -7,30 +7,118 @@
 (def cancel-strokes #{"C-g" "Escape"})
 (def route-publisher (atom nil))
 
-(defn set-route-publisher!
-  "Installs the host's route publisher. A nil publisher keeps the keymap portable."
-  [publish]
-  (when-not (or (nil? publish) (ifn? publish))
-    (throw (ex-info "Route publisher must be callable or nil" {})))
-  (when publish (publish (vec (keys @bindings)) (vec cancel-strokes)))
-  (reset! route-publisher publish)
-  nil)
-
-(defn update-bindings!
-  "Publishes native reservations inside the atom update. Failure retains the old map."
-  [update]
-  (swap! bindings
-    (fn [current]
-      (let [updated (update current)]
-        (when-let [publish @route-publisher]
-          (publish (vec (keys updated)) (vec cancel-strokes)))
-        updated))))
+;; `bindings` is the global keymap. `keymaps` holds named keymaps, such as one per mode.
+;; `active` names the keymaps of the current input context. Precedence, highest first:
+;; the input-context keymap (such as a minibuffer), the mode keymaps in the supplied
+;; order (minor modes, then the major mode), then the global keymap.
+;; `effective` is the one flat map that dispatch and the native reservations use.
+;; Every change publishes its candidate effective map before any atom changes, so the
+;; atoms, the effective map, and the native snapshot stay consistent after a failure.
+(def keymaps (atom {}))
+(def active (atom {:context nil :modes []}))
+(def effective (atom {}))
 
 (defn reset-prefix!
   "Cancels the pending sequence."
   []
   (reset! pending {:webview nil :keys []})
   nil)
+
+(defn prefix? [prefix keys]
+  (and (< (count prefix) (count keys)) (= prefix (vec (take (count prefix) keys)))))
+
+(defn proper-prefixes
+  "Returns each nonempty sequence that is shorter than a sequence and starts it."
+  [sequence]
+  (mapv (fn [length] (vec (take length sequence))) (range 1 (count sequence))))
+
+(defn merge-keymaps
+  "Returns the effective map of keymaps in precedence order, highest first.
+  A higher binding hides a lower binding of the same sequence, every lower sequence
+  that continues it, and every lower command on one of its prefixes. Other lower
+  bindings stay reachable, including those that share a prefix with a higher binding."
+  [layers]
+  (:bound
+    (reduce
+      (fn [merged entry]
+        (let [sequence (first entry)
+              bound (:bound merged)
+              prefixes (:prefixes merged)
+              own (proper-prefixes sequence)]
+          (if (or (contains? bound sequence)
+                  (contains? prefixes sequence)
+                  (some (fn [prefix] (contains? bound prefix)) own))
+            merged
+            {:bound (assoc bound sequence (second entry)) :prefixes (into prefixes own)})))
+      {:bound {} :prefixes #{}}
+      ;; One keymap's own sequences never conflict, so entry order within it is irrelevant.
+      (mapcat seq layers))))
+
+(defn active-ids
+  "Returns the active keymap ids of a context, highest precedence first."
+  [context]
+  (if (:context context) (vec (cons (:context context) (:modes context))) (:modes context)))
+
+(defn effective-map
+  "Returns the effective map for a global keymap, named keymaps, and an active context.
+  An id without a keymap contributes nothing."
+  [global named context]
+  (merge-keymaps (conj (mapv (fn [id] (get named id {})) (active-ids context)) global)))
+
+(defn publish!
+  "Sends a map's sequences to the host's route publisher, when one is installed."
+  [merged]
+  (when-let [publish @route-publisher]
+    (publish (vec (keys merged)) (vec cancel-strokes)))
+  nil)
+
+(defn set-route-publisher!
+  "Installs the host's route publisher. A nil publisher keeps the keymap portable."
+  [publish]
+  (when-not (or (nil? publish) (ifn? publish))
+    (throw (ex-info "Route publisher must be callable or nil" {})))
+  (when publish (publish (vec (keys @effective)) (vec cancel-strokes)))
+  (reset! route-publisher publish)
+  nil)
+
+(defn commit!
+  "Publishes the effective map of a candidate state, then commits the state and cancels
+  the pending prefix. A failed publication changes nothing. An unchanged effective map
+  is published again only when forced, as for a change of input context."
+  [global named context force]
+  (let [merged (effective-map global named context)]
+    (when (or force (not= merged @effective)) (publish! merged))
+    (reset! bindings global)
+    (reset! keymaps named)
+    (reset! active context)
+    (reset! effective merged)
+    (reset-prefix!)))
+
+(defn update-bindings!
+  "Applies a function to the global keymap. Failure retains the old map."
+  [update]
+  (commit! (update @bindings) @keymaps @active false)
+  @bindings)
+
+(defn keymap-id!
+  "Returns a named keymap's id, or rejects a value that is not a keyword."
+  [id]
+  (when-not (keyword? id) (throw (ex-info "Keymap id must be a keyword" {:keymap id})))
+  id)
+
+(defn activate!
+  "Makes the named keymaps of the focused buffer's modes active, highest precedence first.
+  Always publishes, so the native side also cancels its pending prefix."
+  [ids]
+  (when-not (and (vector? ids) (every? keyword? ids))
+    (throw (ex-info "Active keymaps must be a vector of keywords" {:keymaps ids})))
+  (commit! @bindings @keymaps (assoc @active :modes ids) true))
+
+(defn set-context!
+  "Sets or clears the input-context keymap, which precedes every mode keymap."
+  [id]
+  (when id (keymap-id! id))
+  (commit! @bindings @keymaps (assoc @active :context id) true))
 
 (defn canonical-stroke [key control alt shift meta]
   (let [letter (and (= 1 (count key))
@@ -66,31 +154,87 @@
     (throw (ex-info "Key sequence must be a nonempty string" {:keys keys})))
   (mapv parse-stroke (string/split (string/trim keys) #"\s+")))
 
-(defn prefix? [prefix keys]
-  (and (< (count prefix) (count keys)) (= prefix (vec (take (count prefix) keys)))))
+(defn table
+  "Returns the global keymap, or a named keymap, which is empty until its first binding."
+  [id]
+  (if (nil? id) @bindings (get @keymaps (keymap-id! id) {})))
+
+(defn replace-table!
+  "Publishes and commits a replacement for the global keymap or a named keymap."
+  [id replacement]
+  (if (nil? id)
+    (commit! replacement @keymaps @active false)
+    (commit! @bindings (assoc @keymaps id replacement) @active false)))
+
+(defn check-conflict!
+  "Rejects a sequence that is a prefix of, or continues, another sequence of one keymap."
+  [current sequence keys]
+  (when (some (fn [existing] (or (prefix? sequence existing) (prefix? existing sequence)))
+              (clojure.core/keys current))
+    (throw (ex-info "Key sequence conflicts with a command prefix" {:keys keys}))))
 
 (defn bind-key!
-  "Binds a sequence to a registered command. Conflicting prefixes are rejected."
-  [keys command]
-  (let [sequence (parse-keys keys) qualified (:name (commands/command-info command))]
-    (update-bindings!
-      (fn [current]
-        (when (some (fn [existing] (or (prefix? sequence existing) (prefix? existing sequence)))
-                    (clojure.core/keys current))
-          (throw (ex-info "Key sequence conflicts with a command prefix" {:keys keys})))
-        (assoc current sequence qualified)))
-    (reset-prefix!)
-    qualified))
+  "Binds a sequence to a registered command in the global keymap, or in a named keymap.
+  Conflicting prefixes within one keymap are rejected. Across keymaps, precedence decides."
+  ([keys command] (bind-key! nil keys command))
+  ([id keys command]
+   (let [sequence (parse-keys keys)
+         qualified (:name (commands/command-info command))
+         current (table id)]
+     (check-conflict! current sequence keys)
+     (replace-table! id (assoc current sequence qualified))
+     qualified)))
 
 (defn unbind-key!
-  "Removes a sequence and cancels any pending prefix."
+  "Removes a sequence from the global keymap, or from a named keymap, and cancels any
+  pending prefix."
+  ([keys] (unbind-key! nil keys))
+  ([id keys]
+   (replace-table! id (dissoc (table id) (parse-keys keys)))))
+
+(defn set-keymap!
+  "Replaces a named keymap from a map of key strings to registered commands."
+  [id entries]
+  (keymap-id! id)
+  (when-not (map? entries) (throw (ex-info "A keymap needs a map of keys to commands" {:keymap id})))
+  ;; Checking each sequence against sets keeps a large keymap linear in its size.
+  (replace-table! id
+    (:bound
+      (reduce (fn [state entry]
+                (let [sequence (parse-keys (first entry))
+                      bound (:bound state)
+                      own (proper-prefixes sequence)]
+                  (when (or (contains? bound sequence)
+                            (contains? (:prefixes state) sequence)
+                            (some (fn [prefix] (contains? bound prefix)) own))
+                    (throw (ex-info "Key sequence conflicts with a command prefix" {:keys (first entry)})))
+                  {:bound (assoc bound sequence (:name (commands/command-info (second entry))))
+                   :prefixes (into (:prefixes state) own)}))
+              {:bound {} :prefixes #{}} entries))))
+
+(defn remove-keymap!
+  "Forgets a named keymap. An active id then contributes nothing."
+  [id]
+  (commit! @bindings (dissoc @keymaps (keymap-id! id)) @active false))
+
+(defn lookup
+  "Returns what a key string means in the active context: {:command :keymap} for a
+  bound sequence, where :keymap is the supplying keymap's id or :global, :prefix for
+  the start of a bound sequence, or nil."
   [keys]
-  (let [sequence (parse-keys keys)]
-    (update-bindings! (fn [current] (dissoc current sequence))))
-  (reset-prefix!))
+  (let [sequence (parse-keys keys) merged @effective]
+    (cond
+      (contains? merged sequence)
+      {:command (get merged sequence)
+       :keymap (or (first (filter (fn [id] (contains? (get @keymaps id {}) sequence))
+                                  (active-ids @active)))
+                   :global)}
+      (some (fn [bound] (prefix? sequence bound)) (clojure.core/keys merged)) :prefix
+      :else nil)))
 
 (defn ^:async dispatch-key!
-  "Runs a bound command, retains a prefix, or returns :unbound. Releases are ignored."
+  "Runs a command of the effective keymap, retains a prefix, or returns :unbound.
+  Releases are ignored."
   [event]
   (if (or (not (:pressed event))
           (contains? #{"Control" "Alt" "Shift" "Meta" "Super"} (:key event)))
@@ -101,11 +245,11 @@
           sequence (conj old stroke)]
       (cond
         (contains? cancel-strokes stroke) (do (reset-prefix!) :cancelled)
-        (get @bindings sequence)
-        (let [command (get @bindings sequence)]
+        (get @effective sequence)
+        (let [command (get @effective sequence)]
           (reset-prefix!)
           (await (commands/invoke! command))
           :command)
-        (some (fn [keys] (prefix? sequence keys)) (keys @bindings))
+        (some (fn [keys] (prefix? sequence keys)) (keys @effective))
         (do (reset! pending {:webview (:webview event) :keys sequence}) :prefix)
         :else (do (reset-prefix!) :unbound)))))

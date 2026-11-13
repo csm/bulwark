@@ -7,6 +7,7 @@ The [acceptance review](docs/phase-1-acceptance.md) records passing CI and physi
 Phase 2 is in progress. The [mechanism checkpoint](docs/phase-2-mechanisms.md) adds retained webviews and a standalone AOT test path.
 The [buffer checkpoint](docs/phase-2-buffers.md) adds the Clojure buffer registry, lifecycle hooks, and buffer commands.
 The [window checkpoint](docs/phase-2-windows.md) adds mixed panes, modelines, and bounded UI descriptions.
+The [mode checkpoint](docs/phase-2-modes.md) adds mode definitions and contextual keymaps.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 

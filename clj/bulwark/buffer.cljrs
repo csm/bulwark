@@ -25,6 +25,9 @@
 (def portable-ids (atom 0))
 (def modeline-format (atom nil))
 (def refresh-failure (atom nil))
+(def keymap-failure (atom nil))
+;; Mode keyword -> default values for buffer-local variables. bulwark.mode maintains it.
+(def mode-locals (atom {}))
 
 (defn id?
   "Returns true for a positive integer identifier."
@@ -279,6 +282,17 @@
               (throw (ex-info "A web buffer has no text" {:buffer id})))
             (assoc buffer :buffer/text text))))
 
+(defn mode-order
+  "Returns a buffer record's modes in precedence order: minor modes, most recently
+  enabled first, then the major mode."
+  [record]
+  (conj (:buffer/minor-modes record) (:buffer/major-mode record)))
+
+(defn keymap-context
+  "Returns the ids of the selected buffer's mode keymaps, highest precedence first."
+  [state]
+  (if-let [record (get (:buffers state) (:selected state))] (mode-order record) []))
+
 ;; Accessors read the current registry.
 
 (defn buffer
@@ -349,17 +363,49 @@
   (:selected (layout)))
 
 (defn local
-  "Returns a buffer-local variable, or the default."
+  "Returns a buffer-local variable. A value set in the buffer comes first, then the
+  defaults of its modes in precedence order, then the supplied default."
   ([id key] (local id key nil))
-  ([id key default] (get (:buffer/locals (buffer! id)) key default)))
+  ([id key default]
+   (let [record (buffer! id)
+         scopes (cons (:buffer/locals record)
+                      (map (fn [mode] (get @mode-locals mode {})) (mode-order record)))
+         scope (first (filter (fn [scope] (contains? scope key)) scopes))]
+     (if scope (get scope key) default))))
+
+(defn sync-keymaps!
+  "Activates a registry state's keymap context unless it is already active. Callers
+  publish a candidate state here before they commit it, so a failed publication leaves
+  the registry, the effective keymap, and the native reservations unchanged."
+  [state]
+  (let [context (keymap-context state)]
+    (when-not (= context (:modes @keymap/active))
+      (keymap/activate! context)))
+  nil)
+
+(defn sync-keymaps-after-removal!
+  "Follows a removal, which cannot be refused. A failed publication keeps the previous
+  effective keymap and its native reservations, and the error stays in keymap-failure."
+  []
+  (try
+    (sync-keymaps! @registry)
+    (reset! keymap-failure nil)
+    (catch Exception error
+      (reset! keymap-failure error)))
+  nil)
 
 (defn alter!
-  "Applies a pure transition with a buffer id and arguments to the registry."
+  "Applies a pure transition with a buffer id and arguments to the registry. A change of
+  the selected buffer's modes publishes its keymaps first."
   [transition id & args]
-  (swap! registry (fn [state] (apply transition state id args)))
+  (let [change (fn [state] (apply transition state id args))]
+    (sync-keymaps! (change @registry))
+    (swap! registry change))
   nil)
 
 (defn set-local! "Sets a buffer-local variable." [id key value] (alter! set-local id key value))
+;; These three change the registry and the active keymaps only. bulwark.mode adds
+;; definitions and lifecycle hooks.
 (defn set-major-mode! "Replaces a buffer's major mode." [id mode] (alter! set-major-mode id mode))
 (defn enable-minor-mode! "Enables a minor mode in a buffer." [id mode] (alter! enable-minor-mode id mode))
 (defn disable-minor-mode! "Disables a minor mode in a buffer." [id mode] (alter! disable-minor-mode id mode))
@@ -421,7 +467,8 @@
   nil)
 
 (defn ^:async commit-selection!
-  "Publishes the selection, then commits it. A failure leaves the registry unchanged."
+  "Publishes the selection and its keymaps, then commits it. A failure leaves the
+  registry unchanged."
   [id]
   (buffer! id)
   (let [window-id (next-id!)]
@@ -430,8 +477,14 @@
       ;; The buffer was killed while the native request was parked.
       (await (refresh!))
       (stale! id))
-    (swap! registry select id window-id)
-    (await (refresh!))
+    (let [failure (try
+                    (sync-keymaps! (select @registry id window-id))
+                    (swap! registry select id window-id)
+                    nil
+                    (catch Exception error error))]
+      ;; After a refused keymap publication, the frame returns to the retained selection.
+      (await (refresh!))
+      (when failure (throw failure)))
     (keymap/reset-prefix!)
     nil))
 
@@ -477,6 +530,7 @@
   [record was-selected]
   (let [id (:buffer/id record)
         successor (when was-selected (selected-id))]
+    (sync-keymaps-after-removal!)
     (when was-selected (keymap/reset-prefix!))
     (await (refresh!))
     (await (hooks/run-hooks! {:event/type :buffer/killed :buffer id :buffer/record record}))
@@ -530,7 +584,11 @@
         candidate (change @registry)]
     (ui/check-fit! (:layout candidate))
     (await (present! candidate))
-    (let [failure (try (swap! registry change) nil (catch Exception error error))]
+    (let [failure (try
+                    (sync-keymaps! (change @registry))
+                    (swap! registry change)
+                    nil
+                    (catch Exception error error))]
       ;; A registry that changed while the request was parked keeps its own layout.
       (await (refresh!))
       (when failure (throw failure)))
