@@ -9,7 +9,7 @@
 ;;   :text  {:ui/id window-id :text string}          a read-only text panel
 ;;   :line  {:text string :emphasis boolean}         one line, such as a modeline
 ;;   :echo  {}                                       the place of the native echo text
-;;   :input {:ui/id id :text string}                 a one-line editable control
+;;   :input {:ui/id id :text string :label string}   a one-line editable control after a label
 ;; A revision names one structure: the focus and each element's id, kind, rectangle, and
 ;; webview. A change of text alone keeps the revision. Native interactions carry the
 ;; revision they saw, so an interaction with an older structure can be discarded.
@@ -21,11 +21,17 @@
 (def max-line-characters 256)
 (def max-text-characters 16384)
 (def max-description-characters 65536)
+(def max-input-characters 1024)
+(def max-prompt-lines 8)
 (def default-viewport {:width 1000 :height 760 :scale 1.0})
 (def host (atom nil))
 (def issued (atom {:revision 0 :structure nil :description nil}))
 (def dropped (atom 0))
 (def publication (atom nil))
+;; The open prompt, or nil: {:id element-id :label string :text string :lines [{:text :emphasis}]}.
+;; The prompt's input takes the place of the echo line and owns the focus. Its lines
+;; cover the windows directly above it.
+(def prompt (atom nil))
 
 (defn set-host!
   "Installs native mechanisms: :publish [description] returns an awaitable reply, and
@@ -36,6 +42,17 @@
     (throw (ex-info "UI host must be nil or a map of callable mechanisms" {})))
   (reset! host operations)
   (reset! issued {:revision (:revision @issued) :structure nil :description nil})
+  nil)
+
+(defn set-prompt!
+  "Sets or clears the prompt of the next published frame."
+  [view]
+  (when-not (or (nil? view)
+                (and (integer? (:id view)) (pos? (:id view)) (string? (:label view)) (string? (:text view))
+                     (vector? (:lines view)) (<= (count (:lines view)) max-prompt-lines)
+                     (every? (fn [line] (string? (:text line))) (:lines view))))
+    (throw (ex-info "A prompt needs an id, a label, a text, and at most 8 lines" {})))
+  (reset! prompt view)
   nil)
 
 (defn viewport
@@ -64,16 +81,17 @@
 
 (defn rectangles
   "Returns the window rectangles for an area. A layout that does not fit the area or the
-  element limit shows only its selected window. The layout itself does not change."
-  [layout area]
+  element limit shows only its selected window. The layout itself does not change.
+  Reserved elements belong to the echo line or to a prompt."
+  [layout area reserved]
   (let [selected (window/window! layout (:selected layout))
         alone [(assoc area :window/id (:window/id selected) :window/buffer (:window/buffer selected))]
         fitted (try (window/layout layout area)
                     (catch Exception error
                       (when-not (= :window-too-small (:error (ex-data error))) (throw error))
                       alone))]
-    ;; Each window has at most a content element and a modeline. The echo takes one more.
-    (if (> (* 2 (count fitted)) (dec max-elements)) alone fitted)))
+    ;; Each window has at most a content element and a modeline.
+    (if (> (* 2 (count fitted)) (- max-elements reserved)) alone fitted)))
 
 (defn pane-elements
   "Returns the elements of one window: its content, then its modeline when both fit."
@@ -90,34 +108,58 @@
                 :text (clip (:modeline pane) max-line-characters) :emphasis selected}]
       [content])))
 
+(defn prompt-elements
+  "Returns a prompt's elements: its lines from top to bottom, directly above its input,
+  then the input in the place of the echo line. Lines that do not fit the area are omitted."
+  [view area]
+  (let [width (:width area)
+        lines (vec (take (quot (:height area) modeline-height) (:lines view)))
+        top (- (:height area) (* modeline-height (count lines)))]
+    (conj (vec (map-indexed (fn [row line]
+                              {:ui/kind :line :x 0 :y (+ top (* row modeline-height))
+                               :width width :height modeline-height
+                               :text (clip (:text line) max-line-characters)
+                               :emphasis (boolean (:emphasis line))})
+                            lines))
+          {:ui/kind :input :ui/id (:id view) :x 0 :y (:height area) :width width :height echo-height
+           :text (clip (:text view) max-input-characters)
+           :label (clip (:label view) max-line-characters)})))
+
 (defn describe
   "Returns a description without a revision. Panes map each window id to
   {:kind :view :text :modeline}. The selected window's content owns the focus.
-  A nil layout leaves only the echo line."
-  [layout panes viewport]
-  (let [area (window-area viewport)
-        echo {:ui/kind :echo :x 0 :y (:height area) :width (:width area) :height echo-height}
-        rectangles (if layout (rectangles layout area) [])
-        ;; Four UTF-8 bytes per character bounds the whole description at 256 KiB.
-        ;; Reserve every modeline first, then share the remaining budget among panes.
-        text-limit (min max-text-characters
-                        (quot (- max-description-characters (* (count rectangles) max-line-characters))
-                              (max 1 (count rectangles))))
-        windows (if layout
-                  (vec (mapcat (fn [rectangle]
-                                 (pane-elements rectangle
-                                                (get panes (:window/id rectangle))
-                                                (= (:window/id rectangle) (:selected layout))
-                                                text-limit))
-                               rectangles))
-                  [])]
-    {:focus (when layout (:selected layout)) :elements (conj windows echo)}))
+  A nil layout leaves only the echo line. A prompt replaces the echo line with its
+  input, which owns the focus, and draws its lines over the windows."
+  ([layout panes viewport] (describe layout panes viewport nil))
+  ([layout panes viewport view]
+   (let [area (window-area viewport)
+         chrome (if view
+                  (prompt-elements view area)
+                  [{:ui/kind :echo :x 0 :y (:height area) :width (:width area) :height echo-height}])
+         rectangles (if layout (rectangles layout area (count chrome)) [])
+         ;; Four UTF-8 bytes per character bounds the whole description at 256 KiB.
+         ;; Reserve every modeline and the prompt first, then share the remaining budget among panes.
+         reserved (+ (* (+ (count rectangles) (count chrome)) max-line-characters)
+                     (if view max-input-characters 0))
+         text-limit (min max-text-characters
+                         (quot (- max-description-characters reserved)
+                               (max 1 (count rectangles))))
+         windows (if layout
+                   (vec (mapcat (fn [rectangle]
+                                  (pane-elements rectangle
+                                                 (get panes (:window/id rectangle))
+                                                 (= (:window/id rectangle) (:selected layout))
+                                                 text-limit))
+                                rectangles))
+                   [])]
+     {:focus (if view (:id view) (when layout (:selected layout)))
+      :elements (into windows chrome)})))
 
 (defn structure
   "Returns the part of a description that a revision names."
   [description]
   {:focus (:focus description)
-   :elements (mapv (fn [element] (dissoc element :text :emphasis)) (:elements description))})
+   :elements (mapv (fn [element] (dissoc element :text :emphasis :label)) (:elements description))})
 
 (defn acquire-publication!
   "Takes the publication gate. A contender parks on the owner's promise."
@@ -133,7 +175,7 @@
   nothing. A new structure takes the next revision. A failed publication raises, and the
   next call publishes again."
   [layout panes]
-  (let [description (describe layout panes (viewport))
+  (let [description (describe layout panes (viewport) @prompt)
         previous @issued]
     (when-not (= description (:description previous))
       (let [shape (structure description)

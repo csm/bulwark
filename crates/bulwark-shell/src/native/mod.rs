@@ -58,7 +58,7 @@ impl Surface {
     fn input_has_focus(&self) -> bool {
         self.engine
             .ui()
-            .is_some_and(|ui| matches!(ui.focused(), Some(Widget::Input(_))))
+            .is_some_and(|ui| matches!(ui.focused(), Some(Widget::Input { .. })))
     }
 
     /// The pointer in logical pixels, when it is inside the window.
@@ -248,6 +248,8 @@ impl App {
             Some(window.scale_factor() as f32),
             false,
         );
+        // The frame paints its own dark panels, so the text cannot follow a light system theme.
+        chrome.egui_ctx.set_theme(egui::Theme::Dark);
         // Browser keys belong to Clojure/Servo. Keep chrome geometry at the
         // native scale instead of egui's default Ctrl/Cmd-plus zoom behavior.
         chrome

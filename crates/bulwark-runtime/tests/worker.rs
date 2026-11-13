@@ -361,6 +361,20 @@ fn modes_and_contextual_keymaps_pass_in_interpreter_and_tiered_modes() {
 }
 
 #[test]
+fn minibuffer_and_command_palette_pass_in_interpreter_and_tiered_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/minibuffer.cljrs"),
+            ":minibuffer-passed",
+            mode,
+        );
+    }
+}
+
+#[test]
 fn windows_and_ui_descriptions_pass_in_interpreter_and_tiered_modes() {
     for mode in [
         cljrs_runtime::ExecutionMode::TreeWalk,

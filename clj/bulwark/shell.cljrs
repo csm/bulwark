@@ -20,6 +20,8 @@
                           (await (native/set-echo! (:title event))))
     :buffer/selected (await (native/set-echo! (buffer/display-name (:buffer event))))
     :page/crashed (await (native/set-echo! (str "Page crashed: " (:message event))))
+    ;; A command that fails after it suspended has no waiting dispatcher.
+    :command/failed (await (native/set-echo! (str "Command failed: " (ex-message (:error event)))))
     :input/key (when (and (:pressed event) (= :unbound (:keymap/status event)))
                  (await (native/set-echo! (str "Key: " (:key event)))))
     nil))
@@ -28,7 +30,7 @@
   "Opens the initial page and keeps the runtime alive until native shutdown."
   [url]
   (browser/install!)
-  (doseq [event-type [:page/title-changed :page/crashed :input/key :buffer/selected]]
+  (doseq [event-type [:page/title-changed :page/crashed :command/failed :input/key :buffer/selected]]
     (hooks/add-hook! event-type :bulwark.shell/echo #'dispatch!))
   (value! (await (native/set-echo! "Bulwark")))
   (await (browser/open! url))

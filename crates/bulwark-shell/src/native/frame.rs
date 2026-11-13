@@ -15,6 +15,8 @@ const EMPHASIS: egui::Color32 = egui::Color32::from_rgb(58, 78, 112);
 struct Edit {
     described: String,
     text: String,
+    // New described text moves the cursor to its end at the next draw.
+    replaced: bool,
 }
 /// The user's text for each input element of the presented description.
 #[derive(Default)]
@@ -25,12 +27,13 @@ impl Edits {
     pub fn sync(&mut self, ui: Option<&Ui>) {
         let mut edits = HashMap::new();
         for element in ui.map(Ui::elements).unwrap_or_default() {
-            if let (Some(id), Widget::Input(text)) = (element.id, &element.widget) {
+            if let (Some(id), Widget::Input { text, .. }) = (element.id, &element.widget) {
                 let edit = match self.0.remove(&id) {
                     Some(edit) if edit.described == *text => edit,
                     _ => Edit {
                         described: text.clone(),
                         text: text.clone(),
+                        replaced: true,
                     },
                 };
                 edits.insert(id, edit);
@@ -106,7 +109,7 @@ pub fn draw_echo(
     })
 }
 
-fn line(pane: &mut egui::Ui, text: &str) {
+fn line(pane: &mut egui::Ui, text: impl Into<egui::WidgetText>) {
     pane.add(egui::Label::new(text).truncate().selectable(false));
 }
 
@@ -126,7 +129,7 @@ pub fn draw(
                 Widget::Web(_) => continue,
                 Widget::Line { emphasis: true, .. } => EMPHASIS,
                 Widget::Line { .. } => LINE,
-                Widget::Text(_) | Widget::Echo | Widget::Input(_) => PANEL,
+                Widget::Text(_) | Widget::Echo | Widget::Input { .. } => PANEL,
             };
             let rect = egui::Rect::from_min_size(
                 egui::pos2(element.rect.x as f32, element.rect.y as f32),
@@ -140,7 +143,10 @@ pub fn draw(
             pane.set_clip_rect(rect);
             pane.painter().rect_filled(rect, 0.0, fill);
             match (&element.widget, element.id) {
-                (Widget::Line { text, .. }, _) => line(&mut pane, text),
+                (Widget::Line { text, emphasis }, _) => {
+                    let text = egui::RichText::new(text);
+                    line(&mut pane, if *emphasis { text.strong() } else { text });
+                }
                 (Widget::Echo, _) => line(&mut pane, echo),
                 (Widget::Text(text), id) => {
                     egui::ScrollArea::both()
@@ -152,18 +158,35 @@ pub fn draw(
                             );
                         });
                 }
-                (Widget::Input(_), Some(id)) => {
+                (Widget::Input { label, .. }, Some(id)) => {
                     let Some(edit) = edits.0.get_mut(&id) else {
                         continue;
                     };
-                    let response = pane.add(
-                        egui::TextEdit::singleline(&mut edit.text)
-                            .id(egui::Id::new(("bulwark-input", id)))
-                            .desired_width(f32::INFINITY)
-                            .frame(egui::Frame::NONE)
-                            // A character has at most four bytes.
-                            .char_limit(MAX_INPUT_BYTES / 4),
-                    );
+                    let control = egui::Id::new(("bulwark-input", id));
+                    if std::mem::take(&mut edit.replaced) {
+                        let mut state =
+                            egui::TextEdit::load_state(pane.ctx(), control).unwrap_or_default();
+                        let end = egui::text::CCursor::new(edit.text.chars().count());
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                        state.store(pane.ctx(), control);
+                    }
+                    let response = pane
+                        .horizontal(|pane| {
+                            if !label.is_empty() {
+                                pane.add(egui::Label::new(label).selectable(false));
+                            }
+                            pane.add(
+                                egui::TextEdit::singleline(&mut edit.text)
+                                    .id(control)
+                                    .desired_width(f32::INFINITY)
+                                    .frame(egui::Frame::NONE)
+                                    // A character has at most four bytes.
+                                    .char_limit(MAX_INPUT_BYTES / 4),
+                            )
+                        })
+                        .inner;
                     let revision = ui.revision();
                     let text = || edit.text.clone();
                     if response.changed() {
@@ -187,7 +210,7 @@ pub fn draw(
                         _ => {}
                     }
                 }
-                (Widget::Web(_), _) | (Widget::Input(_), None) => {}
+                (Widget::Web(_), _) | (Widget::Input { .. }, None) => {}
             }
         }
     })
@@ -232,7 +255,14 @@ mod tests {
                         emphasis: true,
                     },
                 ),
-                element(Some(3), [0, 732, 1000, 28], Widget::Input(input.into())),
+                element(
+                    Some(3),
+                    [0, 732, 1000, 28],
+                    Widget::Input {
+                        text: input.into(),
+                        label: "Find: ".into(),
+                    },
+                ),
             ],
         )
         .unwrap()
@@ -404,8 +434,27 @@ mod tests {
         let replaced = mixed(5, 3, "fresh");
         edits.sync(Some(&replaced));
         assert_eq!(edits.0[&3].text, "fresh");
+        // The cursor follows the new text, so typing continues at its end.
+        assert!(pass(&context, &replaced, &mut edits, vec![]).is_empty());
+        assert_eq!(
+            pass(
+                &context,
+                &replaced,
+                &mut edits,
+                vec![egui::Event::Text("!".into())]
+            ),
+            vec![EventKind::UiInputChanged {
+                element: 3,
+                revision: 5,
+                text: "fresh!".into()
+            }]
+        );
+        edits.sync(Some(&mixed(5, 3, "fresh")));
+        assert_eq!(edits.0[&3].text, "fresh!", "Repeated text kept the edit");
+        let replaced = mixed(5, 3, "fresh again");
+        edits.sync(Some(&replaced));
         // An input without the described focus receives no text.
-        let unfocused = mixed(6, 1, "fresh");
+        let unfocused = mixed(6, 1, "fresh again");
         edits.sync(Some(&unfocused));
         let _ = pass(&context, &unfocused, &mut edits, vec![]);
         assert!(
@@ -417,7 +466,7 @@ mod tests {
             )
             .is_empty()
         );
-        assert_eq!(edits.0[&3].text, "fresh");
+        assert_eq!(edits.0[&3].text, "fresh again");
         edits.sync(None);
         assert!(edits.0.is_empty());
     }

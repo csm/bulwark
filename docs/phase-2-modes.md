@@ -1,6 +1,6 @@
 # Phase 2 mode and contextual keymap checkpoint
 
-Status: implemented, 2026-11-12. Linux CI and physical keyboard checks remain open.
+Status: implemented, 2026-11-12. Linux CI passed on `main`. Physical keyboard checks remain open.
 Base: `codex/phase-2-3-windows` at `17f0750`, merged with `main` at `c689d8c`.
 
 This checkpoint implements the six P2.4 items in the [implementation plan](phase-2-plan.md).
@@ -58,7 +58,7 @@ A mode's keymap is the named keymap with the mode's keyword.
 
 | Precedence | Keymap | Source |
 |---|---|---|
-| 1 | Input context | `(keymap/set-context! id)`, for the P2.5 minibuffer |
+| 1 | Input context | `(keymap/set-context! id)`, as for the [minibuffer](phase-2-minibuffer.md) |
 | 2 | Minor modes | The selected buffer, most recently enabled first |
 | 3 | Major mode | The selected buffer |
 | 4 | Global | `keymap/bindings` |
@@ -125,7 +125,8 @@ No upstream issue exists yet. The defect needs a minimal reproduction before a p
 | Native nREPL, mock nREPL, both smokes, Servo smoke | Passed in both evaluator modes where a mode flag exists. |
 | Formatting and Clippy | Portable workspace and native targets. |
 
-All results come from local macOS runs on 2026-11-12. Linux CI has not run on this change.
+All results come from local macOS runs on 2026-11-12.
+[Run 43373187308](https://github.com/csm/bulwark/actions/runs/43373187308) later passed all jobs on `main` at `dcf9a23`, which contains this change.
 
 The default Clojure assertion budget in `tests/worker.rs` is now 30 seconds instead of 10.
 The macOS runner in [run 43293702744](https://github.com/csm/bulwark/actions/runs/43293702744) exceeded 10 seconds in the Tiered shell model.

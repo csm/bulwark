@@ -233,8 +233,9 @@
       :else nil)))
 
 (defn ^:async dispatch-key!
-  "Runs a command of the effective keymap, retains a prefix, or returns :unbound.
-  Releases are ignored."
+  "Runs a command of the effective keymap as a task, retains a prefix, or returns
+  :unbound. A cancel stroke returns :cancelled for a pending prefix, else :quit.
+  A command that suspends, as for a prompt, also returns :command. Releases are ignored."
   [event]
   (if (or (not (:pressed event))
           (contains? #{"Control" "Alt" "Shift" "Meta" "Super"} (:key event)))
@@ -244,11 +245,11 @@
           old (if (= (:webview event) (:webview @pending)) (:keys @pending) [])
           sequence (conj old stroke)]
       (cond
-        (contains? cancel-strokes stroke) (do (reset-prefix!) :cancelled)
+        (contains? cancel-strokes stroke) (do (reset-prefix!) (if (seq old) :cancelled :quit))
         (get @effective sequence)
         (let [command (get @effective sequence)]
           (reset-prefix!)
-          (await (commands/invoke! command))
+          (await (commands/run-task! (fn [] (commands/invoke! command))))
           :command)
         (some (fn [keys] (prefix? sequence keys)) (keys @effective))
         (do (reset! pending {:webview (:webview event) :keys sequence}) :prefix)

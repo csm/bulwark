@@ -8,6 +8,7 @@ Phase 2 is in progress. The [mechanism checkpoint](docs/phase-2-mechanisms.md) a
 The [buffer checkpoint](docs/phase-2-buffers.md) adds the Clojure buffer registry, lifecycle hooks, and buffer commands.
 The [window checkpoint](docs/phase-2-windows.md) adds mixed panes, modelines, and bounded UI descriptions.
 The [mode checkpoint](docs/phase-2-modes.md) adds mode definitions and contextual keymaps.
+The [minibuffer checkpoint](docs/phase-2-minibuffer.md) adds prompts, fuzzy completion, and the `M-x` command palette.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -64,7 +65,7 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    The checks cover page rendering, echo updates, parked shutdown, runtime errors, dispatcher errors, and native quit.
    The [native shell checkpoint](docs/phase-1-native.md) records the implementation and validation limits.
    The [command checkpoint](docs/phase-1-commands.md) describes Clojure commands, keymaps, hooks, and title history.
-   Default keys include `C-c r` for reload and `C-x h` for recent page titles.
+   Default keys include `C-c r` for reload, `C-x h` for recent page titles, `M-x` or `C-c x` for the command palette, `C-x b` for buffers, and `C-l` for a URL.
    `C-x 3` splits a page beside text. `C-x o` selects the next window, and `C-x 1` keeps only that window.
    The native shell reserves command sequences before Servo receives them.
    Unbound keys reach Servo without a runtime wait.

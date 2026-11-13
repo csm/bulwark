@@ -1,0 +1,82 @@
+;; The minibuffer against the real native host. The runner supplies user/initial-url.
+(ns bulwark.tests.minibuffer-native
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.core :as core]
+            [bulwark.minibuffer :as minibuffer]
+            [bulwark.native :as native]
+            [bulwark.ui :as ui]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defn ^:async until! [done? message]
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (when-not (await (done?))
+        (check! (< (System/currentTimeMillis) deadline) (str "Timed out: " message))
+        (await (timeout 5))
+        (recur)))))
+
+(defn ^:async js! [id script]
+  (browser/value! (await (native/eval-js (:buffer/view (buffer/buffer! id)) script))))
+
+(defn issued [] (:description @ui/issued))
+(defn input-element []
+  (first (filter (fn [element] (= :input (:ui/kind element))) (:elements (issued)))))
+
+(defn ^:async press! [key modifiers]
+  (await (core/dispatch! (merge {:event/type :input/key :key key :pressed true} modifiers))))
+
+(defn ^:async interact! [type text]
+  (await (core/dispatch! {:event/type type :ui/id (:minibuffer/id @minibuffer/state)
+                          :revision (:revision @ui/issued) :text text})))
+
+(defn ^:async shown! []
+  (await (until! (fn [] (let [current @minibuffer/state]
+                          (and current (= (:answered current) (:revision current))
+                               (= (:lines (minibuffer/view current))
+                                  (mapv (fn [line] (select-keys line [:text :emphasis]))
+                                        (take-last (:rows current)
+                                                   (take-while (fn [element] (not= :input (:ui/kind element)))
+                                                               (:elements (issued)))))))))
+                 "the published candidates")))
+
+(defn ^:async program! []
+  (browser/install!)
+  (reset! buffer/last-web-buffer-policy nil)
+  (let [page (await (browser/open! user/initial-url))
+        window (buffer/selected-window)]
+    (await (until! (fn ^:async [] (= "Bulwark Servo fixture" (await (js! page "document.title")))) "the fixture"))
+    (await (until! (fn ^:async [] (= "true" (await (js! page "String(document.hasFocus())")))) "the page's focus"))
+    ;; The native frame accepts the prompt. The page stays visible and loses the keyboard.
+    (await (press! "x" {:alt true}))
+    (check! (and (minibuffer/active?) (= (:minibuffer/id @minibuffer/state) (:focus (issued)))) "M-x opened no native prompt")
+    (await (until! (fn ^:async [] (= "false" (await (js! page "String(document.hasFocus())")))) "the prompt's focus"))
+    (await (interact! :ui/input-changed "splr"))
+    (await (shown!))
+    (check! (= "split-window-right" (:text (first (:candidates @minibuffer/state)))) "The palette ranked the wrong command")
+    (await (interact! :ui/input-submitted "splr"))
+    (check! (and (not (minibuffer/active?)) (= 2 (count (filter (fn [element] (contains? #{:web :text} (:ui/kind element)))
+                                                              (:elements (issued))))))
+            "The accepted command did not split the window")
+    (check! (= window (:focus (issued))) "The focus did not return to the selected window")
+    (await (until! (fn ^:async [] (= "true" (await (js! page "String(document.hasFocus())")))) "the restored focus"))
+    ;; Cancellation restores the focus too. The final frame keeps a prompt open for review.
+    (await (press! "l" {:control true}))
+    (check! (= "URL: " (:label (input-element))) "The URL prompt did not open")
+    (await (press! "Escape" {}))
+    (check! (and (not (minibuffer/active?)) (= window (:focus (issued)))) "Cancellation kept the prompt")
+    (await (press! "x" {:alt true}))
+    (await (interact! :ui/input-changed "window"))
+    (await (shown!))
+    (await (press! "ArrowDown" {}))
+    (await (press! "Tab" {}))
+    (await (shown!))
+    (check! (= (:text (input-element)) (:input @minibuffer/state)) "Completion did not reach the native input")
+    (await (timeout 200)))
+  (browser/value! (await (native/log "Native minibuffer assertions passed")))
+  :minibuffer-native-passed)
+
+(program!)

@@ -1,4 +1,5 @@
-(ns bulwark.commands)
+(ns bulwark.commands
+  (:require [bulwark.hooks :as hooks]))
 
 (def registry (atom {}))
 
@@ -36,3 +37,63 @@
   "Calls the current command Var and awaits its result."
   [command & args]
   (await (apply (deref (:var (command-info command))) args)))
+
+;; The ordered event dispatcher runs each command as a task and waits until the task
+;; finishes or suspends. A task suspends before it waits for a later event, such as the
+;; end of a prompt, so the dispatcher can deliver that event. The handler of that event
+;; resumes the task and waits again, so the rest of the command also runs in event order.
+;; A task is an atom {:waiter promise-or-nil :fiber future}. *task* names the task of
+;; the running fiber and of the fibers that it starts.
+(def ^:dynamic *task* nil)
+
+(defn settle!
+  "Gives an outcome to the fiber that waits for a task. Returns false when none waits."
+  [task outcome]
+  (let [waiter (:waiter @task)]
+    (swap! task assoc :waiter nil)
+    (when waiter (deliver waiter outcome))
+    (boolean waiter)))
+
+(defn ^:async drive!
+  "Runs a task's function. A failure that no fiber waits for runs :command/failed hooks."
+  [task thunk]
+  (binding [*task* task]
+    (let [outcome (try {:value (await (thunk))} (catch Exception error {:error error}))]
+      (when (and (not (settle! task outcome)) (:error outcome))
+        (await (hooks/run-hooks! {:event/type :command/failed :error (:error outcome)}))))))
+
+(defn outcome!
+  "Returns a finished task's value or :suspended, or raises the task's error."
+  [outcome]
+  (cond
+    (:suspended outcome) :suspended
+    (:error outcome) (throw (:error outcome))
+    :else (:value outcome)))
+
+(defn ^:async run-task!
+  "Starts a function as a task and waits until it finishes or suspends. Returns the
+  function's awaited value or :suspended. An error before suspension reaches the caller."
+  [thunk]
+  (let [waiter (promise)
+        task (atom {:waiter waiter})]
+    (swap! task assoc :fiber (drive! task thunk))
+    (outcome! @waiter)))
+
+(defn suspend!
+  "Releases the fiber that waits for the running task, before the task waits for a
+  later event. Returns the task, or nil outside a task."
+  []
+  (when-let [task *task*]
+    (settle! task {:suspended true})
+    task))
+
+(defn ^:async resume!
+  "Calls wake, which ends a suspended task's wait, then waits until the task finishes
+  or suspends again. A nil task only calls wake."
+  [task wake]
+  (if task
+    (let [waiter (promise)]
+      (swap! task assoc :waiter waiter)
+      (wake)
+      (outcome! @waiter))
+    (do (wake) nil)))

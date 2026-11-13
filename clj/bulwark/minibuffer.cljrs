@@ -1,0 +1,338 @@
+(ns bulwark.minibuffer
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.completion :as completion]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.ui :as ui]))
+
+;; A prompt's state is one immutable map:
+;;   :minibuffer/id the id of the prompt's input element
+;;   :status        :reading, :accepted, or :cancelled
+;;   :prompt        the label before the input
+;;   :input         the latest text of the native control
+;;   :described     the text in the UI description. A change replaces the native edit.
+;;   :candidates    the provider's answer for the latest answered query
+;;   :selected      the index of the selected candidate, or nil
+;;   :revision      the number of the latest query. Each change of the input takes the next.
+;;   :answered      the revision that :candidates answers, or nil
+;;   :rows          the number of candidate lines, fixed while the prompt is open
+;;   :message       a note shown before the prompt, or nil
+;;   :provider      a completion provider, or nil
+;;   :literal       a function from the input to a result, or to nil for no result; or nil
+;;   :result        {:status :accepted :value v :input text :candidate c} or {:status :cancelled}
+;; The transitions below are pure. They need no engine and no native frame.
+
+(def max-rows 8)
+(def max-input-characters 1024)
+
+(defn start
+  "Returns the state of a new prompt for a supplied id. Options: :prompt, a string;
+  :provider, a completion provider; :literal, a function from the input to a result,
+  or to nil when the input is no result; :initial, the first input; :rows, the number
+  of candidate lines. With a provider and no :literal, only a candidate is a result.
+  Without a provider, the input is the result."
+  [id options]
+  (let [provider (:provider options)
+        literal (get options :literal (when-not provider identity))
+        initial (get options :initial "")
+        rows (get options :rows (if provider max-rows 0))]
+    (when-not (buffer/id? id)
+      (throw (ex-info "Prompt id must be a positive integer" {:id id})))
+    (when-not (and (string? (:prompt options)) (string? initial)
+                   (or (nil? provider) (ifn? provider)) (or (nil? literal) (ifn? literal))
+                   (integer? rows) (<= 0 rows max-rows))
+      (throw (ex-info "A prompt needs a :prompt string and valid options" {:options options})))
+    (let [input (ui/clip initial max-input-characters)]
+      {:minibuffer/id id :status :reading :prompt (:prompt options)
+       :input input :described input :candidates [] :selected nil
+       :revision 0 :answered nil :rows rows :message nil
+       :provider provider :literal literal :result nil})))
+
+(defn edit
+  "Records the native control's text. A changed text takes the next revision, clears
+  the selection and the message, and keeps the old candidates until its answer."
+  [state text]
+  (let [input (ui/clip text max-input-characters)]
+    (if (= input (:input state))
+      state
+      (assoc state :input input :revision (inc (:revision state)) :selected nil :message nil))))
+
+(defn answer
+  "Applies a provider's candidates for a revision. An answer for an older revision
+  changes nothing. A prompt that needs a candidate selects the first one."
+  [state revision candidates]
+  (if (= revision (:revision state))
+    (let [entries (mapv completion/candidate (take completion/max-candidates candidates))]
+      (assoc state :candidates entries :answered revision
+             :selected (when (and (seq entries) (nil? (:literal state))) 0)))
+    state))
+
+(defn note
+  "Shows a message before the prompt until the next change of the input."
+  [state message]
+  (assoc state :message message))
+
+(defn move
+  "Moves the selection by an offset and wraps at either end. Without a selection, a
+  positive offset selects the first candidate and a negative offset the last."
+  [state offset]
+  (let [total (count (:candidates state)) selected (:selected state)]
+    (cond
+      (zero? total) state
+      (nil? selected) (assoc state :selected (if (pos? offset) 0 (dec total)))
+      :else (assoc state :selected (mod (+ selected offset) total)))))
+
+(defn complete
+  "Replaces the input with the text of the selected candidate, or of the first one."
+  [state]
+  (if-let [entry (get (:candidates state) (or (:selected state) 0))]
+    (assoc (edit state (:text entry)) :described (ui/clip (:text entry) max-input-characters))
+    state))
+
+(defn accept
+  "Finishes the prompt with the selected candidate, else with the literal input.
+  Without either, the prompt stays open and shows a message."
+  [state]
+  (let [entry (when (:selected state) (get (:candidates state) (:selected state)))
+        literal (when (and (nil? entry) (:literal state)) ((:literal state) (:input state)))]
+    (cond
+      entry (assoc state :status :accepted
+                   :result {:status :accepted :value (completion/value-of entry)
+                            :input (:input state) :candidate entry})
+      (some? literal) (assoc state :status :accepted
+                             :result {:status :accepted :value literal :input (:input state)})
+      :else (note state "No match"))))
+
+(defn cancel
+  "Finishes the prompt without a value."
+  [state]
+  (assoc state :status :cancelled :result {:status :cancelled}))
+
+(defn view
+  "Returns the prompt for bulwark.ui: {:id :label :text :lines}. The lines show one page
+  of candidates around the selection. Their number never changes, so the frame keeps
+  its structure and its revision while the user types."
+  [state]
+  (let [rows (:rows state)
+        candidates (:candidates state)
+        selected (:selected state)
+        first-row (if (pos? rows) (* rows (quot (or selected 0) rows)) 0)]
+    {:id (:minibuffer/id state)
+     :label (if (:message state) (str "[" (:message state) "] " (:prompt state)) (:prompt state))
+     :text (:described state)
+     :lines (mapv (fn [row]
+                    (let [index (+ first-row row) entry (get candidates index)]
+                      {:text (if entry
+                               (str " " (:text entry) (when (seq (:detail entry)) (str "  " (:detail entry))))
+                               "")
+                       :emphasis (and (some? entry) (= index selected))}))
+                  (range rows))}))
+
+;; The driver below owns the one open prompt. Event hooks run it in event order.
+
+(def state (atom nil))
+;; {:id :result :task}: the open prompt's result promise and the task that reads it.
+(def pending (atom nil))
+(def queries (atom nil))
+(def context-failure (atom nil))
+
+(defn active?
+  "Returns true while a prompt is open."
+  []
+  (some? @state))
+
+(defn current?
+  "Returns true when an id names the open prompt."
+  [id]
+  (= id (:minibuffer/id @state)))
+
+(defn change!
+  "Applies a pure transition and arguments to the open prompt with an id. Returns the
+  new state, or nil when another prompt, or none, is open."
+  [id transition & args]
+  (swap! state (fn [current]
+                 (if (= id (:minibuffer/id current)) (apply transition current args) current)))
+  (when (current? id) @state))
+
+(defn ^:async show!
+  "Publishes the open prompt, or its absence. A failed publication stays in
+  bulwark.buffer/refresh-failure, and the next refresh publishes again."
+  []
+  (ui/set-prompt! (when-let [current @state] (view current)))
+  (await (buffer/refresh-after-event!)))
+
+(defn ^:async query!
+  "Asks the provider for the candidates of one revision. The answer applies only while
+  that revision is the latest one of the same prompt."
+  [id revision]
+  (let [current @state]
+    (when (and (current? id) (= revision (:revision current)))
+      (when-let [provider (:provider current)]
+        (let [reply (try {:candidates (await (provider (:input current)))}
+                         (catch Exception error {:error error}))]
+          (if (:error reply)
+            (change! id (fn [latest]
+                          (if (= revision (:revision latest))
+                            (note latest (str "Completion failed: " (ex-message (:error reply))))
+                            latest)))
+            (change! id answer revision (:candidates reply)))))
+      (when (current? id) (await (show!))))))
+
+(defn start-query!
+  "Starts a query that the caller does not await, so a slow provider stops no event."
+  [id revision]
+  (reset! queries (query! id revision))
+  nil)
+
+(defn leave-context!
+  "Clears the prompt's input context. A failed publication keeps the previous
+  reservations, and the error stays in context-failure until a later success."
+  []
+  (try
+    (keymap/set-context! nil)
+    (reset! context-failure nil)
+    (catch Exception error
+      (reset! context-failure error)))
+  nil)
+
+(defn ^:async finish!
+  "Closes a prompt whose state has a result: removes it from the frame, returns the
+  focus to the selected window, and resumes the reader with the result."
+  [id]
+  (let [current @state reader @pending]
+    (when (and (current? id) (:result current))
+      (reset! state nil)
+      (reset! pending nil)
+      (leave-context!)
+      (await (show!))
+      (await (commands/resume! (:task reader) (fn [] (deliver (:result reader) (:result current))))))))
+
+(defn ^:async cancel!
+  "Cancels the open prompt. Its reader receives {:status :cancelled}."
+  []
+  (when-let [current @state]
+    (let [id (:minibuffer/id current)]
+      (change! id cancel)
+      (await (finish! id)))))
+
+(defn ^:async accept!
+  "Accepts the open prompt, with a supplied final text when the native control sent one.
+  A query that the latest input still waits for runs first, in event order."
+  ([] (await (accept! nil)))
+  ([text]
+   (when-let [current @state]
+     (let [id (:minibuffer/id current)
+           edited (if text (change! id edit text) current)]
+       (when (and (:provider edited) (not= (:answered edited) (:revision edited)))
+         (await (query! id (:revision edited))))
+       (when (current? id)
+         (let [failure (try (change! id accept) nil (catch Exception error error))]
+           (when failure
+             (change! id note (str "Not accepted: " (ex-message failure))))
+           (if (= :accepted (:status @state))
+             (await (finish! id))
+             (await (show!)))))))))
+
+(defn ^:async open!
+  "Opens a prompt and returns the promise of its result. Options follow start.
+  Open prompts are cancelled first. The prompt's keys and its frame are published
+  before the prompt exists, so a failure leaves no prompt."
+  [options]
+  ;; A cancelled reader can open its next prompt at once. That prompt is cancelled too.
+  (loop [rounds 0]
+    (when (active?)
+      (when (= rounds 8)
+        (throw (ex-info "Readers keep the minibuffer open" {:error :minibuffer-busy})))
+      (await (cancel!))
+      (recur (inc rounds))))
+  (let [id (buffer/next-id!)
+        opened (start id options)
+        result (promise)]
+    (keymap/set-context! :minibuffer)
+    (reset! state opened)
+    (reset! pending {:id id :result result :task commands/*task*})
+    (ui/set-prompt! (view opened))
+    (let [failure (try (await (buffer/refresh!)) nil (catch Exception error error))]
+      (when failure
+        (when (current? id)
+          (reset! state nil)
+          (reset! pending nil)
+          (leave-context!)
+          (await (show!)))
+        (throw failure)))
+    (start-query! id (:revision opened))
+    result))
+
+(defn ^:async read!
+  "Opens a prompt and waits for {:status :accepted :value v :input text :candidate c} or
+  {:status :cancelled}. Options follow start. A command that the event dispatcher runs
+  suspends here, so the dispatcher continues, and resumes in event order."
+  [options]
+  (let [result (await (open! options))]
+    (commands/suspend!)
+    @result))
+
+(defn ^:async move!
+  "Moves the open prompt's selection by an offset."
+  [offset]
+  (when-let [current @state]
+    (change! (:minibuffer/id current) move offset)
+    (await (show!))))
+
+(defcommand ^:async next-candidate
+  "Selects the next completion candidate of the open prompt."
+  []
+  (await (move! 1)))
+
+(defcommand ^:async previous-candidate
+  "Selects the previous completion candidate of the open prompt."
+  []
+  (await (move! -1)))
+
+(defcommand ^:async complete-candidate
+  "Replaces the open prompt's input with the selected candidate, or with the first one."
+  []
+  (when-let [current @state]
+    (let [id (:minibuffer/id current)
+          completed (change! id complete)]
+      (when (and completed (not= (:revision current) (:revision completed)))
+        (start-query! id (:revision completed)))
+      (await (show!)))))
+
+(defn mine?
+  "Returns true for an interaction with the open prompt's input element."
+  [event]
+  (and (active?) (current? (:ui/id event))))
+
+(defn ^:async input-changed!
+  "Follows the native control's text and starts the query for it."
+  [event]
+  (when (mine? event)
+    (let [id (:ui/id event)
+          before @state
+          edited (change! id edit (:text event))]
+      (when (and edited (not= (:revision before) (:revision edited)))
+        (start-query! id (:revision edited))))))
+
+(defn ^:async input-submitted!
+  "Accepts the open prompt with the native control's final text."
+  [event]
+  (when (mine? event)
+    (await (accept! (:text event)))))
+
+(defn ^:async key-pressed!
+  "Cancels the open prompt for a cancel stroke that cancelled no pending prefix."
+  [event]
+  (when (and (active?) (:pressed event) (= :quit (:keymap/status event)))
+    (await (cancel!))))
+
+(hooks/add-hook! :ui/input-changed :bulwark.minibuffer/input #'input-changed!)
+(hooks/add-hook! :ui/input-submitted :bulwark.minibuffer/submit #'input-submitted!)
+(hooks/add-hook! :input/key :bulwark.minibuffer/quit #'key-pressed!)
+(keymap/set-keymap! :minibuffer
+                    {"ArrowDown" 'bulwark.minibuffer/next-candidate
+                     "C-n" 'bulwark.minibuffer/next-candidate
+                     "ArrowUp" 'bulwark.minibuffer/previous-candidate
+                     "C-p" 'bulwark.minibuffer/previous-candidate
+                     "Tab" 'bulwark.minibuffer/complete-candidate})

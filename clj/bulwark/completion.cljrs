@@ -1,0 +1,87 @@
+(ns bulwark.completion
+  (:require [clojure.string :as string]))
+
+;; A candidate is a map:
+;;   :text   the text that a prompt shows and that completion inserts
+;;   :value  the result of accepting the candidate, :text by default
+;;   :detail text shown after :text, such as a docstring
+;;   :match  the text that a query matches, :text by default
+;; A provider is a function of the prompt's input that returns candidates, best first,
+;; or a future of them. Scores are integers, so every evaluator ranks alike.
+
+(def max-candidates 256)
+(def max-considered 4096)
+(def boundaries #{"-" "_" "/" "." ":" " " "?" "&" "=" "#" "*"})
+
+(defn candidate
+  "Returns a candidate map for a string or a candidate map."
+  [value]
+  (let [entry (if (string? value) {:text value} value)]
+    (when-not (and (map? entry) (string? (:text entry)))
+      (throw (ex-info "A candidate needs a :text string" {:candidate value})))
+    entry))
+
+(defn value-of
+  "Returns the result of accepting a candidate."
+  [entry]
+  (get entry :value (:text entry)))
+
+(defn score
+  "Returns a query's score for a text, or nil without a match. Every query character
+  must occur in the text in order, without regard to case. A match scores more at the
+  start of the text, after a separator, and next to the previous match. A text that
+  contains or equals the query scores more, and a shorter text scores slightly more."
+  [query text]
+  (let [lower-query (string/lower-case query)
+        lower-text (string/lower-case text)
+        wanted (mapv str lower-query)
+        given (mapv str lower-text)
+        needed (count wanted)
+        length (count given)]
+    (cond
+      (zero? needed) 0
+      (> needed length) nil
+      :else
+      (loop [found 0 position 0 previous -2 total 0]
+        (cond
+          (= found needed)
+          (+ total
+             (if (string/includes? lower-text lower-query) 32 0)
+             (if (= lower-text lower-query) 64 0)
+             (- (quot (min length 256) 8)))
+          (= position length) nil
+          (= (nth wanted found) (nth given position))
+          (recur (inc found) (inc position) position
+                 (+ total 16
+                    (if (= position (inc previous)) 12 0)
+                    (cond
+                      (zero? position) 24
+                      (contains? boundaries (nth given (dec position))) 16
+                      :else 0)))
+          :else (recur found (inc position) previous total))))))
+
+(defn rank
+  "Returns the candidates that match a query, best first, at most a limit of them.
+  Equal scores keep the supplied order. Only the first 4096 candidates are considered."
+  ([query candidates] (rank query candidates max-candidates))
+  ([query candidates limit]
+   (let [scored (:matches
+                  (reduce (fn [state value]
+                            (let [entry (candidate value)
+                                  index (:index state)
+                                  points (score query (get entry :match (:text entry)))]
+                              {:index (inc index)
+                               ;; One integer key orders by score, then by supplied position.
+                               :matches (if points
+                                          (conj (:matches state)
+                                                {:key (- index (* max-considered points)) :entry entry})
+                                          (:matches state))}))
+                          {:index 0 :matches []}
+                          (take max-considered candidates)))]
+     (mapv :entry (take limit (sort-by :key scored))))))
+
+(defn fuzzy
+  "Returns a provider that ranks the candidates of a source function against the input.
+  The source runs for every query, so it reads live state."
+  [source]
+  (fn [input] (rank input (source))))

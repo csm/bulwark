@@ -45,6 +45,14 @@ impl RuntimeHost {
                 include_str!("../../../clj/bulwark/commands.cljrs"),
             )
             .builtin_source(
+                "bulwark.completion",
+                include_str!("../../../clj/bulwark/completion.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.minibuffer",
+                include_str!("../../../clj/bulwark/minibuffer.cljrs"),
+            )
+            .builtin_source(
                 "bulwark.hooks",
                 include_str!("../../../clj/bulwark/hooks.cljrs"),
             )
