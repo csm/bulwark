@@ -1,0 +1,57 @@
+;; Interactive acceptance setup. Supply experiments/fixtures/phase-2-windows.html as the URL.
+;; Keep the program alive and inspect it through the opt-in product nREPL.
+(ns bulwark.tests.modes-physical
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.commands :refer [defcommand]]
+            [bulwark.keymap :as keymap]
+            [bulwark.mode :refer [define-major-mode define-minor-mode]]
+            [bulwark.native :as native]
+            [bulwark.window :as window]
+            [clojure.core.async :refer [timeout]]))
+
+(def state (atom {}))
+(def calls (atom []))
+
+(defcommand ^:async major-key "Records the major-mode key." []
+  (swap! calls conj :major)
+  (await (browser/set-echo! "Major-mode key")))
+(defcommand ^:async minor-key "Records the minor-mode key." []
+  (swap! calls conj :minor)
+  (await (browser/set-echo! "Minor-mode key")))
+
+;; M-m and M-z are single strokes with no global binding. The page receives each one
+;; unless the selected buffer's modes reserve it.
+(define-major-mode probe-mode "Reserves M-m in the text pane."
+  {:keymap {"M-m" 'bulwark.tests.modes-physical/major-key}})
+(define-minor-mode probe-zen-mode "Reserves M-m and M-z ahead of the major mode."
+  {:keymap {"M-m" 'bulwark.tests.modes-physical/minor-key
+            "M-z" 'bulwark.tests.modes-physical/minor-key}})
+
+(defn ^:async observe! []
+  {:selected-buffer (buffer/selected-id)
+   :modes (buffer/mode-order (buffer/selected))
+   :active @keymap/active
+   :reserved (vec (keys @keymap/effective))
+   :calls @calls
+   :page (browser/value!
+           (await (native/eval-js (:buffer/view (buffer/buffer! (:page @state)))
+                                  "JSON.stringify({keys:window.keyEvents,text:document.getElementById('text').value})")))})
+
+(defn ^:async run! []
+  (browser/install!)
+  (let [page (await (browser/open! user/initial-url))
+        notes (await (buffer/create! {:kind :text :select false :name "*mode checks*"
+                                     :major-mode :probe-mode
+                                     :text "Physical mode checks\n\nM-m runs major-key in this pane and reaches the page in the page pane.\nToggle the minor mode through nREPL: (await (bulwark.tests.modes-physical/probe-zen-mode))\nWith the minor mode, M-m and M-z run minor-key here.\nC-x o changes windows.\n"}))
+        left (buffer/selected-window)
+        right (await (browser/split-window! :row))]
+    (await (buffer/change-layout!
+             (fn [layout]
+               (-> layout (window/set-buffer left notes) (window/set-buffer right page) (window/select left)))))
+    (reset! state {:page page :notes notes :left left :right right})
+    (await (browser/set-echo! "Physical mode checks ready"))
+    (await (native/log "Physical mode checks ready")))
+  (loop [] (await (timeout 60000)) (recur)))
+
+(run!)

@@ -557,6 +557,7 @@ The [Phase 2 implementation plan](phase-2-plan.md) expands this scope into order
 It uses the accepted Phase 1 baseline and records the owner's confirmed Phase 2 scope.
 The [mechanism checkpoint](phase-2-mechanisms.md) begins P2.1 with retained webviews and standalone AOT assertions.
 The [buffer checkpoint](phase-2-buffers.md) implements P2.2 with the buffer registry and explicit lifecycles.
+The [mode checkpoint](phase-2-modes.md) implements P2.4 with mode definitions and contextual keymaps.
 
 Goal: the Emacs-inspired application model, with default browser behavior moved into Clojure.
 

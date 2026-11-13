@@ -1,0 +1,156 @@
+(ns bulwark.mode
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]))
+
+;; A mode definition is plain data under its keyword:
+;;   {:mode/name :reader-mode :mode/kind :minor :mode/doc "..."
+;;    :mode/locals {variable default} :mode/on-enable f :mode/on-disable f}
+;; The mode's keymap is the named keymap with the same keyword in bulwark.keymap.
+;; A buffer has one major mode and an ordered list of minor modes. The selected buffer's
+;; modes supply the active keymaps: minor modes, most recently enabled first, then the
+;; major mode, then the global keymap.
+
+(def registry (atom {}))
+
+(defn mode-info
+  "Returns a mode's definition, or raises :unknown-mode."
+  [mode]
+  (or (get @registry mode)
+      (throw (ex-info "No mode has this name" {:error :unknown-mode :mode mode}))))
+
+(defn mode-of-kind!
+  "Returns the definition of a mode of one kind, or raises :unknown-mode or :wrong-mode-kind."
+  [mode kind]
+  (let [definition (mode-info mode)]
+    (when-not (= kind (:mode/kind definition))
+      (throw (ex-info "The mode has another kind" {:error :wrong-mode-kind :mode mode :kind kind})))
+    definition))
+
+(defn definition
+  "Builds and checks a mode definition from register!'s arguments."
+  [kind mode doc options]
+  (when-not (and (contains? #{:major :minor} kind) (keyword? mode) (string? doc) (seq doc) (map? options))
+    (throw (ex-info "Modes require a kind, a keyword, documentation, and an options map" {:mode mode})))
+  (let [entry {:mode/name mode :mode/kind kind :mode/doc doc
+               :mode/locals (get options :locals {})
+               :mode/on-enable (:on-enable options)
+               :mode/on-disable (:on-disable options)}]
+    (when-not (map? (:mode/locals entry))
+      (throw (ex-info "Mode defaults for local variables must be a map" {:mode mode})))
+    (doseq [phase [:mode/on-enable :mode/on-disable]]
+      (when-not (or (nil? (get entry phase)) (ifn? (get entry phase)))
+        (throw (ex-info "Mode lifecycle functions must be callable" {:mode mode}))))
+    entry))
+
+(defn register!
+  "Defines or redefines a mode. Options: :keymap, a map of key strings to registered
+  commands; :locals, default values for buffer-local variables; :on-enable and
+  :on-disable, functions of a buffer id whose results are awaited.
+  A redefinition without :keymap keeps the mode's current keymap. A definition whose
+  keymap cannot be published changes nothing."
+  [kind mode doc options]
+  (let [entry (definition kind mode doc options)]
+    (when (not= kind (get (get @registry mode) :mode/kind kind))
+      (throw (ex-info "A mode cannot change its kind" {:error :wrong-mode-kind :mode mode})))
+    (when (contains? options :keymap)
+      (keymap/set-keymap! mode (:keymap options)))
+    (swap! buffer/mode-locals assoc mode (:mode/locals entry))
+    (swap! registry assoc mode entry)
+    mode))
+
+(defn selected-buffer!
+  "Returns the selected buffer's id, or reports that no buffer is selected."
+  []
+  (or (buffer/selected-id) (throw (ex-info "No selected buffer" {:error :no-buffer}))))
+
+(defn ^:async changed!
+  "Runs a mode's own lifecycle function, then the :mode/enabled or :mode/disabled hooks.
+  The hook event contains :mode, :mode/kind, and :buffer. A mode without a definition
+  has no function of its own."
+  [event-type mode id]
+  (let [definition (get @registry mode)
+        function (get definition (if (= event-type :mode/enabled) :mode/on-enable :mode/on-disable))]
+    (when function (await (function id)))
+    (await (hooks/run-hooks! {:event/type event-type :mode mode :buffer id
+                              :mode/kind (:mode/kind definition)}))
+    nil))
+
+(defn ^:async set-major!
+  "Gives a buffer a defined major mode. The registry and the active keymaps change
+  first, then the previous mode's disable lifecycle runs, then the new mode's enable
+  lifecycle. An unchanged mode does nothing."
+  [id mode]
+  (mode-of-kind! mode :major)
+  (let [previous (:buffer/major-mode (buffer/buffer! id))]
+    (when-not (= previous mode)
+      (buffer/set-major-mode! id mode)
+      (await (changed! :mode/disabled previous id))
+      (await (changed! :mode/enabled mode id)))
+    mode))
+
+(defn enabled?
+  "Returns true when a buffer has a mode as its major mode or among its minor modes."
+  [id mode]
+  (boolean (some (fn [active] (= mode active)) (buffer/mode-order (buffer/buffer! id)))))
+
+(defn ^:async enable!
+  "Enables a defined minor mode in a buffer, ahead of the minor modes already enabled.
+  An enabled mode keeps its place and runs no lifecycle."
+  [id mode]
+  (mode-of-kind! mode :minor)
+  (when-not (enabled? id mode)
+    (buffer/enable-minor-mode! id mode)
+    (await (changed! :mode/enabled mode id)))
+  mode)
+
+(defn ^:async disable!
+  "Disables a minor mode in a buffer. A mode that is not enabled runs no lifecycle."
+  [id mode]
+  (mode-of-kind! mode :minor)
+  (when (enabled? id mode)
+    (buffer/disable-minor-mode! id mode)
+    (await (changed! :mode/disabled mode id)))
+  mode)
+
+(defn ^:async toggle!
+  "Enables a disabled minor mode, or disables an enabled one. Returns true when enabled."
+  [id mode]
+  (if (enabled? id mode)
+    (do (await (disable! id mode)) false)
+    (do (await (enable! id mode)) true)))
+
+(defn ^:async enter-created!
+  "Runs the enable lifecycle of a new buffer's major mode."
+  [event]
+  (when-let [record (buffer/buffer (:buffer event))]
+    (await (changed! :mode/enabled (:buffer/major-mode record) (:buffer event)))))
+
+(hooks/add-hook! :buffer/created :bulwark.mode/enter #'enter-created!)
+
+(defmacro define-major-mode
+  "Defines a major mode named by the symbol's keyword, such as :help-mode for help-mode,
+  and a command of the same name that gives the selected buffer this mode.
+  Options follow register!."
+  [mode doc options]
+  (let [qualified (symbol (str (ns-name *ns*)) (name mode))
+        id (keyword (name mode))]
+    `(do
+       (bulwark.mode/register! :major ~id ~doc ~options)
+       (defn ~(with-meta mode {:async true}) ~doc []
+         (~'await (bulwark.mode/set-major! (bulwark.mode/selected-buffer!) ~id)))
+       (bulwark.commands/register! '~qualified ~doc (var ~qualified)))))
+
+(defmacro define-minor-mode
+  "Defines a minor mode named by the symbol's keyword, such as :reader-mode for
+  reader-mode, and a command of the same name that toggles it in the selected buffer.
+  Options follow register!."
+  [mode doc options]
+  (let [qualified (symbol (str (ns-name *ns*)) (name mode))
+        id (keyword (name mode))]
+    `(do
+       (bulwark.mode/register! :minor ~id ~doc ~options)
+       (defn ~(with-meta mode {:async true}) ~doc []
+         (~'await (bulwark.mode/toggle! (bulwark.mode/selected-buffer!) ~id)))
+       (bulwark.commands/register! '~qualified ~doc (var ~qualified)))))

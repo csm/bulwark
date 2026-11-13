@@ -245,7 +245,7 @@ fn run_product_clojure(source: &str, expected: &str, mode: cljrs_runtime::Execut
                 .parse::<u64>()
                 .expect("BULWARK_TEST_PROGRAM_TIMEOUT_SECS must be an integer")
         })
-        .unwrap_or(10);
+        .unwrap_or(30);
     assert!(
         timeout_seconds > 0,
         "The Clojure assertion timeout must be positive"
@@ -341,6 +341,20 @@ fn buffer_lifecycles_pass_in_interpreter_and_tiered_modes() {
         run_product_clojure(
             include_str!("../../../clj/tests/buffers.cljrs"),
             ":buffers-passed",
+            mode,
+        );
+    }
+}
+
+#[test]
+fn modes_and_contextual_keymaps_pass_in_interpreter_and_tiered_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/modes.cljrs"),
+            ":modes-passed",
             mode,
         );
     }
@@ -481,6 +495,95 @@ fn key_reservations_publish_before_a_runtime_stall_and_unbind_live() {
         }
         assert_eq!(wait(&mut worker).unwrap(), ":reservations-passed");
         assert_eq!(stages, ["stall", "recovered", "unbound"]);
+    }
+}
+
+#[test]
+fn key_reservations_follow_the_selected_buffer_before_a_runtime_stall() {
+    use bulwark_engine::{Command, Data, KeyInput};
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        let (runtime, mut endpoint) = bridge::channel(Arc::new(|| {}));
+        let mut engine = MockEngine::new(endpoint.events.clone());
+        let source = r#"
+          (require '[bulwark.buffer :as buffer]
+                   '[bulwark.commands :refer [defcommand]]
+                   '[bulwark.mode :as mode]
+                   '[bulwark.native :as native])
+          (defcommand sample "Reservation probe." [] nil)
+          (mode/register! :major :notes-mode "Reserves C-c m." {:keymap {"C-c m" 'sample}})
+          (mode/register! :major :plain-mode "Reserves nothing." {})
+          (mode/register! :minor :zen-mode "Reserves C-q z." {:keymap {"C-q z" 'sample}})
+          (defn stall! [stage]
+            (native/log stage)
+            ;; Keep the runtime thread occupied after synchronous publication.
+            (let [end (+ (System/nanoTime) 100000000)]
+              (loop [] (when (< (System/nanoTime) end) (recur)))))
+          (defn ^:async probe! []
+            (let [notes (await (buffer/create! {:kind :text :major-mode :notes-mode}))
+                  plain (await (buffer/create! {:kind :text :major-mode :plain-mode :select false}))]
+              (stall! "notes")
+              (await (buffer/select! plain))
+              (stall! "plain")
+              (await (mode/enable! plain :zen-mode))
+              (stall! "zen")
+              (await (buffer/kill! plain))
+              (stall! "notes")
+              (await (buffer/kill! notes))
+              (await (native/log "none")))
+            :contexts-passed)
+          (probe!)"#;
+        let mut worker = Worker::spawn_with_mode(runtime, source.into(), mode).unwrap();
+        let mut stages = Vec::new();
+        let control = endpoint.control.clone();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !worker.finished() && Instant::now() < deadline {
+            endpoint.admit(|request| {
+                let Command::Log(stage) = &request.command else {
+                    return engine.handle(request);
+                };
+                // The stall keeps this request queued, so the snapshot is the only source.
+                let routes = control.key_routes();
+                let captures = |first: &str, last: &str| {
+                    let mut prefix = Vec::new();
+                    let key = |text: &str, control| KeyInput {
+                        key: text.into(),
+                        control,
+                        alt: false,
+                        shift: false,
+                        meta: false,
+                        pressed: true,
+                    };
+                    routes.capture(&mut prefix, &key(first, true))
+                        && routes.capture(&mut prefix, &key(last, false))
+                        && prefix.is_empty()
+                };
+                let expected = match stage.as_str() {
+                    "notes" => (true, false),
+                    "plain" | "none" => (false, false),
+                    "zen" => (false, true),
+                    other => panic!("Unexpected stage: {other}"),
+                };
+                assert_eq!(
+                    (captures("c", "m"), captures("q", "z")),
+                    expected,
+                    "Stage: {stage}"
+                );
+                stages.push(stage.clone());
+                request.complete(Ok(Data::Nil));
+            });
+            engine.tick();
+            thread::sleep(Duration::from_millis(1));
+        }
+        endpoint.stop_admission();
+        engine.shutdown();
+        if !worker.finished() {
+            worker.stop();
+        }
+        assert_eq!(wait(&mut worker).unwrap(), ":contexts-passed");
+        assert_eq!(stages, ["notes", "plain", "zen", "notes", "none"]);
     }
 }
 

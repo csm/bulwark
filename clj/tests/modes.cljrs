@@ -1,0 +1,209 @@
+;; Modes and contextual keymaps against the product bridge and the mock engine, in both evaluator modes.
+(ns bulwark.tests.modes
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.core :as core]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.mode :as mode :refer [define-major-mode define-minor-mode]]
+            [bulwark.native :as native]
+            [bulwark.ui :as ui]
+            [bulwark.window :as window]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(def calls (atom []))
+(def lifecycle (atom []))
+(def published (atom []))
+
+(defcommand note "Records a major-mode command." [] (swap! calls conj :note))
+(defcommand zen "Records a minor-mode command." [] (swap! calls conj :zen))
+(defcommand ^:async everywhere "Awaits a native reply, then records a global command." []
+  (await (native/set-echo! "global"))
+  (swap! calls conj :global))
+
+(define-major-mode notes-mode "A major mode with its own keys and defaults."
+  {:keymap {"C-c m" 'bulwark.tests.modes/note}
+   :locals {:fill 72}
+   :on-enable (fn [id] (swap! lifecycle conj [:notes-on id]))
+   :on-disable (fn [id] (swap! lifecycle conj [:notes-off id]))})
+(define-major-mode plain-mode "A major mode without keys." {})
+(define-minor-mode zen-mode "A minor mode whose lifecycle functions park."
+  {:keymap {"C-c m" 'bulwark.tests.modes/zen}
+   :locals {:fill 100}
+   :on-enable (fn ^:async [id] (await (timeout 1)) (swap! lifecycle conj [:zen-on id]))
+   :on-disable (fn ^:async [id] (await (timeout 1)) (swap! lifecycle conj [:zen-off id]))})
+
+(defn record-mode! [event]
+  (swap! lifecycle conj [(:event/type event) (:mode event) (:buffer event) (:mode/kind event)]))
+
+(defn ^:async press!
+  "Dispatches one key press through the product dispatcher and returns the keymap status."
+  [key control]
+  (let [status (atom nil)]
+    (hooks/add-hook! :input/key :test/status (fn [event] (reset! status (:keymap/status event))))
+    (await (core/dispatch! {:event/type :input/key :webview 1 :key key :control control :pressed true}))
+    @status))
+
+(defn ^:async chord!
+  "Presses C-c and then a key. Returns the last command call, or the status of an unbound key."
+  [key]
+  (reset! calls [])
+  (check! (= :prefix (await (press! "c" true))) "C-c is not a prefix")
+  (let [status (await (press! key false))]
+    (if (= :command status) (last @calls) status)))
+
+(defn ^:async fails-with? [expected operation]
+  (try (await (operation)) false
+       (catch Exception error (= expected (:error (ex-data error))))))
+
+(defn ^:async fails? [operation]
+  (try (await (operation)) false (catch Exception error true)))
+
+(defn ^:async modes! []
+  (keymap/set-route-publisher!
+    (fn [sequences cancel]
+      (native/set-key-routes! sequences cancel)
+      (swap! published conj (set sequences))))
+  (doseq [event-type [:mode/enabled :mode/disabled]]
+    (hooks/add-hook! event-type :test/modes #'record-mode!))
+  (hooks/add-hook! :buffer/created :test/created (fn [event] (swap! lifecycle conj [:created (:buffer event)])))
+  (keymap/bind-key! "C-c m" 'everywhere)
+  (keymap/bind-key! "C-c g" 'everywhere)
+  ;; A new buffer enters its major mode before the other creation hooks run.
+  (let [a (await (buffer/create! {:kind :text :name "a" :major-mode :notes-mode}))
+        b (await (buffer/create! {:kind :text :name "b" :major-mode :plain-mode :select false}))]
+    (check! (= [[:notes-on a] [:mode/enabled :notes-mode a :major] [:created a]
+                [:mode/enabled :plain-mode b :major] [:created b]]
+               @lifecycle)
+            "Creation ran the wrong mode lifecycle")
+    (check! (= [:notes-mode] (:modes @keymap/active)) "The selected buffer's mode is not active")
+    (check! (= #{["C-c" "m"] ["C-c" "g"]} (last @published)) "The reservations are wrong")
+    (check! (= [:note :global] [(await (chord! "m")) (await (chord! "g"))])
+            "The major mode did not precede the global keymap")
+    ;; A buffer change cancels a pending prefix and activates the other buffer's keymaps.
+    (check! (= :prefix (await (press! "c" true))) "C-c is not a prefix")
+    (await (buffer/select! b))
+    (reset! calls [])
+    (check! (and (= :unbound (await (press! "m" false))) (empty? @calls)) "A prefix crossed buffers")
+    (check! (= [:plain-mode] (:modes @keymap/active)) "Selection kept the previous buffer's keymaps")
+    (check! (= :global (await (chord! "m"))) "A background buffer's mode handled a key")
+    ;; Minor modes: lifecycle order, repeated requests, precedence, defaults, and the toggle command.
+    (reset! lifecycle [])
+    (check! (= :zen-mode (await (mode/enable! b :zen-mode))) "Enabling returned the wrong mode")
+    (await (mode/enable! b :zen-mode))
+    (check! (= [[:zen-on b] [:mode/enabled :zen-mode b :minor]] @lifecycle) "Enabling ran the wrong lifecycle")
+    (check! (and (mode/enabled? b :zen-mode) (not (mode/enabled? a :zen-mode))) "A minor mode leaked")
+    (check! (= [:zen-mode :plain-mode] (:modes @keymap/active)) "The minor mode's keymap is not active")
+    (check! (= :zen (await (chord! "m"))) "The minor mode did not precede the global keymap")
+    (check! (= [100 72 nil] [(buffer/local b :fill) (buffer/local a :fill) (buffer/local b :missing)])
+            "Mode defaults did not reach the buffer-local lookup")
+    (buffer/set-local! b :fill 60)
+    (check! (= 60 (buffer/local b :fill)) "A buffer's own value did not precede its modes")
+    (reset! lifecycle [])
+    (check! (false? (await (commands/invoke! 'bulwark.tests.modes/zen-mode))) "The toggle command did not disable")
+    (await (mode/disable! b :zen-mode))
+    (check! (= [[:zen-off b] [:mode/disabled :zen-mode b :minor]] @lifecycle) "Disabling ran the wrong lifecycle")
+    (check! (= :global (await (chord! "m"))) "A disabled minor mode kept its keys")
+    ;; A minor mode in a background buffer changes no reservations until selection.
+    (let [before (count @published)]
+      (await (mode/enable! a :zen-mode))
+      (check! (= before (count @published)) "A background mode change was published")
+      (await (buffer/select! a))
+      (check! (= [:zen-mode :notes-mode] (:modes @keymap/active)) "Minor modes do not precede the major mode")
+      (check! (= :zen (await (chord! "m"))) "A minor mode did not precede the major mode")
+      (await (mode/disable! a :zen-mode))
+      (check! (= :note (await (chord! "m"))) "The major mode's key did not return")
+      (await (buffer/select! b)))
+    ;; Major modes: the previous mode leaves before the new one enters.
+    (reset! lifecycle [])
+    (await (mode/set-major! b :notes-mode))
+    (await (mode/set-major! b :notes-mode))
+    (check! (= [[:mode/disabled :plain-mode b :major] [:notes-on b] [:mode/enabled :notes-mode b :major]]
+               @lifecycle)
+            "A major mode change ran the wrong lifecycle")
+    (check! (= :note (await (chord! "m"))) "The new major mode's keymap is not active")
+    (reset! lifecycle [])
+    (await (commands/invoke! 'bulwark.tests.modes/plain-mode))
+    (check! (= [[:notes-off b] [:mode/disabled :notes-mode b :major] [:mode/enabled :plain-mode b :major]]
+               @lifecycle)
+            "The major mode command ran the wrong lifecycle")
+    (check! (and (await (fails-with? :wrong-mode-kind (fn [] (mode/enable! b :notes-mode))))
+                 (await (fails-with? :wrong-mode-kind (fn [] (mode/set-major! b :zen-mode))))
+                 (await (fails-with? :unknown-mode (fn [] (mode/enable! b :missing-mode))))
+                 (await (fails-with? :stale-buffer (fn [] (mode/enable! 999999 :zen-mode))))
+                 (= [] (:buffer/minor-modes (buffer/buffer b))))
+            "A wrong mode or buffer was accepted")
+    ;; A live redefinition of a command or a mode takes effect on the next key.
+    (defn note [] (swap! calls conj :renoted))
+    (await (buffer/select! a))
+    (check! (= :renoted (await (chord! "m"))) "A mode binding retained an obsolete function")
+    (mode/register! :major :notes-mode "A redefined major mode." {:keymap {"C-c n" 'bulwark.tests.modes/note}})
+    (check! (= [:global :renoted] [(await (chord! "m")) (await (chord! "n"))]) "A redefined mode kept its old keymap")
+    (check! (= #{["C-c" "m"] ["C-c" "g"] ["C-c" "n"]} (last @published)) "A redefinition was not published")
+    (keymap/bind-key! :notes-mode "C-c m" 'bulwark.tests.modes/note)
+    ;; Window selection changes the context. A pending prefix does not cross windows.
+    (let [first-window (buffer/selected-window)
+          second-window (buffer/next-id!)]
+      (await (buffer/change-layout! window/split first-window second-window :row b))
+      (check! (= :renoted (await (chord! "m"))) "A split changed the selected buffer's keymaps")
+      (check! (= :prefix (await (press! "c" true))) "C-c is not a prefix")
+      (await (buffer/change-layout! window/select second-window))
+      (reset! calls [])
+      (check! (and (= :unbound (await (press! "m" false))) (empty? @calls)) "A prefix crossed windows")
+      (check! (= [:plain-mode] (:modes @keymap/active)) "Window selection kept the previous keymaps")
+      (check! (= :global (await (chord! "m"))) "The other window's mode handled a key")
+      (await (buffer/change-layout! window/select first-window))
+      (check! (= :renoted (await (chord! "m"))) "Returning to a window did not restore its keymaps")
+      (await (buffer/change-layout! window/only first-window)))
+    ;; An input context precedes every mode until it is cleared.
+    (keymap/bind-key! :test-prompt "C-c m" 'bulwark.tests.modes/zen)
+    (keymap/set-context! :test-prompt)
+    (check! (= :zen (await (chord! "m"))) "An input context did not precede the major mode")
+    (keymap/set-context! nil)
+    (check! (= :renoted (await (chord! "m"))) "A cleared input context kept its keys")
+    ;; The native limit refuses a context with more than 256 sequences. Each refusal
+    ;; retains the buffer's modes, the selection, the frame, and the previous reservations.
+    (let [letters (mapv str "abcdefghijklmnop")
+          crowd (reduce (fn [table first-letter]
+                          (reduce (fn [table second-letter]
+                                    (assoc table (str "C-q " first-letter " " second-letter) 'bulwark.tests.modes/zen))
+                                  table letters))
+                        {} letters)
+          _ (mode/register! :minor :crowd-mode "A minor mode with too many keys." {:keymap crowd})
+          _ (mode/register! :major :crowded-mode "A major mode with too many keys." {:keymap crowd})
+          c (await (buffer/create! {:kind :text :name "c" :major-mode :plain-mode :select false}))
+          _ (buffer/set-major-mode! c :crowded-mode)
+          before [(count @published) @keymap/active @keymap/effective (buffer/selected-id)
+                  (buffer/buffer a) (:structure @ui/issued)]
+          unchanged? (fn [] (= before [(count @published) @keymap/active @keymap/effective (buffer/selected-id)
+                                       (buffer/buffer a) (:structure @ui/issued)]))]
+      (reset! lifecycle [])
+      (check! (= 256 (count (keymap/table :crowd-mode))) "The crowded keymap is incomplete")
+      (check! (and (await (fails? (fn [] (mode/enable! a :crowd-mode)))) (unchanged?) (empty? @lifecycle))
+              "A refused minor mode changed the buffer or ran its lifecycle")
+      (check! (and (await (fails? (fn [] (mode/set-major! a :crowded-mode)))) (unchanged?) (empty? @lifecycle))
+              "A refused major mode changed the buffer or ran its lifecycle")
+      (check! (and (await (fails? (fn [] (buffer/select! c)))) (unchanged?))
+              "A refused selection changed the registry or the frame")
+      (check! (and (await (fails? (fn ^:async [] (keymap/set-context! :crowd-mode)))) (unchanged?))
+              "A refused input context changed the keymaps")
+      (check! (= :renoted (await (chord! "m"))) "A refusal broke the retained keymap")
+      ;; A removal cannot be refused. The previous keymaps stay until the next good publication.
+      (await (buffer/kill! b))
+      (await (buffer/kill! a))
+      (check! (and (= c (buffer/selected-id)) @buffer/keymap-failure) "A removal hid its keymap failure")
+      (check! (and (= (nth before 1) @keymap/active) (= (nth before 2) @keymap/effective))
+              "A failed removal changed the effective keymap")
+      (mode/register! :major :crowded-mode "A major mode with a single key." {:keymap {"C-c m" 'bulwark.tests.modes/zen}})
+      (buffer/sync-keymaps! @buffer/registry)
+      (check! (and (= [:crowded-mode] (:modes @keymap/active)) (= :zen (await (chord! "m"))))
+              "The keymaps did not recover after the failed removal")
+      (await (buffer/kill! c))
+      (check! (and (nil? @buffer/keymap-failure) (= [] (:modes @keymap/active)) (= :global (await (chord! "m"))))
+              "The last removal kept a mode keymap")))
+  :modes-passed)
+
+(modes!)

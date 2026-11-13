@@ -12,7 +12,8 @@ Its `docs/phase-1-acceptance.md` records passing A1–A8 and accepts the Rust/Cl
 Implementation uses `codex/phase-2`, which starts from that accepted baseline.
 The [mechanism checkpoint](phase-2-mechanisms.md) records retained webviews, the AOT path, and the upstream compiler fix.
 The [buffer checkpoint](phase-2-buffers.md) records P2.2.
-The [window model checkpoint](phase-2-windows.md) records the portable part of P2.3.
+The [window checkpoint](phase-2-windows.md) records P2.3.
+The [mode checkpoint](phase-2-modes.md) records P2.4.
 
 Phase 2 delivers buffers, layouts, modes, completion, introspection, default browsing commands, user configuration, and an internal REPL.
 Commands, hooks, keymaps, title history, input reservations, and opt-in nREPL already exist in the accepted baseline.

@@ -4,6 +4,7 @@
             [bulwark.commands :as commands :refer [defcommand]]
             [bulwark.keymap :as keymap]
             [bulwark.hooks :as hooks]
+            [bulwark.mode :as mode]
             [bulwark.ui :as ui]
             [bulwark.window :as window]))
 
@@ -36,11 +37,12 @@
   (keymap/unbind-key! "C-x b")
   (check! (= [] (last @published)) "Failed publisher replacement discarded the old publisher")
   (keymap/set-route-publisher! nil))
-(hooks/add-hook! :buffer/created :sample (fn [event] nil))
-(hooks/add-hook! :buffer/created :sample (fn [event] :replacement))
-(check! (= 1 (count (get @hooks/registry :buffer/created))) "Hook replacement duplicated an entry")
-(hooks/remove-hook! :buffer/created :sample)
-(check! (empty? (get @hooks/registry :buffer/created)) "Hook removal failed")
+(let [before (count (get @hooks/registry :buffer/created))]
+  (hooks/add-hook! :buffer/created :sample (fn [event] nil))
+  (hooks/add-hook! :buffer/created :sample (fn [event] :replacement))
+  (check! (= (inc before) (count (get @hooks/registry :buffer/created))) "Hook replacement duplicated an entry")
+  (hooks/remove-hook! :buffer/created :sample)
+  (check! (= before (count (get @hooks/registry :buffer/created))) "Hook removal failed"))
 ;; Buffer registry transitions take supplied identifiers and need no engine.
 (defn fails? [f]
   (try (f) false (catch Exception error true)))
@@ -321,5 +323,162 @@
   (check! (every? (fn [element] (seq (:text element)))
                  (filter (fn [element] (= :text (:ui/kind element))) (:elements description)))
           "A text pane received no content budget"))
+;; Keymap precedence: input context, minor modes (most recent first), major mode, global.
+(defcommand in-global "A command of the global keymap." [] :global)
+(defcommand in-major "A command of a major mode." [] :major)
+(defcommand in-older "A command of the minor mode enabled first." [] :older)
+(defcommand in-newer "A command of the minor mode enabled last." [] :newer)
+(defcommand in-context "A command of an input context." [] :context)
+(def model-published (atom []))
+(def model-reject (atom false))
+(def letters ["C-c a" "C-c b" "C-c c" "C-c d"])
+(defn here [command] (symbol "bulwark.tests.shell-model" command))
+(defn found [keys]
+  (let [result (keymap/lookup keys)]
+    (if (map? result) [(name (:command result)) (:keymap result)] result)))
+(defn row [strokes] (mapv found strokes))
+(keymap/set-route-publisher!
+  (fn [sequences cancel]
+    (when @model-reject (throw (ex-info "Rejected snapshot" {})))
+    (swap! model-published conj (set sequences))))
+(doseq [keys (conj letters "C-x x" "C-y" "C-z z")]
+  (keymap/bind-key! keys (here "in-global")))
+(mode/register! :major :model-major "A major mode of the model."
+                {:keymap {"C-c b" (here "in-major") "C-c c" (here "in-major") "C-c d" (here "in-major")
+                          "C-x" (here "in-major") "C-y y" (here "in-major") "C-z y" (here "in-major")}
+                 :locals {:width 70 :tabs 8}})
+(mode/register! :minor :model-older "The minor mode enabled first."
+                {:keymap {"C-c c" (here "in-older") "C-c d" (here "in-older")} :locals {:width 80 :wrap true}})
+(mode/register! :minor :model-newer "The minor mode enabled last."
+                {:keymap {"C-c d" (here "in-newer")} :locals {:width 90}})
+(keymap/bind-key! :model-context "C-c a" (here "in-context"))
+;; A keymap that is not active changes neither the effective map nor the reservations.
+(check! (= (set (keys @keymap/bindings)) (last @model-published) (set (keys @keymap/effective)))
+        "An inactive keymap changed the reservations")
+(check! (= [["in-global" :global] ["in-global" :global] ["in-global" :global] ["in-global" :global]]
+           (row letters))
+        "The global keymap alone is wrong")
+(keymap/activate! [:model-major])
+(check! (= [["in-global" :global] ["in-major" :model-major] ["in-major" :model-major] ["in-major" :model-major]]
+           (row letters))
+        "A major mode did not precede the global keymap")
+;; A higher command hides a lower prefix and its sequences. A higher prefix hides a
+;; lower command. Lower sequences under a shared prefix stay reachable.
+(check! (= [["in-major" :model-major] nil :prefix ["in-major" :model-major]
+            :prefix ["in-major" :model-major] ["in-global" :global]]
+           (row ["C-x" "C-x x" "C-y" "C-y y" "C-z" "C-z y" "C-z z"]))
+        "Prefix conflicts between keymaps were resolved wrongly")
+(check! (and (= (set (keys @keymap/effective)) (last @model-published))
+             (not (contains? (last @model-published) ["C-x" "x"]))
+             (not (contains? (last @model-published) ["C-y"])))
+        "The reservations differ from the effective keymap")
+(keymap/activate! [:model-newer :model-older :model-major])
+(check! (= [["in-global" :global] ["in-major" :model-major] ["in-older" :model-older] ["in-newer" :model-newer]]
+           (row letters))
+        "Minor modes did not precede the major mode in order")
+(keymap/activate! [:model-older :model-newer :model-major])
+(check! (= ["in-older" :model-older] (found "C-c d")) "Minor mode order did not decide a conflict")
+(keymap/set-context! :model-context)
+(check! (= [["in-context" :model-context] ["in-major" :model-major] ["in-older" :model-older] ["in-older" :model-older]]
+           (row letters))
+        "An input context did not precede the modes")
+;; A context change publishes again and cancels the pending prefix.
+(let [count-before (count @model-published)]
+  (reset! keymap/pending {:webview 1 :keys ["C-c"]})
+  (keymap/set-context! nil)
+  (check! (and (= (inc count-before) (count @model-published)) (empty? (:keys @keymap/pending)))
+          "A context change kept a pending prefix or its reservations")
+  (check! (= ["in-global" :global] (found "C-c a")) "A cleared context kept its keymap"))
+;; A failed publication retains the active context, every keymap, and the effective map.
+(let [before [@keymap/bindings @keymap/keymaps @keymap/active @keymap/effective (count @model-published)]
+      unchanged? (fn [] (= before [@keymap/bindings @keymap/keymaps @keymap/active @keymap/effective
+                                   (count @model-published)]))]
+  (reset! model-reject true)
+  (doseq [change [(fn [] (keymap/activate! [:model-major]))
+                  (fn [] (keymap/set-context! :model-context))
+                  (fn [] (keymap/bind-key! :model-older "C-c e" (here "in-older")))
+                  (fn [] (keymap/unbind-key! :model-older "C-c d"))
+                  (fn [] (keymap/bind-key! "C-c e" (here "in-global")))
+                  (fn [] (keymap/remove-keymap! :model-older))
+                  (fn [] (mode/register! :minor :model-older "Redefined." {:keymap {} :locals {:width 1}}))]]
+    (check! (and (fails? change) (unchanged?)) "A failed publication changed the keymaps"))
+  (check! (= "The minor mode enabled first." (:mode/doc (mode/mode-info :model-older)))
+          "A failed publication redefined a mode")
+  (reset! model-reject false))
+;; One keymap rejects its own prefix conflicts. A live change reaches the effective map.
+(check! (fails? (fn [] (keymap/bind-key! :model-major "C-x x" (here "in-major"))))
+        "A keymap accepted a sequence under its own command")
+(check! (fails? (fn [] (keymap/set-keymap! :model-newer {"C-c" (here "in-newer") "C-c d" (here "in-newer")})))
+        "A replacement keymap accepted a prefix conflict")
+(check! (fails? (fn [] (keymap/bind-key! :model-major "C-c z" 'bulwark.tests.shell-model/missing)))
+        "A keymap accepted an unknown command")
+(keymap/unbind-key! :model-older "C-c d")
+(check! (= ["in-newer" :model-newer] (found "C-c d")) "An unbound mode key still hid a lower keymap")
+(mode/register! :minor :model-older "The minor mode enabled first." {:locals {:width 80 :wrap true}})
+(check! (= ["in-older" :model-older] (found "C-c c")) "A redefinition without a keymap lost its bindings")
+(mode/register! :minor :model-older "The minor mode enabled first."
+                {:keymap {"C-c c" (here "in-newer")} :locals {:width 80 :wrap true}})
+(check! (= ["in-newer" :model-older] (found "C-c c")) "A redefined mode kept its old keymap")
+;; A binding names its command. A plain defn changes the next invocation.
+(defn in-newer [] :redefined)
+(check! (= :redefined ((deref (:var (commands/command-info (:command (keymap/lookup "C-c d")))))))
+        "A mode binding retained an obsolete function")
+;; The selected buffer's modes are the active keymaps. Unknown modes contribute nothing.
+(reset! buffer/registry
+        (-> buffer/empty-registry
+            (buffer/add (buffer/make-buffer 30 :text {:major-mode :model-major :locals {:tabs 2}}))
+            (buffer/add (buffer/make-buffer 31 :text {:major-mode :undefined-mode}))
+            (buffer/select 30 1)))
+(buffer/sync-keymaps! @buffer/registry)
+(check! (= [:model-major] (:modes @keymap/active)) "The selected buffer's major mode is not active")
+(buffer/enable-minor-mode! 30 :model-older)
+(buffer/enable-minor-mode! 30 :model-newer)
+(check! (= [:model-newer :model-older :model-major] (:modes @keymap/active))
+        "The selected buffer's minor modes are not active in order")
+(let [count-before (count @model-published)]
+  (buffer/enable-minor-mode! 31 :model-older)
+  (buffer/set-local! 30 :unrelated 1)
+  (check! (= count-before (count @model-published)) "A background buffer changed the reservations"))
+;; Buffer-local variables: the buffer, then minor modes in order, then the major mode.
+(check! (= [2 90 true :fallback] [(buffer/local 30 :tabs) (buffer/local 30 :width)
+                                  (buffer/local 30 :wrap) (buffer/local 30 :missing :fallback)])
+        "Mode defaults for local variables have the wrong precedence")
+(check! (= [80 nil] [(buffer/local 31 :width) (buffer/local 31 :tabs)]) "A mode default leaked between buffers")
+(reset! model-reject true)
+(check! (and (fails? (fn [] (buffer/set-major-mode! 30 :undefined-mode)))
+             (fails? (fn [] (buffer/disable-minor-mode! 30 :model-newer)))
+             (= [:model-newer :model-older] (:buffer/minor-modes (buffer/buffer 30)))
+             (= :model-major (:buffer/major-mode (buffer/buffer 30))))
+        "A failed publication changed the selected buffer's modes")
+(reset! model-reject false)
+(buffer/set-major-mode! 30 :undefined-mode)
+(check! (= ["in-global" :global] (found "C-c b")) "An undefined mode supplied a keymap")
+(swap! buffer/registry buffer/select 31)
+(buffer/sync-keymaps! @buffer/registry)
+(check! (= [:model-older :undefined-mode] (:modes @keymap/active)) "Selection did not change the active keymaps")
+;; Definitions are documented data with a fixed kind. The mode macros define async
+;; commands, which an AOT binary can only interpret, so clj/tests/modes.cljrs covers them.
+(mode/register! :major :model-help "A major mode with defaults." {:locals {:read-only true}})
+(mode/register! :minor :model-zen "A minor mode without keys." {})
+(check! (= [:major "A major mode with defaults." {:read-only true} nil]
+           (mapv (mode/mode-info :model-help) [:mode/kind :mode/doc :mode/locals :mode/on-enable]))
+        "A mode lost its definition")
+(check! (= [:unknown-mode :wrong-mode-kind :wrong-mode-kind]
+           [(error-kind (fn [] (mode/mode-info :missing-mode)))
+            (error-kind (fn [] (mode/mode-of-kind! :model-zen :major)))
+            (error-kind (fn [] (mode/register! :major :model-zen "Another kind." {})))])
+        "Mode lookups accepted a wrong name or kind")
+(doseq [bad [(fn [] (mode/register! :minor :model-bad "" {}))
+             (fn [] (mode/register! :minor 'model-bad "Symbol name." {}))
+             (fn [] (mode/register! :other :model-bad "Unknown kind." {}))
+             (fn [] (mode/register! :minor :model-bad "Bad function." {:on-enable 1}))
+             (fn [] (mode/register! :minor :model-bad "Bad keymap." {:keymap {"C-" 'in-newer}}))]]
+  (check! (fails? bad) "An invalid mode definition was accepted"))
+(check! (nil? (get @mode/registry :model-bad)) "A rejected definition was registered")
+(reset! buffer/registry buffer/empty-registry)
+(keymap/activate! [])
+(doseq [keys (conj letters "C-x x" "C-y" "C-z z")] (keymap/unbind-key! keys))
+(check! (and (empty? @keymap/effective) (= #{} (last @model-published))) "The model left reservations behind")
+(keymap/set-route-publisher! nil)
 (println "Shell model assertions passed")
 :shell-model-passed

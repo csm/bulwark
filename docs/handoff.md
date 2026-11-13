@@ -1,6 +1,24 @@
 # Development handoff
 
-Snapshot: Phase 2.3 continuation after `9b0eb20`, based on main at `c1fef4d`, 2026-11-12.
+Snapshot: Phase 2.4 continuation after `17f0750`, 2026-11-12.
+
+## Phase 2.4 modes and contextual keymaps
+
+This continuation builds on `codex/phase-2-3-windows` at `17f0750`, merged with `main` at `c689d8c`.
+[PR #12](https://github.com/csm/bulwark/pull/12) still holds the final P2.3 validation and was open at the start.
+The [mode checkpoint](phase-2-modes.md) records the design, the precedence tables, and the evidence.
+
+`bulwark.mode` adds `define-major-mode`, `define-minor-mode`, mode defaults for buffer-local variables, and lifecycle hooks.
+`bulwark.keymap` adds named keymaps, an input-context keymap, and one effective keymap for dispatch and reservations.
+The buffer registry publishes a candidate context's keymaps before it commits a selection, layout, or mode change.
+A failed publication retains the registry, the effective keymap, and the native snapshot.
+No Rust product code changed, apart from the embedded source list.
+
+Local macOS checks passed: 53 portable tests, the AOT model with seven namespaces, and ten native process cases per evaluator mode.
+Both nREPL suites, both smokes, the Servo smoke, formatting, and portable and native Clippy also passed.
+Linux CI has not run on this change. Physical keyboard checks for mode reservations remain open.
+The pinned AOT compiler miscompiled one `let` form in `mode/register!`. The checkpoint records the workaround and the open reproduction work.
+The default Clojure assertion budget in the worker tests is now 30 seconds, after a macOS CI timeout on PR #12.
 
 ## Phase 2.3 native UI continuation
 
@@ -387,8 +405,10 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Run current Linux CI and the physical mixed-pane checks in the [window checkpoint](phase-2-windows.md).
-2. Continue P2.4 in the [Phase 2 implementation plan](phase-2-plan.md).
+1. Merge the final P2.3 validation in PR #12, then run Linux CI on the P2.4 change.
+2. Run the physical keyboard checks in the [mode checkpoint](phase-2-modes.md).
+3. Reduce the AOT `let` defect to a minimal Clojurust reproduction.
+4. Continue with P2.5 in the [Phase 2 implementation plan](phase-2-plan.md).
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.
@@ -471,7 +491,8 @@ The Python runners impose independent process deadlines.
 - `crates/bulwark-shell/src/native/`: winit host, input routing, Servo/egui composition, and bounded shutdown.
 - `clj/bulwark/shell.cljrs`: initial view creation and default echo dispatcher.
 - `clj/bulwark/commands.cljrs`: documented commands and live Var invocation.
-- `clj/bulwark/keymap.cljrs`: Emacs-style sequence parsing and command dispatch.
+- `clj/bulwark/keymap.cljrs`: sequence parsing, layered keymaps, the effective keymap, and command dispatch.
+- `clj/bulwark/mode.cljrs`: mode definitions, lifecycles, and the mode macros.
 - `clj/bulwark/hooks.cljrs`: ordered, awaited event hooks.
 - `clj/bulwark/browser.cljrs`: browser commands and retained title history.
 - `clj/tests/commands.cljrs` and `clj/tests/browser.cljrs`: interpreter and tiered integration suites.
