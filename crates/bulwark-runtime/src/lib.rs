@@ -39,26 +39,6 @@ pub struct RuntimeHost {
     env: Env,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn source_strings_round_trip_without_interpreting_their_contents() {
-        let mut host = RuntimeHost::new(ExecutionMode::TreeWalk).unwrap();
-        for text in [
-            "profile with spaces/日本語😀",
-            "quote\" backslash\\ newline\n tab\t carriage\r nul\0 backspace\u{8}",
-            "\")(throw (ex-info \"source injection\" {}))\"",
-        ] {
-            let Value::Str(value) = host.eval(&source_string(text)).unwrap() else {
-                panic!("Quoted text must evaluate to a string");
-            };
-            assert_eq!(value.get(), text);
-        }
-    }
-}
-
 impl RuntimeHost {
     /// Builds a runtime with the embedded Bulwark bootstrap namespace.
     pub fn new(mode: ExecutionMode) -> Result<Self> {
@@ -216,5 +196,25 @@ impl RuntimeHost {
     /// Exposes the environment for Phase 0 executor and GC experiments.
     pub fn env(&self) -> &Env {
         &self.env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_strings_round_trip_without_interpreting_their_contents() {
+        let mut host = RuntimeHost::new(ExecutionMode::TreeWalk).unwrap();
+        for text in [
+            "profile with spaces/日本語😀",
+            "quote\" backslash\\ newline\n tab\t carriage\r nul\0 backspace\u{8}",
+            "\")(throw (ex-info \"source injection\" {}))\"",
+        ] {
+            let Value::Str(value) = host.eval(&source_string(text)).unwrap() else {
+                panic!("Quoted text must evaluate to a string");
+            };
+            assert_eq!(value.get(), text);
+        }
     }
 }
