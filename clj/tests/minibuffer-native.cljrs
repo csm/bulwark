@@ -48,6 +48,7 @@
   (reset! buffer/last-web-buffer-policy nil)
   (let [page (await (browser/open! user/initial-url))
         window (buffer/selected-window)]
+    (await (until! (fn [] (= :complete (:load-status (buffer/view-page (:buffer/view (buffer/buffer page)))))) "the initial document load"))
     (await (until! (fn ^:async [] (= "Bulwark Servo fixture" (await (js! page "document.title")))) "the fixture"))
     (await (until! (fn ^:async [] (= "true" (await (js! page "String(document.hasFocus())")))) "the page's focus"))
     ;; The native frame accepts the prompt. The page stays visible and loses the keyboard.
