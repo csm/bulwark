@@ -35,9 +35,15 @@
                        {:status :missing :source path}
                        (do
                          ;; One evaluation preserves namespace changes between forms.
-                         (await (eval (cons 'do
-                                      (cons '(ns user.init)
-                                            (map (fn [entry] (located-form path entry)) forms)))))
+                         (let [caller-namespace *ns*]
+                           (try
+                             (await (eval (cons 'do
+                                          (cons '(ns user.init)
+                                                (map (fn [entry] (located-form path entry)) forms)))))
+                             (finally
+                               ;; The pinned evaluator updates the root *ns* for ns forms.
+                               ;; Keep that implementation detail inside this load boundary.
+                               (alter-var-root #'*ns* (fn [ignored] caller-namespace)))))
                          {:status :loaded :source path})))
                    (catch Exception error
                      (diagnostics/error! :configuration error {:source path})
