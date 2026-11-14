@@ -1,0 +1,285 @@
+;; The minibuffer and the command palette against the product bridge and the mock engine, in both evaluator modes.
+(ns bulwark.tests.minibuffer
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.completion :as completion]
+            [bulwark.core :as core]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.minibuffer :as minibuffer]
+            [bulwark.native :as native]
+            [bulwark.ui :as ui]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(def published (atom []))
+(def routes (atom []))
+(def calls (atom []))
+(def statuses (atom []))
+(def failures (atom []))
+(def titles (atom []))
+(def slow-gate (promise))
+(def loaded (atom #{}))
+
+(defcommand ^:async greet "Records a greeting.\nThe second line stays out of the candidate list." []
+  (await (native/set-echo! "hello"))
+  (swap! calls conj :greet))
+(defcommand elsewhere "Records a command that runs while a prompt is open." [] (swap! calls conj :elsewhere))
+(defcommand ^:async ask-twice "Reads two answers in sequence and records both." []
+  (let [first-reply (await (minibuffer/read! {:prompt "First: "}))
+        second-reply (await (minibuffer/read! {:prompt "Second: "}))]
+    (swap! calls conj [(:value first-reply) (:status second-reply)])))
+(defcommand ^:async ask-then-fail "Fails after its prompt." []
+  (await (minibuffer/read! {:prompt "Fail: "}))
+  (throw (ex-info "Injected failure after a prompt" {})))
+
+(defn record! [description]
+  (swap! published conj description)
+  (native/set-ui! description))
+
+(defn ^:async refuse! [description]
+  {:ok false :error :busy})
+
+(def recording-host {:publish record! :viewport native/ui-viewport})
+
+(defn frame [] (last @published))
+(defn input-element []
+  (first (filter (fn [element] (= :input (:ui/kind element))) (:elements (frame)))))
+(defn lines []
+  ;; The candidate lines follow the window elements and precede the input.
+  (let [elements (:elements (frame))
+        before (take-while (fn [element] (not= :input (:ui/kind element))) elements)]
+    (vec (take-last (:rows @minibuffer/state) before))))
+(defn line-texts [] (mapv :text (lines)))
+(defn texts [] (mapv :text (:candidates @minibuffer/state)))
+
+(defn ^:async until! [done? message]
+  (let [deadline (+ (System/currentTimeMillis) 5000)]
+    (loop []
+      (when-not (done?)
+        (check! (< (System/currentTimeMillis) deadline) (str "Timed out: " message))
+        (await (timeout 1))
+        (recur)))))
+
+(defn ^:async answered!
+  "Waits for the answer to the latest query and for the frame that shows it."
+  []
+  (await (until! (fn [] (let [current @minibuffer/state]
+                          (and current (= (:answered current) (:revision current))
+                               (= (mapv :text (:lines (minibuffer/view current))) (line-texts)))))
+                 "the provider's answer")))
+
+(defn ^:async press!
+  "Dispatches one key press and returns its keymap status."
+  [key modifiers]
+  (await (core/dispatch! (merge {:event/type :input/key :key key :pressed true} modifiers)))
+  (last @statuses))
+
+(defn ^:async type!
+  "Sends the native control's changed text, as the frame's revision."
+  [text]
+  (await (core/dispatch! {:event/type :ui/input-changed :ui/id (:minibuffer/id @minibuffer/state)
+                          :revision (:revision (frame)) :text text}))
+  (await (answered!)))
+
+(defn ^:async submit! [text]
+  (await (core/dispatch! {:event/type :ui/input-submitted :ui/id (:minibuffer/id @minibuffer/state)
+                          :revision (:revision (frame)) :text text})))
+
+(defn ^:async fails? [operation]
+  (try (await (operation)) false (catch Exception error true)))
+
+(defn closed? []
+  (and (not (minibuffer/active?)) (nil? (:context @keymap/active)) (nil? (input-element))
+       (= (buffer/selected-window) (:focus (frame)))
+       (not (contains? (last @routes) ["ArrowDown"]))))
+
+(defn ^:async slow-provider
+  "Parks for the query \"a\" until the test releases it. Other queries answer at once."
+  [input]
+  (when (= input "a") @slow-gate)
+  [(str "answer for " input)])
+
+(defn ^:async minibuffer! []
+  (ui/set-host! recording-host)
+  (keymap/set-route-publisher!
+    (fn [sequences cancel]
+      (native/set-key-routes! sequences cancel)
+      (swap! routes conj (set sequences))))
+  (browser/install!)
+  (reset! buffer/last-web-buffer-policy nil)
+  (hooks/add-hook! :input/key :test/status (fn [event] (swap! statuses conj (:keymap/status event))))
+  (hooks/add-hook! :command/failed :test/failed (fn [event] (swap! failures conj (ex-message (:error event)))))
+  (hooks/add-hook! :page/title-changed :test/titles (fn [event] (swap! titles conj (:title event))))
+  (hooks/add-hook! :page/history-changed :test/loaded (fn [event] (swap! loaded conj (:buffer event))))
+  (keymap/bind-key! "C-c e" 'bulwark.tests.minibuffer/elsewhere)
+  (let [page (await (browser/open! "https://example.com/a"))
+        view (:buffer/view (buffer/buffer page))
+        notes (await (buffer/create! {:kind :text :name "日本語 ノート 😀" :select false}))
+        window (buffer/selected-window)]
+    (await (until! (fn [] (contains? @loaded page)) "the first page's events"))
+    ;; M-x opens the prompt and returns. The dispatcher does not wait for the answer.
+    (check! (= :command (await (press! "x" {:alt true}))) "M-x ran no command")
+    (check! (and (minibuffer/active?) (= :minibuffer (:context @keymap/active))) "M-x opened no prompt")
+    (let [id (:minibuffer/id @minibuffer/state)]
+      (check! (and (= id (:focus (frame))) (= "M-x " (:label (input-element))) (= "" (:text (input-element))))
+              "The prompt's input does not own the focus")
+      (check! (not-any? (fn [element] (= :echo (:ui/kind element))) (:elements (frame)))
+              "The prompt kept the echo line")
+      (check! (contains? (last @routes) ["ArrowDown"]) "The prompt's keys are not reserved")
+      (await (answered!))
+      (check! (= (mapv :text (browser/command-candidates)) (texts)) "An empty query lost a command")
+      (check! (= 8 (count (lines))) "The candidate lines are not fixed")
+      ;; Events and commands make progress while the prompt is open.
+      (await (core/dispatch! {:event/type :page/title-changed :webview view :title "Progress"}))
+      (check! (= "Progress" (last @titles)) "A page event waited for the prompt")
+      (check! (= :prefix (await (press! "c" {:control true}))) "C-c is not a prefix in a prompt")
+      (check! (and (= :command (await (press! "e" {}))) (= [:elsewhere] @calls))
+              "A command did not run beside the prompt")
+      ;; A cancel stroke after a prefix cancels the prefix alone.
+      (await (press! "c" {:control true}))
+      (check! (and (= :cancelled (await (press! "g" {:control true}))) (minibuffer/active?))
+              "A cancelled prefix closed the prompt")
+      ;; Typing keeps the frame's structure, so later interactions stay current.
+      (let [revision (:revision (frame))]
+        (await (type! "gre"))
+        (check! (= "greet" (first (texts))) "Fuzzy completion ranked the wrong command")
+        (check! (= " greet  Records a greeting." (first (line-texts))) "The docstring's first line is missing")
+        (check! (and (:emphasis (first (lines))) (= revision (:revision (frame))))
+                "The first candidate is not selected, or typing changed the structure")
+        (await (type! "zzzz"))
+        (check! (and (empty? (texts)) (every? empty? (line-texts)) (= revision (:revision (frame))))
+                "A query without a match kept candidates or changed the structure")
+        ;; Only a candidate is a command. The prompt stays open and says so.
+        (await (submit! "zzzz"))
+        (check! (and (minibuffer/active?) (= "[No match] M-x " (:label (input-element))))
+                "A missing command was accepted")
+        ;; An interaction with an older structure is discarded.
+        (let [dropped @ui/dropped]
+          (await (core/dispatch! {:event/type :ui/input-changed :ui/id id :revision (dec revision) :text "old"}))
+          (check! (and (= (inc dropped) @ui/dropped) (= "zzzz" (:input @minibuffer/state)))
+                  "An obsolete interaction changed the prompt")))
+      ;; The selection moves through reserved keys and wraps. Tab completes the input.
+      (await (type! "window"))
+      (let [candidates (texts)]
+        (check! (< 2 (count candidates)) "Too few window commands matched")
+        (check! (and (= :command (await (press! "ArrowDown" {}))) (= 1 (:selected @minibuffer/state))
+                     (:emphasis (second (lines))) (not (:emphasis (first (lines)))))
+                "ArrowDown did not select the second candidate")
+        (await (press! "p" {:control true}))
+        (await (press! "ArrowUp" {}))
+        (check! (= (dec (count candidates)) (:selected @minibuffer/state)) "The selection did not wrap")
+        (await (press! "n" {:control true}))
+        (await (press! "Tab" {}))
+        (check! (= (first candidates) (:text (input-element)) (:input @minibuffer/state))
+                "Tab did not complete the first candidate"))
+      ;; The submitted text is the final input. Its command resolves at invocation.
+      (reset! calls [])
+      (defn greet [] (swap! calls conj :regreeted))
+      (await (submit! "greet"))
+      (check! (= [:regreeted] @calls) "The accepted command did not run in event order, or kept an old function")
+      (check! (closed?) "Acceptance left the prompt, its keys, or its focus")
+      (check! (not= id (:focus (frame))) "The focus stayed with a removed input"))
+    ;; A cancel stroke closes the prompt. Cancellation is a normal result.
+    (await (press! "x" {:alt true}))
+    (check! (minibuffer/active?) "M-x did not open a second prompt")
+    (check! (= :quit (await (press! "Escape" {}))) "Escape did not quit")
+    (check! (closed?) "Cancellation left the prompt, its keys, or its focus")
+    (reset! calls [])
+    (await (commands/run-task! (fn [] (commands/invoke! 'bulwark.tests.minibuffer/ask-twice))))
+    (check! (= "First: " (:label (input-element))) "A text prompt did not open")
+    (check! (zero? (:rows @minibuffer/state)) "A prompt without a provider has candidate lines")
+    (await (submit! "ノート 😀"))
+    (check! (and (= "Second: " (:label (input-element))) (empty? @calls)) "The second prompt did not follow the first")
+    (await (press! "g" {:control true}))
+    (check! (and (= [["ノート 😀" :cancelled]] @calls) (closed?)) "A reader lost its Unicode text or its cancellation")
+    ;; A command that opens a prompt replaces an open prompt, whose reader sees a cancellation.
+    (reset! calls [])
+    (await (commands/run-task! (fn [] (commands/invoke! 'bulwark.tests.minibuffer/ask-twice))))
+    (await (press! "x" {:alt true}))
+    (check! (and (= [[nil :cancelled]] @calls) (= "M-x " (:label (input-element))))
+            "A new prompt did not cancel the open reader's prompts")
+    (await (press! "Escape" {}))
+    (check! (closed?) "The replacing prompt stayed open")
+    ;; Buffer switching ranks by recency and matches Unicode names.
+    (await (press! "x" {:control true}))
+    (await (press! "b" {}))
+    (await (answered!))
+    (check! (= ["日本語 ノート 😀" "Progress"] (texts)) "Buffers are not in recency order")
+    (await (type! "ノト"))
+    (check! (= ["日本語 ノート 😀"] (texts)) "A Unicode query matched the wrong buffers")
+    (await (submit! "ノト"))
+    (check! (and (= notes (buffer/selected-id)) (closed?)) "The buffer prompt selected the wrong buffer")
+    ;; M-x reaches a command that opens its own prompt.
+    (await (press! "x" {:alt true}))
+    (await (submit! "switch-buffer"))
+    (check! (= "Buffer: " (:label (input-element))) "An accepted command could not prompt")
+    (await (answered!))
+    (await (submit! ""))
+    (check! (and (= page (buffer/selected-id)) (closed?)) "The nested prompt selected the wrong buffer")
+    ;; Address entry accepts a literal URL, completes retained URLs, and refuses other text.
+    (await (core/dispatch! {:event/type :page/title-changed :webview view :title "Example A"}))
+    (await (press! "l" {:control true}))
+    (await (answered!))
+    (check! (and (= "URL: " (:label (input-element))) (nil? (:selected @minibuffer/state))
+                 (= "https://example.com/a" (first (texts))))
+            "The URL prompt lost the open page or selected a candidate")
+    (await (submit! "two words"))
+    (check! (and (minibuffer/active?) (= "[No match] URL: " (:label (input-element)))) "Text without a URL was accepted")
+    (await (submit! "example.org/b"))
+    (await (until! (fn [] (= "https://example.org/b" (:url (buffer/page page)))) "the literal URL"))
+    (check! (closed?) "The URL prompt stayed open")
+    (check! (= ["https://a.test/" "http://localhost:8080" "about:blank" nil nil]
+               (mapv browser/literal-url ["https://a.test/" " localhost:8080 " "about:blank" "plain" ""]))
+            "Literal URLs are wrong")
+    ;; History selection completes the retained visits, newest first, by title or URL.
+    (await (core/dispatch! {:event/type :page/title-changed :webview view :title "Example B"}))
+    (await (press! "c" {:control true}))
+    (await (press! "h" {}))
+    (await (answered!))
+    (check! (= ["https://example.org/b" "https://example.com/a"] (texts)) "History is not newest first")
+    (await (type! "Example A"))
+    (await (submit! "Example A"))
+    (await (until! (fn [] (= "https://example.com/a" (:url (buffer/page page)))) "the retained URL"))
+    ;; An answer for an older query never replaces a newer one.
+    (let [reader (minibuffer/read! {:prompt "Slow: " :provider slow-provider :literal identity})]
+      (await (until! (fn [] (= "Slow: " (:label (input-element)))) "the slow prompt"))
+      (await (answered!))
+      (await (core/dispatch! {:event/type :ui/input-changed :ui/id (:minibuffer/id @minibuffer/state)
+                              :revision (:revision (frame)) :text "a"}))
+      (await (type! "ab"))
+      (check! (= ["answer for ab"] (texts)) "The newer query has no answer")
+      (deliver slow-gate true)
+      (await (timeout 20))
+      (check! (= ["answer for ab"] (texts)) "An obsolete answer replaced a newer query")
+      ;; A reader outside the dispatcher receives the result directly.
+      (await (minibuffer/accept!))
+      (check! (= {:status :accepted :value "ab" :input "ab"} (await reader)) "A direct reader got the wrong result"))
+    ;; A failed publication leaves no prompt and no input context.
+    (ui/set-host! {:publish refuse! :viewport native/ui-viewport})
+    (check! (await (fails? (fn [] (minibuffer/read! {:prompt "Refused: "})))) "A refused prompt opened")
+    (ui/set-host! recording-host)
+    (await (buffer/refresh!))
+    (check! (closed?) "A refused prompt left state behind")
+    (check! (await (fails? (fn [] (minibuffer/read! {:prompt 1})))) "An invalid prompt opened")
+    ;; A failure after a prompt reaches the event that resumed the command.
+    (await (commands/run-task! (fn [] (commands/invoke! 'bulwark.tests.minibuffer/ask-then-fail))))
+    (check! (await (fails? (fn [] (submit! "anything")))) "A resumed command's failure was lost")
+    (check! (closed?) "A failed command left its prompt")
+    ;; A task that fails while no fiber waits for it runs the :command/failed hooks.
+    (check! (= :suspended
+               (await (commands/run-task! (fn ^:async []
+                                            (commands/suspend!)
+                                            (await (timeout 5))
+                                            (throw (ex-info "Unobserved failure" {}))))))
+            "A suspended task did not release its waiter")
+    (await (until! (fn [] (= ["Unobserved failure"] @failures)) "the unobserved failure"))
+    (check! (= 7 (await (commands/run-task! (fn [] 7)))) "A finished task lost its value")
+    (await (buffer/kill! notes))
+    (await (buffer/kill! page)))
+  :minibuffer-passed)
+
+(minibuffer!)

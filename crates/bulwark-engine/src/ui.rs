@@ -37,14 +37,15 @@ pub enum Widget {
     Line { text: String, emphasis: bool },
     /// The place of the native echo text. The echo mechanism supplies its content.
     Echo,
-    /// A one-line editable control. The text replaces the user's edit only when it
-    /// differs from the previous description's text for the same element.
-    Input(String),
+    /// A one-line editable control after a read-only label. The text replaces the user's
+    /// edit only when it differs from the previous description's text for the same element.
+    Input { text: String, label: String },
 }
 impl Widget {
     fn text_bytes(&self) -> usize {
         match self {
-            Self::Text(text) | Self::Line { text, .. } | Self::Input(text) => text.len(),
+            Self::Text(text) | Self::Line { text, .. } => text.len(),
+            Self::Input { text, label } => text.len() + label.len(),
             Self::Web(_) | Self::Echo => 0,
         }
     }
@@ -55,7 +56,7 @@ impl Widget {
             Self::Text(_) => (1, None),
             Self::Line { .. } => (2, None),
             Self::Echo => (3, None),
-            Self::Input(_) => (4, None),
+            Self::Input { .. } => (4, None),
         }
     }
 }
@@ -103,7 +104,7 @@ impl Ui {
             }
             match (&element.widget, element.id) {
                 (_, Some(0)) => return Err("UI element id must be positive"),
-                (Widget::Web(_) | Widget::Text(_) | Widget::Input(_), None) => {
+                (Widget::Web(_) | Widget::Text(_) | Widget::Input { .. }, None) => {
                     return Err("Web, text, and input elements need an id");
                 }
                 _ => {}
@@ -119,7 +120,12 @@ impl Ui {
                     return Err("UI description has more than one web element");
                 }
                 Widget::Line { .. } => MAX_LINE_BYTES,
-                Widget::Input(_) => MAX_INPUT_BYTES,
+                Widget::Input { text, label } => {
+                    if label.len() > MAX_LINE_BYTES || text.len() > MAX_INPUT_BYTES {
+                        return Err("UI element text exceeds its limit");
+                    }
+                    MAX_LINE_BYTES + MAX_INPUT_BYTES
+                }
                 _ => MAX_TEXT_BYTES,
             };
             if element.widget.text_bytes() > limit {
@@ -274,7 +280,22 @@ mod tests {
                 vec![element(
                     Some(1),
                     full,
-                    Widget::Input("x".repeat(MAX_INPUT_BYTES + 1)),
+                    Widget::Input {
+                        text: "x".repeat(MAX_INPUT_BYTES + 1),
+                        label: String::new(),
+                    },
+                )],
+            ),
+            (
+                1,
+                None,
+                vec![element(
+                    Some(1),
+                    full,
+                    Widget::Input {
+                        text: String::new(),
+                        label: "x".repeat(MAX_LINE_BYTES + 1),
+                    },
                 )],
             ),
             (

@@ -36,7 +36,7 @@ def main():
     parser.add_argument("--interpreter", action="store_true")
     parser.add_argument("--timeout", type=float, default=35)
     parser.add_argument("--artifacts-dir", type=Path,
-                        help="Retain page/chrome and mixed-pane PNGs in this directory")
+                        help="Retain page/chrome, mixed-pane, and minibuffer PNGs in this directory")
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
@@ -65,6 +65,8 @@ def main():
              True, ["Retained buffer assertions passed"]),
             ("mixed-windows", (root / "clj/tests/windows-native.cljrs").read_text(),
              True, ["Native mixed-window assertions passed"]),
+            ("minibuffer", (root / "clj/tests/minibuffer-native.cljrs").read_text(),
+             True, ["Native minibuffer assertions passed"]),
             ("clojure-browser", (root / "clj/tests/browser-native.cljrs").read_text(),
              True, ["Native Clojure commands and history passed"]),
             ("hook-failure", '''
@@ -93,9 +95,9 @@ def main():
             script = directory / f"{name}.cljrs"
             script.write_text(source)
             flags = [*mode, "--script", str(script)]
-            if name == "mixed-windows":
-                flags += ["--screenshot", str(artifacts / f"mixed-windows-{suffix}.png")]
-            if name in {"clojure-browser", "retained-views", "retained-buffers", "mixed-windows"}:
+            if name in {"mixed-windows", "minibuffer"}:
+                flags += ["--screenshot", str(artifacts / f"{name}-{suffix}.png")]
+            if name in {"clojure-browser", "retained-views", "retained-buffers", "mixed-windows", "minibuffer"}:
                 flags.append((root / "clj/tests/fixtures/servo.html").as_uri())
             run_case(args.binary, name, flags, success, expected, args.timeout)
 

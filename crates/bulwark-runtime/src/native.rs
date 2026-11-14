@@ -174,7 +174,10 @@ fn ui(description: &Value) -> Result<bulwark_engine::ui::Ui, ValueError> {
             } else if kind == Some(keyword("echo")) {
                 Widget::Echo
             } else if kind == Some(keyword("input")) {
-                Widget::Input(content()?)
+                Widget::Input {
+                    text: content()?,
+                    label: field(element, "label").map_or(Ok(String::new()), |v| text(&v))?,
+                }
             } else {
                 return Err(invalid(
                     "A UI element's :ui/kind must be :web, :text, :line, :echo, or :input",
@@ -270,7 +273,7 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
                 "Selects one retained webview, or hides all webviews for nil. Returns a future; a stale handle leaves selection unchanged."
             }
             "set-ui!" => {
-                "Replaces the frame's UI description {:revision n :focus id :elements [...]}. Each element has :ui/kind (:web, :text, :line, :echo, or :input) and an integer :x, :y, :width, and :height in logical pixels. :web, :text, and :input need a :ui/id; :web needs a :webview handle; :text, :line, and :input take :text. The :web element becomes the one visible webview. Throws for a malformed or oversized description. Returns a future; :stale-revision or :stale-handle leaves the frame unchanged."
+                "Replaces the frame's UI description {:revision n :focus id :elements [...]}. Each element has :ui/kind (:web, :text, :line, :echo, or :input) and an integer :x, :y, :width, and :height in logical pixels. :web, :text, and :input need a :ui/id; :web needs a :webview handle; :text, :line, and :input take :text; :input also takes a read-only :label. New :input text replaces the user's edit and places the cursor at its end. The :web element becomes the one visible webview. Throws for a malformed or oversized description. Returns a future; :stale-revision or :stale-handle leaves the frame unchanged."
             }
             _ => continue,
         };

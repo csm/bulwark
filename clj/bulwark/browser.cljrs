@@ -1,9 +1,11 @@
 (ns bulwark.browser
   (:require [bulwark.native :as native]
             [bulwark.buffer :as buffer]
-            [bulwark.commands :refer [defcommand]]
+            [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.completion :as completion]
             [bulwark.hooks :as hooks]
             [bulwark.keymap :as keymap]
+            [bulwark.minibuffer :as minibuffer]
             [bulwark.mode :refer [define-major-mode]]
             [bulwark.window :as window]
             [clojure.string :as string]))
@@ -215,6 +217,110 @@
   []
   (await (resize-window! :row (- resize-step))))
 
+(defn command-candidates
+  "Returns every command as a candidate, in name order. A name that two namespaces
+  share stays qualified. The detail is the first line of the documentation."
+  []
+  (let [entries (vals @commands/registry)
+        shared (fn [entry]
+                 (< 1 (count (filter (fn [other] (= (name (:name entry)) (name (:name other)))) entries))))]
+    (vec (sort-by :text
+                  (map (fn [entry]
+                         {:text (if (shared entry) (str (:name entry)) (name (:name entry)))
+                          :value (:name entry)
+                          :detail (first (string/split (:doc entry) #"\n"))})
+                       entries)))))
+
+(defn buffer-candidates
+  "Returns the live buffers as candidates, most recently selected first, with the
+  selected buffer last."
+  []
+  (let [state @buffer/registry
+        selected (:selected state)
+        others (vec (remove (fn [id] (= id selected)) (:recent state)))]
+    (mapv (fn [id]
+            (let [record (get (:buffers state) id)
+                  url (:url (get (:pages state) (:buffer/view record)))]
+              {:text (buffer/label state id) :value id
+               :detail (if url (str (name (:buffer/kind record)) " " url) (name (:buffer/kind record)))}))
+          (if selected (conj others selected) others))))
+
+(defn history-candidates
+  "Returns the retained visits as candidates, newest first, one for each URL. A query
+  matches the title and the URL."
+  []
+  (:entries
+    (reduce (fn [result visit]
+              (if (contains? (:seen result) (:url visit))
+                result
+                {:seen (conj (:seen result) (:url visit))
+                 :entries (conj (:entries result)
+                                {:text (:url visit) :detail (:title visit)
+                                 :match (str (:title visit) " " (:url visit))})}))
+            {:seen #{} :entries []}
+            (reverse @history))))
+
+(defn url-candidates
+  "Returns the URLs of the open pages, then the retained URLs, as candidates. No remote
+  service suggests a URL."
+  []
+  (let [state @buffer/registry
+        open (keep (fn [id] (:url (get (:pages state) (:buffer/view (get (:buffers state) id)))))
+                   (:recent state))
+        seen (set open)]
+    (into (mapv (fn [url] {:text url :detail "open"}) (distinct open))
+          (remove (fn [entry] (contains? seen (:text entry))) (history-candidates)))))
+
+(defn literal-url
+  "Returns the URL that typed text names, or nil. Text with a scheme is a URL as typed.
+  A host name takes https, and localhost takes http. Other text is no URL, because no
+  search engine is configured."
+  [input]
+  (let [text (string/trim input)]
+    (cond
+      (or (empty? text) (re-find #"\s" text)) nil
+      (re-find #"^[a-zA-Z][a-zA-Z0-9+.-]*://" text) text
+      (re-find #"^(about|data|blob):" text) text
+      (re-find #"^localhost([:/]|$)" text) (str "http://" text)
+      (string/includes? text ".") (str "https://" text)
+      :else nil)))
+
+(defn ^:async visit!
+  "Shows a URL in the selected web buffer, or in a new buffer without one."
+  [url]
+  (if (active-view)
+    (await (navigate! url))
+    (await (open! url))))
+
+(defcommand ^:async execute-command
+  "Reads a command name with completion, then runs that command."
+  []
+  (let [reply (await (minibuffer/read! {:prompt "M-x " :provider (completion/fuzzy command-candidates)}))]
+    (when (= :accepted (:status reply))
+      (await (commands/invoke! (:value reply))))))
+
+(defcommand ^:async switch-buffer
+  "Reads a buffer name with completion, then selects that buffer."
+  []
+  (let [reply (await (minibuffer/read! {:prompt "Buffer: " :provider (completion/fuzzy buffer-candidates)}))]
+    (when (= :accepted (:status reply))
+      (await (buffer/select! (:value reply))))))
+
+(defcommand ^:async open-url
+  "Reads a URL, with completion from open and retained pages, then shows it."
+  []
+  (let [reply (await (minibuffer/read! {:prompt "URL: " :provider (completion/fuzzy url-candidates)
+                                        :literal literal-url}))]
+    (when (= :accepted (:status reply))
+      (await (visit! (:value reply))))))
+
+(defcommand ^:async select-history
+  "Reads a retained visit with completion, then shows its page."
+  []
+  (let [reply (await (minibuffer/read! {:prompt "History: " :provider (completion/fuzzy history-candidates)}))]
+    (when (= :accepted (:status reply))
+      (await (visit! (:value reply))))))
+
 (defn install!
   "Installs browser hooks, the last-buffer policy, and default keys. Repeated installation replaces them."
   []
@@ -236,4 +342,9 @@
   (keymap/bind-key! "C-c r" 'bulwark.browser/reload)
   (keymap/bind-key! "C-c b" 'bulwark.browser/back)
   (keymap/bind-key! "C-c f" 'bulwark.browser/forward)
-  (keymap/bind-key! "C-x h" 'bulwark.browser/history-list))
+  (keymap/bind-key! "C-x h" 'bulwark.browser/history-list)
+  (keymap/bind-key! "M-x" 'bulwark.browser/execute-command)
+  (keymap/bind-key! "C-c x" 'bulwark.browser/execute-command)
+  (keymap/bind-key! "C-x b" 'bulwark.browser/switch-buffer)
+  (keymap/bind-key! "C-l" 'bulwark.browser/open-url)
+  (keymap/bind-key! "C-c h" 'bulwark.browser/select-history))

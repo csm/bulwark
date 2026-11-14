@@ -2,8 +2,10 @@
 (ns bulwark.tests.shell-model
   (:require [bulwark.buffer :as buffer]
             [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.completion :as completion]
             [bulwark.keymap :as keymap]
             [bulwark.hooks :as hooks]
+            [bulwark.minibuffer :as minibuffer]
             [bulwark.mode :as mode]
             [bulwark.ui :as ui]
             [bulwark.window :as window]))
@@ -480,5 +482,112 @@
 (doseq [keys (conj letters "C-x x" "C-y" "C-z z")] (keymap/unbind-key! keys))
 (check! (and (empty? @keymap/effective) (= #{} (last @model-published))) "The model left reservations behind")
 (keymap/set-route-publisher! nil)
+;; Completion scores are integers. A match needs every query character in order.
+(check! (= [nil nil 0] [(completion/score "xyz" "reload") (completion/score "reloads" "reload") (completion/score "" "reload")])
+        "A score accepted a missing character or refused an empty query")
+(let [better? (fn [query better worse] (> (completion/score query better) (completion/score query worse)))]
+  (check! (and (better? "sb" "switch-buffer" "subscribe")
+               (better? "buf" "buffer-list" "kill-buffer")
+               (better? "reload" "reload" "reload-init")
+               (better? "load" "reload" "lower-road")
+               (better? "REL" "reload" "prelude")
+               (better? "ノト" "ノート" "ノ一一一一一一一ト"))
+          "Scores do not prefer starts, separators, runs, whole matches, and short texts"))
+(let [names ["delete-window" "split-window-right" "other-window" "reload" "new-buffer" "window"]
+      ranked (fn [query] (mapv :text (completion/rank query names)))]
+  (check! (= names (ranked "")) "An empty query changed the supplied order")
+  (check! (= ["window" "delete-window" "other-window" "split-window-right"] (ranked "window"))
+          "Ranking is not by score, then by supplied order")
+  (check! (= ["window" "delete-window"] (mapv :text (completion/rank "window" names 2))) "The limit kept the wrong candidates")
+  (check! (= ["reload"] (ranked "RLD")) "Ranking is not fuzzy or regards case")
+  (check! (= [7 "b"] (mapv completion/value-of (completion/rank "" [{:text "a" :value 7} "b"])))
+          "A candidate lost its value")
+  (check! (= ["page"] (mapv :text (completion/rank "title" [{:text "page" :match "The Title"} "other"])))
+          "A query ignored the candidate's match text")
+  (check! (= ["a" "b"] (mapv :text ((completion/fuzzy (fn [] ["a" "b"])) ""))) "A fuzzy provider lost its source")
+  (check! (fails? (fn [] (completion/rank "" [{:value 1}]))) "A candidate without text was accepted"))
+;; A prompt is a pure state machine: reading, then accepted or cancelled.
+(let [provider (completion/fuzzy (fn [] ["alpha" "beta" "gamma" "delta"]))
+      ask (fn [state] (minibuffer/answer state (:revision state) ((:provider state) (:input state))))
+      strict (ask (minibuffer/start 40 {:prompt "Pick: " :provider provider}))
+      loose (ask (minibuffer/start 41 {:prompt "Type: " :provider provider :literal (fn [input] (when (seq input) input))}))
+      plain (minibuffer/start 42 {:prompt "Say: "})]
+  (check! (= [:reading 0 0 8] (mapv strict [:status :revision :selected :rows])) "A new prompt has the wrong state")
+  (check! (and (= 4 (count (:candidates strict))) (nil? (:selected loose)) (zero? (:rows plain)))
+          "A new prompt has the wrong selection or candidate lines")
+  (doseq [bad [{} {:prompt 1} {:prompt "p" :provider 1} {:prompt "p" :rows 9} {:prompt "p" :initial 1}]]
+    (check! (fails? (fn [] (minibuffer/start 43 bad))) "An invalid prompt was accepted"))
+  (check! (fails? (fn [] (minibuffer/start 0 {:prompt "p"}))) "A prompt took an invalid id")
+  ;; An edit takes the next revision. Only its own answer replaces the candidates.
+  (let [typed (minibuffer/edit strict "ta")
+        late (minibuffer/answer typed 0 ["obsolete"])
+        current (ask typed)]
+    (check! (and (= 1 (:revision typed)) (nil? (:selected typed)) (= 0 (:answered typed))
+                 (= typed (minibuffer/edit typed "ta")))
+            "An edit kept the selection or took the wrong revision")
+    (check! (= typed late) "An obsolete answer replaced the candidates")
+    (check! (= [["beta" "delta"] 0 1] [(mapv :text (:candidates current)) (:selected current) (:answered current)])
+            "A current answer was not applied")
+    ;; The selection wraps. Completion inserts the selected text and asks again.
+    (check! (= [1 0 1] (mapv :selected [(minibuffer/move current 1) (minibuffer/move current 2) (minibuffer/move current -1)]))
+            "The selection does not wrap")
+    (check! (= [0 3 nil] (mapv :selected [(minibuffer/move loose 1) (minibuffer/move loose -1)
+                                          (minibuffer/move (minibuffer/answer typed 1 []) 1)]))
+            "A selection started at the wrong end or selected nothing")
+    (let [completed (minibuffer/complete (minibuffer/move current 1))]
+      (check! (= ["delta" "delta" 2 nil] (mapv completed [:input :described :revision :selected]))
+              "Completion did not insert the selected candidate"))
+    (check! (= "alpha" (:described (minibuffer/complete loose))) "Completion ignored the first candidate")
+    (check! (= plain (minibuffer/complete plain)) "Completion without candidates changed the prompt")
+    ;; Acceptance takes the selected candidate, else the literal input, else stays open.
+    (check! (= {:status :accepted :value "beta" :input "ta" :candidate {:text "beta"}} (:result (minibuffer/accept current)))
+            "The selected candidate was not accepted")
+    (let [refused (minibuffer/accept (minibuffer/answer typed 1 []))]
+      (check! (and (= :reading (:status refused)) (= "No match" (:message refused)) (nil? (:result refused)))
+              "A prompt without a match was accepted")
+      (check! (= "[No match] Pick: " (:label (minibuffer/view refused))) "The view hid the message")
+      (check! (nil? (:message (minibuffer/edit refused "t"))) "An edit kept the message"))
+    (check! (= [:reading {:status :accepted :value "typed" :input "typed"} "alpha"]
+               [(:status (minibuffer/accept loose))
+                (:result (minibuffer/accept (minibuffer/edit loose "typed")))
+                (:value (:result (minibuffer/accept (minibuffer/move loose 1))))])
+            "A literal prompt accepted the wrong input")
+    (check! (= {:status :accepted :value "" :input ""} (:result (minibuffer/accept plain)))
+            "A plain prompt refused its input")
+    (check! (= [:cancelled {:status :cancelled}] (mapv (minibuffer/cancel current) [:status :result]))
+            "Cancellation is not a normal result"))
+  ;; The view keeps its number of lines and pages by the selection.
+  (let [many (minibuffer/answer (minibuffer/start 44 {:prompt "Many: " :provider provider :rows 2})
+                                0 [{:text "one" :detail "first"} "two" "three"])
+        page (fn [state] (mapv (fn [line] [(:text line) (:emphasis line)]) (:lines (minibuffer/view state))))]
+    (check! (= [[" one  first" true] [" two" false]] (page many)) "The first page is wrong")
+    (check! (= [[" three" true] ["" false]] (page (minibuffer/move many 2))) "The second page is wrong")
+    (check! (= [["" false] ["" false]] (page (minibuffer/answer many 0 []))) "An empty answer changed the number of lines"))
+  ;; The prompt's input replaces the echo line and owns the focus. Its lines keep one structure.
+  (let [layout (window/initial 1 10)
+        panes {1 {:kind :text :text "notes" :modeline " notes"}}
+        viewport {:width 1000 :height 760 :scale 1.0}
+        described (ui/describe layout panes viewport (minibuffer/view strict))
+        typed (ui/describe layout panes viewport (minibuffer/view (ask (minibuffer/edit strict "ta"))))
+        input (last (:elements described))]
+    (check! (= [:text :line :line :line :line :line :line :line :line :line :input] (mapv :ui/kind (:elements described)))
+            "The prompt's elements are wrong")
+    (check! (= [40 40 "Pick: " "" 732 28] [(:focus described) (:ui/id input) (:label input) (:text input) (:y input) (:height input)])
+            "The prompt's input is not in the echo line's place with the focus")
+    (check! (= [[556 " alpha" true] [710 "" false]]
+               (mapv (fn [line] [(:y line) (:text line) (:emphasis line)]) [(nth (:elements described) 2) (nth (:elements described) 9)]))
+            "The candidate lines are not directly above the input")
+    (check! (and (not= described typed) (= (ui/structure described) (ui/structure typed)))
+            "Typing changed the frame's structure")
+    (check! (not= (ui/structure described) (ui/structure (ui/describe layout panes viewport)))
+            "A prompt kept the frame's structure")
+    (check! (= [:text :input] (mapv :ui/kind (:elements (ui/describe layout panes {:width 300 :height 48 :scale 1.0}
+                                                                          (minibuffer/view strict)))))
+            "Lines that do not fit were kept")
+    (let [long (apply str (repeat 5000 "😀"))
+          clipped (last (:elements (ui/describe nil {} viewport {:id 9 :label long :text long :lines []})))]
+      (check! (= [256 1024] [(count (:label clipped)) (count (:text clipped))]) "The prompt's texts are not clipped"))
+    (check! (fails? (fn [] (ui/set-prompt! {:id 1 :label "p" :text "" :lines (vec (repeat 9 {:text ""}))})))
+            "A prompt with too many lines was accepted")))
 (println "Shell model assertions passed")
 :shell-model-passed

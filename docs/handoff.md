@@ -1,6 +1,26 @@
 # Development handoff
 
-Snapshot: Phase 2.4 continuation after `17f0750`, 2026-11-12.
+Snapshot: Phase 2.5 continuation after `dcf9a23`, 2026-11-13.
+
+## Phase 2.5 minibuffer and command palette
+
+This continuation starts from `main` at `dcf9a23`, after the merge of [PR #13](https://github.com/csm/bulwark/pull/13).
+The [minibuffer checkpoint](phase-2-minibuffer.md) records the design and the evidence.
+
+`bulwark.completion` adds integer fuzzy scores, ranking, and providers.
+`bulwark.minibuffer` adds the prompt state machine, its driver, and the `:minibuffer` input-context keymap.
+`bulwark.commands` adds tasks. The dispatcher waits until a command finishes or suspends for a prompt.
+The event that ends the prompt resumes the command, so the rest of the command runs in event order.
+`bulwark.browser` adds `execute-command`, `switch-buffer`, `open-url`, and `select-history` with their providers and keys.
+The native input control gains a label and places the cursor after new described text.
+The native frame now uses the dark theme and strong text on emphasized lines.
+
+Local macOS checks passed: 54 portable tests, the AOT model with nine namespaces, 17 native unit tests, and eleven native process cases per evaluator mode.
+Both nREPL suites, both smokes, the Servo smoke, formatting, and portable and native Clippy also passed.
+Linux CI has not run on this change. [Run 43373187308](https://github.com/csm/bulwark/actions/runs/43373187308) passed for P2.4 on `main`.
+In the pinned AOT compiler, `next` is not nil at the end of a `take` beyond its collection. This broke a `loop` in `completion/rank`.
+[Clojurust issue #500](https://github.com/csm/clojurust/issues/500) has the minimal reproduction. The checkpoint records the workaround.
+Local builds used the main checkout's `target` directory through `CARGO_TARGET_DIR`.
 
 ## Phase 2.4 modes and contextual keymaps
 
@@ -405,10 +425,11 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 
 ## Next work, in order
 
-1. Merge the final P2.3 validation in PR #12, then run Linux CI on the P2.4 change.
-2. Run the physical keyboard checks in the [mode checkpoint](phase-2-modes.md).
-3. Reduce the AOT `let` defect to a minimal Clojurust reproduction.
-4. Continue with P2.5 in the [Phase 2 implementation plan](phase-2-plan.md).
+1. Run Linux CI on the P2.5 change.
+2. Run the physical keyboard checks in the [mode checkpoint](phase-2-modes.md) and the [minibuffer checkpoint](phase-2-minibuffer.md).
+3. Decide whether the macOS Option key acts as Alt. `M-` bindings depend on that decision.
+4. Follow Clojurust issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501). Both AOT defects also occur on upstream `main` at `52ef4b13`. Remove the two workarounds after a fixed pin.
+5. Continue with P2.6 in the [Phase 2 implementation plan](phase-2-plan.md).
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.
 The native shell and local fixture checks are complete. Broader platform and compatibility checks remain open.
@@ -490,7 +511,9 @@ The Python runners impose independent process deadlines.
 - `crates/bulwark-shell/src/main.rs`: bootstrap, mock smoke, software Servo driver, and native feature entry point.
 - `crates/bulwark-shell/src/native/`: winit host, input routing, Servo/egui composition, and bounded shutdown.
 - `clj/bulwark/shell.cljrs`: initial view creation and default echo dispatcher.
-- `clj/bulwark/commands.cljrs`: documented commands and live Var invocation.
+- `clj/bulwark/commands.cljrs`: documented commands, live Var invocation, and command tasks.
+- `clj/bulwark/completion.cljrs`: fuzzy scores, ranking, and providers.
+- `clj/bulwark/minibuffer.cljrs`: the prompt state machine, its driver, and its keymap.
 - `clj/bulwark/keymap.cljrs`: sequence parsing, layered keymaps, the effective keymap, and command dispatch.
 - `clj/bulwark/mode.cljrs`: mode definitions, lifecycles, and the mode macros.
 - `clj/bulwark/hooks.cljrs`: ordered, awaited event hooks.

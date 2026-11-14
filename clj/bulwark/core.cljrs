@@ -7,7 +7,7 @@
 (defn bootstrap-status
   "Returns the current product implementation stage."
   []
-  {:phase 2 :status :modes})
+  {:phase 2 :status :minibuffer})
 
 (def interactions #{:ui/pressed :ui/input-changed :ui/input-submitted})
 
