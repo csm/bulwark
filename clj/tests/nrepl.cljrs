@@ -7,7 +7,7 @@
 (def ready (atom false))
 (def ticks (atom 0))
 (def order (atom []))
-(def shell-task (shell/run! "about:blank"))
+(def shell-task (shell/run! "about:blank" (System/getenv "BULWARK_TEST_PROFILE")))
 
 (defn eval-js! [script]
   (shell/value! (await (native/eval-js (browser/active-view) script))))

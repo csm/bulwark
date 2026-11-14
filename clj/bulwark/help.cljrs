@@ -1,0 +1,107 @@
+(ns bulwark.help
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.completion :as completion]
+            [bulwark.keymap :as keymap]
+            [bulwark.minibuffer :as minibuffer]
+            [bulwark.ui :as ui]
+            [clojure.string :as string]))
+
+(defn inventory
+  "Returns live public Vars in loaded Bulwark and user namespaces, ordered by qualified name."
+  []
+  (vec (sort-by (fn [entry] (str (:name entry)))
+         (mapcat
+           (fn [space]
+             (map (fn [pair]
+                    (let [qualified (symbol (str (ns-name space)) (str (first pair)))
+                          variable (second pair)
+                          metadata (meta variable)]
+                      {:name qualified :var variable :doc (:doc metadata)
+                       :arglists (:arglists metadata) :resources (:resources metadata)}))
+                  (ns-publics space)))
+           (filter (fn [space]
+                     (let [name (str (ns-name space))]
+                       (or (= name "user") (string/starts-with? name "user.")
+                           (string/starts-with? name "bulwark.")))) (all-ns))))))
+
+(defn apropos-entries
+  "Matches live names, documentation, and resource tags without regard to case."
+  [query]
+  (let [query (string/lower-case query)]
+    (vec (filter (fn [entry]
+                   (string/includes?
+                     (string/lower-case (str (:name entry) " " (:doc entry) " " (:resources entry))) query))
+                 (inventory)))))
+
+(defn format-entry [entry]
+  (str (:name entry)
+       (when (:arglists entry) (str " " (pr-str (:arglists entry))))
+       "\n" (or (:doc entry) "No documentation.")
+       (when (seq (:resources entry)) (str "\nResources: " (pr-str (:resources entry))))))
+
+(defn ^:async show!
+  "Shows text in a reusable read-only help buffer."
+  [text]
+  (let [id (or (:buffer/id (buffer/find-named "*Help*"))
+               (await (buffer/create! {:kind :text :name "*Help*" :select false})))]
+    (buffer/set-text! id (ui/clip text 65536))
+    (await (buffer/select! id))
+    id))
+
+(defn command-description [command]
+  (let [entry (commands/command-info command)]
+    (format-entry (merge (meta (:var entry)) entry))))
+
+(defn ^:async read-name! [prompt entries]
+  (await (minibuffer/read!
+           {:prompt prompt
+            :provider (completion/fuzzy
+                        (fn [] (mapv (fn [entry] {:text (str (:name entry)) :value (:name entry)
+                                                 :detail (:doc entry)}) entries)))})))
+
+(defcommand ^:async describe-command
+  "Shows a command's documentation and current signature in *Help*."
+  ([]
+   (let [reply (await (read-name! "Describe command: " (vals @commands/registry)))]
+     (when (= :accepted (:status reply)) (await (describe-command (:value reply))))))
+  ([command] (await (show! (command-description command)))))
+
+(defcommand ^:async describe-key
+  "Shows the command or prefix for an Emacs key sequence in the current context."
+  ([]
+   (let [reply (await (minibuffer/read! {:prompt "Describe key sequence: "}))]
+     (when (= :accepted (:status reply)) (await (describe-key (:value reply))))))
+  ([keys]
+   (let [meaning (keymap/lookup keys)]
+     (await (show! (str keys "\n"
+                        (cond
+                          (= :prefix meaning) "Prefix of a command sequence."
+                          (nil? meaning) "Unbound."
+                          :else (str "Keymap: " (:keymap meaning) "\n\n"
+                                     (command-description (:command meaning))))))))))
+
+(defcommand ^:async describe-variable
+  "Shows a public Var's documentation and value, or a buffer-local keyword's effective value."
+  ([]
+   (let [reply (await (read-name! "Describe variable: " (inventory)))]
+     (when (= :accepted (:status reply)) (await (describe-variable (:value reply))))))
+  ([variable]
+   (if (keyword? variable)
+     (await (show! (str variable "\nBuffer: " (buffer/selected-id) "\nValue: "
+                        (pr-str (buffer/local (buffer/selected-id) variable :unset)))))
+     (let [variable (if (symbol? variable) variable (symbol variable))
+           entry (first (filter (fn [entry] (= variable (:name entry))) (inventory)))]
+       (when-not entry (throw (ex-info "No public variable has this name" {:variable variable})))
+       (await (show! (str (format-entry entry) "\nValue: "
+                          (ui/clip (pr-str (deref (:var entry))) 4096))))))))
+
+(defcommand ^:async apropos
+  "Finds public Bulwark names, documentation, and native resource tags."
+  ([]
+   (let [reply (await (minibuffer/read! {:prompt "Apropos: "}))]
+     (when (= :accepted (:status reply)) (await (apropos (:value reply))))))
+  ([query]
+   (let [entries (apropos-entries query)]
+     (await (show! (if (seq entries)
+                     (string/join "\n\n" (map format-entry entries)) "No matches."))))))

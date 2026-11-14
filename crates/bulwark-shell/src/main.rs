@@ -3,7 +3,12 @@ mod native;
 mod options;
 
 fn main() -> anyhow::Result<()> {
-    let options::Options { args, nrepl, mode } = options::parse(std::env::args().skip(1))?;
+    let options::Options {
+        args,
+        nrepl,
+        profile,
+        mode,
+    } = options::parse(std::env::args().skip(1))?;
     if args == ["--nrepl-smoke"] {
         anyhow::ensure!(nrepl.is_some(), "--nrepl-smoke requires --nrepl");
         return nrepl_smoke(nrepl, mode);
@@ -20,13 +25,14 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("--servo-smoke requires --features servo");
     }
     #[cfg(feature = "native")]
-    return native::run(&args, nrepl, mode);
+    return native::run(&args, nrepl, profile, mode);
     #[cfg(not(feature = "native"))]
     {
         anyhow::ensure!(
             nrepl.is_none(),
             "--nrepl requires --features native or --nrepl-smoke"
         );
+        let _ = profile;
         bootstrap(&args, mode)
     }
 }

@@ -1,0 +1,39 @@
+(ns bulwark.diagnostics
+  (:require [clojure.string :as string]))
+
+(def entry-limit 256)
+(def entry-characters 2048)
+(def text-characters 16384)
+(def state (atom {:revision 0 :entries []}))
+
+(defn clip [text limit]
+  (if (> (count text) limit) (subs text 0 limit) text))
+
+(defn retain
+  "Keeps the newest entries within the entry and character limits."
+  [entries]
+  (vec
+    (:entries
+      (reduce (fn [kept entry]
+              (let [size (+ 1 (count entry))]
+                (if (> (+ (:size kept) size) text-characters)
+                  kept
+                  {:size (+ (:size kept) size) :entries (cons entry (:entries kept))})))
+              {:size 0 :entries ()} (reverse (take-last entry-limit entries))))))
+
+(defn report!
+  "Records a bounded diagnostic without retaining exceptions or page data objects."
+  [kind message context]
+  (let [entry (clip (str (name kind) ": " message
+                         (when (seq context) (str " " (pr-str context)))) entry-characters)]
+    (swap! state (fn [current]
+                   {:revision (inc (:revision current))
+                    :entries (retain (conj (:entries current) entry))})))
+  nil)
+
+(defn error!
+  "Records an exception's message and source data as text."
+  [kind error context]
+  (report! kind (ex-message error) (merge (ex-data error) context)))
+
+(defn text [] (string/join "\n" (:entries @state)))

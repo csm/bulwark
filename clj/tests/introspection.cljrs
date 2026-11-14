@@ -1,0 +1,118 @@
+(ns bulwark.tests.introspection
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands :refer [defcommand]]
+            [bulwark.config :as config]
+            [bulwark.core :as core]
+            [bulwark.diagnostics :as diagnostics]
+            [bulwark.help :as help]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.messages :as messages]
+            [bulwark.minibuffer :as minibuffer]
+            [bulwark.ui :as ui]
+            [bulwark.native :as native]
+            [clojure.string :as string]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defcommand faulty "Raises an error for the Messages regression." []
+  (throw (ex-info "Command fixture failed" {:source "fixture.cljrs" :line 7})))
+
+(defn ^:async run! []
+  (println "P2.6: install")
+  (browser/install!)
+  (let [page (await (browser/open! "https://example.com"))
+        native-vars (ns-publics 'bulwark.native)
+        webview-names (set (map :name
+                              (filter (fn [entry] (some #{:webview} (:resources entry))) (help/inventory))))
+        found (set (map :name (help/apropos-entries "webview")))]
+    (println "P2.6: native inventory")
+    (check! (= 18 (count native-vars)) "The native inventory changed without a documentation assertion")
+    (doseq [entry native-vars]
+      (let [metadata (meta (second entry))]
+        (check! (and (seq (:doc metadata)) (seq (:arglists metadata)) (seq (:resources metadata)))
+                (str "Incomplete native metadata: " (first entry)))))
+    (check! (every? found webview-names) "Apropos missed a webview resource operation")
+    (check! (contains? webview-names 'bulwark.native/eval-js) "The webview tag inventory is empty")
+    (println "P2.6: help")
+    (check! (= :suspended (await (commands/run-task! (fn [] (help/describe-command)))))
+            "Interactive help blocked instead of opening its prompt")
+    (await (core/dispatch! {:event/type :ui/input-submitted
+                            :ui/id (:minibuffer/id @minibuffer/state)
+                            :revision (:revision @ui/issued) :text "bulwark.browser/reload"}))
+    (check! (not (minibuffer/active?)) "Help retained its completed prompt")
+    (let [record (buffer/selected)]
+      (check! (= :text (:buffer/kind record)) "Help did not open in a text buffer")
+      (check! (string/includes? (:buffer/text record) "Reloads") "Help lost command documentation"))
+    (await (help/describe-key "C-c r"))
+    (check! (string/includes? (:buffer/text (buffer/selected)) "Keymap: :global") "Key help lost precedence")
+    (await (help/describe-key "C-x"))
+    (check! (string/includes? (:buffer/text (buffer/selected)) "Prefix") "Key help lost a prefix")
+    (await (help/describe-key "C-c j"))
+    (check! (string/includes? (:buffer/text (buffer/selected)) "Unbound") "Key help lost an unbound key")
+    (await (help/describe-variable 'bulwark.browser/new-buffer-url))
+    (check! (string/includes? (:buffer/text (buffer/selected)) "Value:") "Variable help has no value")
+    (await (help/apropos "WEBVIEW"))
+    (check! (string/includes? (:buffer/text (buffer/selected)) "bulwark.native/navigate") "Apropos ignored resource tags")
+    (await (buffer/select! page))
+    (println "P2.6: errors")
+    ;; Both error paths retain origin context before they raise to their callers.
+    (try (await (commands/invoke! 'bulwark.tests.introspection/faulty)) (catch Exception error nil))
+    (hooks/add-hook! :test/fault :fixture (fn [event] (throw (ex-info "Hook fixture failed" {}))))
+    (try (await (hooks/run-hooks! {:event/type :test/fault})) (catch Exception error nil))
+    (await (messages/sync!))
+    (check! (= page (buffer/selected-id)) "Messages stole pane focus")
+    (let [text (:buffer/text (buffer/find-named "*Messages*"))]
+      (check! (and (string/includes? text "Command fixture failed")
+                   (string/includes? text "Hook fixture failed")
+                   (string/includes? text "fixture.cljrs")) "Messages lost errors or source context"))
+    (println "P2.6: configuration")
+    ;; Trusted configuration uses a temporary profile supplied by the Rust test.
+    (reset! config/profile user/test-profile)
+    (check! (= :missing (:status (await (config/load-init!)))) "Missing init changed the defaults")
+    (spit (config/init-path)
+      "(ns user.p26 (:require [bulwark.commands :refer [defcommand]] [bulwark.hooks :as hooks] [bulwark.keymap :as keymap]))\n(defcommand configured \"A live configured command.\" [] :first)\n(keymap/bind-key! \"C-x b\" 'user.p26/configured)\n(hooks/add-hook! :test/reload :configured (fn [event] nil))\n")
+    (check! (= :loaded (:status (await (config/load-init!)))) "Init failed to load")
+    (check! (= 'bulwark.tests.introspection (ns-name *ns*)) "Init changed the caller namespace")
+    (eval '(bulwark.commands/defcommand after-init "A command defined after init." [] :caller))
+    (check! (= :caller (await (commands/invoke! 'bulwark.tests.introspection/after-init)))
+            "Init broke later command definitions")
+    (check! (= 'user.p26/configured (:command (keymap/lookup "C-x b"))) "Init did not replace a binding")
+    (check! (= :first (await (commands/invoke! 'user.p26/configured))) "Configured command did not run")
+    (check! (= :loaded (:status (await (config/reload-init)))) "Init reload failed")
+    (check! (= 1 (count (get @hooks/registry :test/reload))) "Reload duplicated a named hook")
+    (spit (config/init-path)
+      "(ns user.p26)\n(defn configured [] :second)\n(throw (ex-info \"Broken init fixture\" {}))\n(def unreachable true)\n")
+    (check! (= :error (:status (await (config/load-init!)))) "Broken init was accepted")
+    (check! (= 'bulwark.tests.introspection (ns-name *ns*)) "Broken init changed the caller namespace")
+    (check! (= :second (await (commands/invoke! 'user.p26/configured))) "Init incorrectly rolled back earlier forms")
+    (check! (nil? (ns-resolve 'user.p26 'unreachable)) "Init ran forms after its error")
+    (check! (string/includes? (diagnostics/text) ":line 3") "Init runtime error lost its source line")
+    (spit (config/init-path) "(ns user.p26)\n(def broken [)\n")
+    (check! (= :error (:status (await (config/load-init!)))) "Malformed init was accepted")
+    (check! (string/includes? (diagnostics/text) (config/init-path)) "Parse error lost its source path")
+    (spit (config/init-path) (apply str (repeat 1025 (apply str (repeat 256 "x")))))
+    (check! (= :error (:status (await (config/load-init!)))) "An oversized init bypassed the source limit")
+    (await (commands/invoke! 'bulwark.browser/reload))
+    (check! (= page (buffer/selected-id)) "An init error made the browser unusable")
+    ;; The documented file uses async mode definitions and can reload twice.
+    (spit (config/init-path) user/example-init-source)
+    (check! (= :loaded (:status (await (config/load-init!)))) "Example init failed")
+    (check! (= :loaded (:status (await (config/load-init!)))) "Example init reload failed")
+    (check! (= 'user.init/choose-buffer (:command (keymap/lookup "C-x b"))) "Example init lost its binding")
+    (check! (= 1 (count (filter (fn [entry] (= :user.init/wikipedia-reader (first entry)))
+                               (get @hooks/registry :page/load-status-changed)))) "Example reload duplicated its hook")
+    (println "P2.6: retention")
+    ;; The whole retained message text and count remain bounded under repeated large errors.
+    (let [large (apply str (repeat 3000 "😀"))]
+      (doseq [index (range 40)] (diagnostics/report! :fixture large {})))
+    (doseq [index (range 260)] (diagnostics/report! :fixture (str index) {}))
+    (check! (<= (count (:entries @diagnostics/state)) diagnostics/entry-limit) "Messages exceeded the entry limit")
+    (check! (<= (count (diagnostics/text)) diagnostics/text-characters) "Messages exceeded the text limit")
+    (await (messages/sync!))
+    (check! (= (diagnostics/text) (:buffer/text (buffer/find-named "*Messages*"))) "Messages missed retained errors")
+    :introspection-passed))
+
+(run!)

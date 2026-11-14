@@ -1,0 +1,55 @@
+(ns bulwark.messages
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.commands :refer [defcommand]]
+            [bulwark.diagnostics :as diagnostics]
+            [clojure.core.async :refer [timeout]]))
+
+(def displayed (atom -1))
+(def running (atom false))
+(def syncing (atom nil))
+
+(defn acquire-sync! []
+  (loop []
+    (if-let [owner @syncing]
+      (do @owner (recur))
+      (let [release (promise)]
+        (if (compare-and-set! syncing nil release) release (recur))))))
+
+(defn ^:async sync!
+  "Copies retained diagnostics to *Messages*. It never selects the buffer."
+  []
+  (let [release (acquire-sync!)]
+    (try
+      (let [revision (:revision @diagnostics/state)
+            existing (buffer/find-named "*Messages*")]
+        (when (and (seq (:entries @diagnostics/state))
+                   (or (nil? existing) (not= revision @displayed)))
+          (let [id (or (:buffer/id existing)
+                       (await (buffer/create! {:kind :text :name "*Messages*" :select false})))]
+            (buffer/set-text! id (diagnostics/text))
+            (await (buffer/refresh!))
+            (reset! displayed revision))))
+      (finally
+        (reset! syncing nil)
+        (deliver release true)))))
+
+(defn ^:async pump!
+  "Updates the Messages buffer while the shell runs. A failed UI update retries later."
+  []
+  (loop []
+    (try (await (sync!)) (catch Exception error nil))
+    (await (timeout 100))
+    (recur)))
+
+(defn install! []
+  (when (compare-and-set! running false true) (pump!))
+  nil)
+
+(defcommand ^:async show-messages
+  "Shows retained command, hook, configuration, and evaluation errors."
+  []
+  (await (sync!))
+  (let [existing (buffer/find-named "*Messages*")
+        id (or (:buffer/id existing)
+               (await (buffer/create! {:kind :text :name "*Messages*" :select false})))]
+    (await (buffer/select! id))))

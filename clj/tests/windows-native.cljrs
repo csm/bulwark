@@ -21,6 +21,14 @@
         (await (timeout 5))
         (recur)))))
 
+(defn ^:async wait-load! [id]
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (when-not (= :complete (:load-status (buffer/view-page (:buffer/view (buffer/buffer! id)))))
+        (check! (< (System/currentTimeMillis) deadline) "Timed out: initial document load")
+        (await (timeout 5))
+        (recur)))))
+
 (defn web-element []
   (first (filter (fn [element] (= :web (:ui/kind element)))
                  (:elements (:description @ui/issued)))))
@@ -38,6 +46,8 @@
         notes (await (buffer/create! {:kind :text :name "*notes*" :select false
                                      :text "Mixed windows\n\nA retained web page and a text buffer.\n\nClick either pane to select it.\nC-x o moves between panes.\nC-x 1 keeps the selected pane."}))
         left (buffer/selected-window)]
+    (await (wait-load! a))
+    (await (wait-load! b))
     (await (wait-js! a "document.title" "Bulwark Servo fixture"))
     (await (wait-js! b "document.title" "Bulwark Servo fixture"))
     (await (js! a "window.retained = 'page-a'; 'ok'"))

@@ -600,6 +600,7 @@ impl ApplicationHandler<Wake> for App {
 pub fn run(
     args: &[String],
     nrepl: Option<bulwark_runtime::nrepl::Config>,
+    profile: std::path::PathBuf,
     mode: cljrs_runtime::ExecutionMode,
 ) -> Result<()> {
     let smoke = args.iter().any(|arg| arg == "--native-smoke");
@@ -656,7 +657,10 @@ pub fn run(
         if smoke {
             include_str!("../../../../clj/tests/native.cljrs").into()
         } else {
-            "(bulwark.shell/run! user/initial-url)".into()
+            format!(
+                "(bulwark.shell/run! user/initial-url {})",
+                bulwark_runtime::source_string(&profile.to_string_lossy())
+            )
         }
     });
     let source = format!(

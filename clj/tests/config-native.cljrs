@@ -1,0 +1,71 @@
+;; The runner supplies a temporary profile, the documented example, and a local page.
+(ns bulwark.tests.config-native
+  (:require [bulwark.bridge :as bridge]
+            [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.config :as config]
+            [bulwark.diagnostics :as diagnostics]
+            [bulwark.help :as help]
+            [bulwark.hooks :as hooks]
+            [bulwark.messages :as messages]
+            [bulwark.mode :as mode]
+            [bulwark.native :as native]
+            [bulwark.shell :as shell]
+            [clojure.string :as string]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+
+(defn ^:async until! [done? message]
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (when-not (await (done?))
+        (check! (< (System/currentTimeMillis) deadline) (str "Timed out: " message))
+        (await (timeout 5))
+        (recur)))))
+
+(defn ^:async js! [view text] (browser/value! (await (native/eval-js view text))))
+
+(defn ^:async program! []
+  (browser/install!)
+  (reset! bridge/error-handler #'shell/recover!)
+  (messages/install!)
+  (reset! config/profile user/test-profile)
+  (let [id (await (browser/open! user/initial-url))
+        view (:buffer/view (buffer/buffer id))]
+    (await (until! (fn [] (= :complete (:load-status (buffer/view-page view)))) "the local page"))
+    (await (js! view "(()=>{const n=document.createElement('div');n.id='mw-panel';n.textContent='Navigation';document.body.appendChild(n);return 'true'})()"))
+    ;; Point the example at the deterministic fixture, then apply the same public hook.
+    (spit (config/init-path) (str user/example-init-source
+                                 "\n(reset! user.init/reader-prefix " (pr-str user/initial-url) ")\n"))
+    (doseq [pass (range 2)]
+      (check! (= :loaded (:status (await (config/load-init!)))) "Reader init failed")
+      (await ((deref (ns-resolve 'user.init 'reader-on-load!))
+               {:buffer id :webview view :load-status :complete}))
+      (check! (= "none" (await (js! view "getComputedStyle(document.getElementById('mw-panel')).display")))
+              "The reader transformation did not hide navigation")
+      (check! (= "1" (await (js! view "String(document.querySelectorAll('#bulwark-reader').length)")))
+              "Reader reload duplicated the style"))
+    (await (mode/disable! id :wikipedia-reader))
+    (check! (= "0" (await (js! view "String(document.querySelectorAll('#bulwark-reader').length)")))
+            "Reader disable retained its style")
+    (await (mode/enable! id :wikipedia-reader))
+    ;; An actual engine event fails its hook. The next event must still run.
+    (hooks/add-hook! :page/title-changed :fixture/fault
+      (fn [event]
+        (when (= "P2.6 failure" (:title event)) (throw (ex-info "Recoverable native hook" {})))))
+    (await (js! view "document.title='P2.6 failure'"))
+    (await (until! (fn [] (string/includes? (diagnostics/text) "Recoverable native hook")) "the recorded hook error"))
+    (await (js! view "document.title='P2.6 recovered'"))
+    (await (until! (fn [] (= "P2.6 recovered" (:title (buffer/view-page view)))) "dispatch after an error"))
+    (await (messages/sync!))
+    (check! (string/includes? (:buffer/text (buffer/find-named "*Messages*")) "Recoverable native hook")
+            "The native error reached no Messages buffer")
+    (await (help/apropos "webview"))
+    (check! (= "*Help*" (:buffer/name (buffer/selected))) "Native help did not select its text buffer")
+    (await (timeout 200)))
+  (browser/value! (await (native/log "Native configuration assertions passed")))
+  :config-native-passed)
+
+(program!)

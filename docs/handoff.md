@@ -1,6 +1,31 @@
 # Development handoff
 
-Snapshot: Phase 2.5 continuation after `dcf9a23`, 2026-11-13.
+Snapshot: Phase 2.6 validation on `codex/phase-2-6-introspection`, based on `main` at `17bb3ed`, 2026-11-14.
+
+## Phase 2.6 introspection, Messages, and configuration
+
+This continuation starts after the merge of [PR #14](https://github.com/csm/bulwark/pull/14).
+The [introspection checkpoint](phase-2-introspection.md) records the API and validation evidence.
+
+`bulwark.help` adds four help commands and a reusable read-only text buffer.
+Every installed native function now has documentation, signatures, and resource tags.
+`bulwark.diagnostics` retains bounded error text. `bulwark.messages` updates its text buffer without a selection change.
+The ordinary shell recovers from command and hook errors. Lower-level test scripts preserve fatal dispatcher checks.
+The nREPL evaluator reports evaluation errors without a reply or namespace change.
+
+`--profile` now works without nREPL. The ordinary shell loads init after defaults and before it releases ordered events.
+`bulwark.config/reload-init` repeats that incremental load and records top-level source locations on errors.
+The native source reader parks filesystem IO and limits files to 256 KiB.
+[examples/init.cljrs](../examples/init.cljrs) replaces a buffer binding and enables a small Wikipedia reader mode.
+The native fixture checks the same transformation against a local page through public APIs.
+
+Local macOS checks passed: all 57 portable tests, standalone AOT, and 15 native process cases per evaluator mode.
+Both nREPL suites, both smokes, the Servo contract, 17 native unit tests, formatting, and Clippy also passed.
+The [validation report](phase-2-shell-acceptance.md) records P2.6 physical checks and the P2.5 physical backfill.
+Physical checks passed within the documented Option-key, IME, and clipboard limits.
+The [final CI run](https://github.com/csm/bulwark/actions/runs/43622541434) passed all four jobs at `090e2c5`.
+Validation corrected test-module placement, Linux window focus, initial-load synchronization, and init namespace restoration.
+Continue with P2.7: default browsing commands and the internal REPL.
 
 ## Phase 2.5 minibuffer and command palette
 
@@ -17,7 +42,8 @@ The native frame now uses the dark theme and strong text on emphasized lines.
 
 Local macOS checks passed: 54 portable tests, the AOT model with nine namespaces, 17 native unit tests, and eleven native process cases per evaluator mode.
 Both nREPL suites, both smokes, the Servo smoke, formatting, and portable and native Clippy also passed.
-Linux CI has not run on this change. [Run 43373187308](https://github.com/csm/bulwark/actions/runs/43373187308) passed for P2.4 on `main`.
+The [validation report](phase-2-shell-acceptance.md) now records passing Linux CI and the physical backfill.
+[Run 43373187308](https://github.com/csm/bulwark/actions/runs/43373187308) passed for P2.4 on `main`.
 In the pinned AOT compiler, `next` is not nil at the end of a `take` beyond its collection. This broke a `loop` in `completion/rank`.
 [Clojurust issue #500](https://github.com/csm/clojurust/issues/500) has the minimal reproduction. The checkpoint records the workaround.
 Local builds used the main checkout's `target` directory through `CARGO_TARGET_DIR`.

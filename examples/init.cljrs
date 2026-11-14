@@ -1,0 +1,59 @@
+(ns user.init
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.browser :as browser]
+            [bulwark.commands :refer [defcommand]]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.mode :as mode :refer [define-minor-mode]]
+            [bulwark.native :as native]
+            [clojure.string :as string]))
+
+;; Reload this file through M-x reload-init. Named definitions replace earlier ones.
+(defcommand ^:async choose-buffer
+  "Selects a retained buffer through the minibuffer."
+  []
+  (await (browser/switch-buffer)))
+(keymap/bind-key! "C-x b" 'user.init/choose-buffer)
+
+;; This small transformation targets English Wikipedia article pages.
+;; It hides navigation chrome through one removable style element.
+(def reader-prefix (atom "https://en.wikipedia.org/wiki/"))
+
+(def reader-style
+  "(()=>{let s=document.getElementById('bulwark-reader');if(!s){s=document.createElement('style');s.id='bulwark-reader';s.textContent='#mw-panel,#mw-head,.vector-header-container,.vector-column-start,.vector-column-end{display:none!important}.mw-body,.mw-page-container-inner{margin:0 auto!important;max-width:78ch!important}';document.head.appendChild(s)}return 'true'})()")
+
+(defn ^:async apply-reader! [id]
+  (let [record (buffer/buffer id)
+        page (buffer/view-page (:buffer/view record))]
+    (when (and (= :web (:buffer/kind record))
+               (string/starts-with? (or (:url page) "") @reader-prefix))
+      (browser/value! (await (native/eval-js (:buffer/view record) reader-style))))))
+
+(defn ^:async remove-reader! [id]
+  (when-let [view (:buffer/view (buffer/buffer id))]
+    (browser/value! (await (native/eval-js view
+      "(()=>{const s=document.getElementById('bulwark-reader');if(s)s.remove();return 'true'})()")))))
+
+(define-minor-mode wikipedia-reader
+  "Hides English Wikipedia navigation chrome in this web buffer."
+  {:on-enable apply-reader! :on-disable remove-reader!})
+
+(defn ^:async reader-on-load! [event]
+  (let [id (:buffer event)
+        page (buffer/view-page (:webview event))]
+    (when (and id (= :complete (:load-status event))
+               (string/starts-with? (or (:url page) "") @reader-prefix))
+      (if (mode/enabled? id :wikipedia-reader)
+        (await (apply-reader! id))
+        (await (mode/enable! id :wikipedia-reader))))))
+
+(hooks/add-hook! :page/load-status-changed :user.init/wikipedia-reader #'reader-on-load!)
+
+;; Apply the reloaded configuration to retained pages without a navigation or restart.
+(doseq [record (buffer/buffers)]
+  (let [id (:buffer/id record)
+        page (buffer/view-page (:buffer/view record))]
+    (when (and (= :web (:buffer/kind record))
+               (string/starts-with? (or (:url page) "") @reader-prefix))
+      (await (mode/enable! id :wikipedia-reader))
+      (await (apply-reader! id)))))

@@ -641,3 +641,26 @@ fn native_stroke_spelling_matches_the_clojure_keymap() {
         run_product_clojure(&source, ":spelling-passed", mode);
     }
 }
+
+#[test]
+fn introspection_messages_and_init_pass_in_both_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        let profile = std::env::temp_dir().join(format!(
+            "bulwark-init-{}-{}",
+            std::process::id(),
+            bulwark_engine::allocate_id().unwrap()
+        ));
+        std::fs::create_dir(&profile).unwrap();
+        let source = format!(
+            "(def test-profile {})\n(def example-init-source {})\n{}",
+            bulwark_runtime::source_string(&profile.to_string_lossy()),
+            bulwark_runtime::source_string(include_str!("../../../examples/init.cljrs")),
+            include_str!("../../../clj/tests/introspection.cljrs")
+        );
+        run_product_clojure(&source, ":introspection-passed", mode);
+        std::fs::remove_dir_all(profile).unwrap();
+    }
+}

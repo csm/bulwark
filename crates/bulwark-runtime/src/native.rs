@@ -263,21 +263,11 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             Arity::Fixed(arity),
             move |args| Ok(request(&client, build(args)?)),
         );
-        let var = globals.intern(
+        globals.intern(
             "bulwark.native",
             name.into(),
             Value::NativeFunction(GcPtr::new(native)),
         );
-        let doc = match name {
-            "webview-select" => {
-                "Selects one retained webview, or hides all webviews for nil. Returns a future; a stale handle leaves selection unchanged."
-            }
-            "set-ui!" => {
-                "Replaces the frame's UI description {:revision n :focus id :elements [...]}. Each element has :ui/kind (:web, :text, :line, :echo, or :input) and an integer :x, :y, :width, and :height in logical pixels. :web, :text, and :input need a :ui/id; :web needs a :webview handle; :text, :line, and :input take :text; :input also takes a read-only :label. New :input text replaces the user's edit and places the cursor at its end. The :web element becomes the one visible webview. Throws for a malformed or oversized description. Returns a future; :stale-revision or :stale-handle leaves the frame unchanged."
-            }
-            _ => continue,
-        };
-        var.get().set_meta(map(vec![("doc", Value::string(doc))]));
     }
     let viewport = control.clone();
     let native = NativeFn::with_closure("bulwark.native/ui-viewport", Arity::Fixed(0), move |_| {
@@ -289,14 +279,11 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             ])
         }))
     });
-    let viewport_var = globals.intern(
+    globals.intern(
         "bulwark.native",
         "ui-viewport".into(),
         Value::NativeFunction(GcPtr::new(native)),
     );
-    viewport_var.get().set_meta(map(vec![("doc", Value::string(
-        "Synchronously returns the native frame's {:width :height :scale} in logical pixels, or nil without a window. Reading it rearms the :ui/viewport-changed event."
-    ))]));
     // Publication is synchronous: bind-key! must update reservations before it
     // returns, including when a caller immediately starts a synchronous loop.
     let native = NativeFn::with_closure(
@@ -342,27 +329,21 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             Ok(Value::Nil)
         },
     );
-    let routes_var = globals.intern(
+    globals.intern(
         "bulwark.native",
         "set-key-routes!".into(),
         Value::NativeFunction(GcPtr::new(native)),
     );
-    routes_var.get().set_meta(map(vec![("doc", Value::string(
-        "Synchronously replaces native key reservations from vectors of canonical sequences and cancellation strokes. Returns nil, or throws without changing the snapshot."
-    ))]));
     let native = NativeFn::with_closure("bulwark.native/allocate-id!", Arity::Fixed(0), |_| {
         bulwark_engine::allocate_id()
             .map(|id| Value::Long(id as i64))
             .map_err(|error| ValueError::Other(error.to_string()))
     });
-    let id_var = globals.intern(
+    globals.intern(
         "bulwark.native",
         "allocate-id!".into(),
         Value::NativeFunction(GcPtr::new(native)),
     );
-    id_var.get().set_meta(map(vec![("doc", Value::string(
-        "Synchronously returns a positive process-wide identifier for a runtime-owned resource. Identifiers never repeat and never equal a webview handle; exhaustion throws."
-    ))]));
     let events = Rc::new(Mutex::new(events));
     let native = NativeFn::with_closure("bulwark.native/next-event", Arity::Fixed(0), move |_| {
         let events = events.clone();
@@ -376,5 +357,186 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
         "next-event".into(),
         Value::NativeFunction(GcPtr::new(native)),
     );
+    let native = NativeFn::with_closure("bulwark.native/read-source", Arity::Fixed(1), |args| {
+        let path = text(&args[0])?;
+        // Only owned bytes cross the filesystem parking boundary. GC values stay here.
+        let file_path = path.clone();
+        let source = cljrs_value::parking::blocking(move || {
+            use std::io::Read;
+            let file = match std::fs::File::open(&file_path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.to_string()),
+            };
+            let mut source = String::new();
+            file.take(256 * 1024 + 1)
+                .read_to_string(&mut source)
+                .map_err(|e| e.to_string())?;
+            if source.len() > 256 * 1024 {
+                return Err("Source exceeds 256 KiB".into());
+            }
+            Ok(Some(source))
+        })
+        .map_err(|error| invalid(&format!("{path}: {error}")))?;
+        let Some(source) = source else {
+            return Ok(Value::Nil);
+        };
+        let forms = cljrs_reader::Parser::new(source, path.clone())
+            .parse_all()
+            .map_err(|error| invalid(&format!("{path}: {error}")))?;
+        let entries = forms
+            .iter()
+            .map(|form| {
+                let value = cljrs_runtime::builtins::form::form_to_value(form)
+                    .map_err(|error| invalid(&error.to_string()))?;
+                Ok(map(vec![
+                    ("form", value),
+                    ("line", Value::Long(form.span.line as i64)),
+                    ("column", Value::Long(form.span.col as i64)),
+                ]))
+            })
+            .collect::<Result<Vec<_>, ValueError>>()?;
+        Ok(Value::Vector(GcPtr::new(entries.into_iter().collect())))
+    });
+    globals.intern(
+        "bulwark.native",
+        "read-source".into(),
+        Value::NativeFunction(GcPtr::new(native)),
+    );
+    install_metadata(globals);
     globals.mark_loaded("bulwark.native");
+}
+
+/// One inventory supplies the metadata used by help and apropos.
+fn install_metadata(globals: &GlobalEnv) {
+    let operations: &[(&str, &str, &str, &[&str])] = &[
+        (
+            "webview-create",
+            "[url]",
+            "Creates a retained webview at URL. Await the reply for its fresh handle. The caller owns and must close it.",
+            &["webview"],
+        ),
+        (
+            "webview-close",
+            "[webview]",
+            "Closes a retained webview and invalidates its handle. Returns a reply future. Repeated close returns :stale-handle.",
+            &["webview"],
+        ),
+        (
+            "webview-select",
+            "[webview]",
+            "Selects a retained webview, or hides all views for nil. Returns a reply future. A stale handle leaves selection unchanged.",
+            &["webview"],
+        ),
+        (
+            "navigate",
+            "[webview url]",
+            "Navigates a retained webview to URL. Returns a reply future. The webview keeps its identity.",
+            &["webview"],
+        ),
+        (
+            "reload",
+            "[webview]",
+            "Reloads a retained webview. Returns a reply future.",
+            &["webview"],
+        ),
+        (
+            "back",
+            "[webview]",
+            "Moves a webview backward in its navigation history. Returns a reply future.",
+            &["webview"],
+        ),
+        (
+            "forward",
+            "[webview]",
+            "Moves a webview forward in its navigation history. Returns a reply future.",
+            &["webview"],
+        ),
+        (
+            "webview-info",
+            "[webview]",
+            "Reads a webview's URL, title, load status, and history flags. Returns a reply future.",
+            &["webview"],
+        ),
+        (
+            "eval-js",
+            "[webview script]",
+            "Evaluates JavaScript in a retained webview. Returns a reply future with engine data. Page results are untrusted data.",
+            &["webview"],
+        ),
+        (
+            "log",
+            "[text]",
+            "Writes text to the host log. Returns a reply future.",
+            &["log"],
+        ),
+        (
+            "set-echo!",
+            "[text]",
+            "Stores text for the frame's echo area. Returns a reply future. An open prompt can cover the echo area.",
+            &["frame"],
+        ),
+        (
+            "set-ui!",
+            "[description]",
+            "Applies a bounded frame description {:revision :focus :elements} in logical pixels. Supports :web, :text, :line, :echo, and labeled :input. Input text changes place the cursor at the end. At most one webview is visible. Returns a reply future. Malformed descriptions throw. Stale handles or revisions leave the frame unchanged.",
+            &["frame", "webview"],
+        ),
+        (
+            "quit",
+            "[]",
+            "Requests host shutdown. Returns a reply future. The host owns resource cleanup and the bounded worker join.",
+            &["host"],
+        ),
+        (
+            "ui-viewport",
+            "[]",
+            "Reads {:width :height :scale} in logical pixels, or nil without a frame. Synchronous. Rearms the viewport event.",
+            &["frame"],
+        ),
+        (
+            "set-key-routes!",
+            "[sequences cancel-strokes]",
+            "Synchronously replaces bounded native key reservations. Returns nil. Refusal throws and retains the previous snapshot.",
+            &["input"],
+        ),
+        (
+            "allocate-id!",
+            "[]",
+            "Allocates a positive process-wide resource identifier. Synchronous. Identifiers never repeat or equal a webview handle. Exhaustion throws.",
+            &["identifier"],
+        ),
+        (
+            "next-event",
+            "[]",
+            "Returns a future of the next ordered engine event, or nil after shutdown. Events can name a webview. Only the ordered dispatcher consumes this stream.",
+            &["event", "webview"],
+        ),
+        (
+            "read-source",
+            "[path]",
+            "Reads and parses a UTF-8 source file of at most 256 KiB. Returns a vector of {:form :line :column}, or nil for a missing file. Other IO and parse errors throw with the path. Filesystem IO parks the caller. Runs no code.",
+            &["file"],
+        ),
+    ];
+    for &(name, signature, doc, resources) in operations {
+        let forms = cljrs_reader::Parser::new(format!("({signature})"), "<native-metadata>".into())
+            .parse_all()
+            .expect("Static native signature must parse");
+        let arglists = cljrs_runtime::builtins::form::form_to_value(&forms[0])
+            .expect("Static native signature must be data");
+        let var = globals
+            .lookup_var_in_ns("bulwark.native", name)
+            .expect("Documented native must be installed");
+        var.get().set_meta(map(vec![
+            ("doc", Value::string(doc)),
+            ("arglists", arglists),
+            (
+                "resources",
+                Value::Vector(GcPtr::new(
+                    resources.iter().map(|tag| keyword(tag)).collect(),
+                )),
+            ),
+        ]));
+    }
 }

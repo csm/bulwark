@@ -1,5 +1,6 @@
 (ns bulwark.commands
-  (:require [bulwark.hooks :as hooks]))
+  (:require [bulwark.hooks :as hooks]
+            [bulwark.diagnostics :as diagnostics]))
 
 (def registry (atom {}))
 
@@ -36,7 +37,11 @@
 (defn ^:async invoke!
   "Calls the current command Var and awaits its result."
   [command & args]
-  (await (apply (deref (:var (command-info command))) args)))
+  (try
+    (await (apply (deref (:var (command-info command))) args))
+    (catch Exception error
+      (diagnostics/error! :command error {:command command})
+      (throw error))))
 
 ;; The ordered event dispatcher runs each command as a task and waits until the task
 ;; finishes or suspends. A task suspends before it waits for a later event, such as the
@@ -60,6 +65,7 @@
   (binding [*task* task]
     (let [outcome (try {:value (await (thunk))} (catch Exception error {:error error}))]
       (when (and (not (settle! task outcome)) (:error outcome))
+        (diagnostics/error! :command (:error outcome) {:task :detached})
         (await (hooks/run-hooks! {:event/type :command/failed :error (:error outcome)}))))))
 
 (defn outcome!

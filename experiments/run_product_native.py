@@ -1,5 +1,6 @@
 """Run process-bounded checks of the product native host and runtime lifecycle."""
 import argparse
+import json
 import os
 from pathlib import Path
 import struct
@@ -56,7 +57,33 @@ def main():
             raise RuntimeError("Native composed frame is not a nonempty PNG")
         run_case(args.binary, "close-parked-runtime", [*mode, "--close-after-ms", "250"],
                  True, ["window-ready"], args.timeout)
+        profile = directory / "profile"
+        profile.mkdir()
+        init = profile / "init.cljrs"
+        # Default startup loads the selected profile without opening an nREPL listener.
+        run_case(args.binary, "missing-init", [*mode, "--profile", str(profile), "--close-after-ms", "1000"],
+                 True, ["window-ready"], args.timeout)
+        init.write_text('(await (bulwark.native/log "Init after defaults"))\n'
+                        '(when-not (:command (bulwark.keymap/lookup "C-x b")) (throw (ex-info "No defaults" {})))\n')
+        run_case(args.binary, "profile-without-nrepl", [*mode, "--profile", str(profile), "--close-after-ms", "1500"],
+                 True, ["Init after defaults"], args.timeout)
+        init.write_text('(bulwark.hooks/add-hook! :buffer/created :broken-init-check\n'
+                        ' (fn [event] (when (= :web (:buffer/kind (bulwark.buffer/buffer (:buffer event))))\n'
+                        '  (when-not (and (= :error (:status @bulwark.config/last-result))\n'
+                        '    (clojure.string/includes? (:buffer/text (bulwark.buffer/find-named "*Messages*")) "Startup init failure"))\n'
+                        '   (throw (ex-info "Missing startup diagnostic" {})))\n'
+                        '  (bulwark.native/log "Broken init left browser usable"))))\n'
+                        '(throw (ex-info "Startup init failure" {}))\n')
+        run_case(args.binary, "broken-init", [*mode, "--profile", str(profile), "--close-after-ms", "1500"],
+                 True, ["Broken init left browser usable"], args.timeout)
+        if (profile / ".nrepl-port").exists():
+            raise RuntimeError("Profile selection unexpectedly enabled nREPL")
+        init.unlink()
+        config_preamble = (f"(def test-profile {json.dumps(str(profile))})\n"
+                           f"(def example-init-source {json.dumps((root / 'examples/init.cljrs').read_text())})\n")
         programs = [
+            ("configuration", config_preamble + (root / "clj/tests/config-native.cljrs").read_text(),
+             True, ["Native configuration assertions passed"]),
             ("retained-views", "(def retained-fixture-url user/initial-url)\n" +
              (root / "clj/tests/retained-views.cljrs").read_text() +
              "\n(bulwark.tests.retained-views/retained-views!)",
@@ -95,9 +122,9 @@ def main():
             script = directory / f"{name}.cljrs"
             script.write_text(source)
             flags = [*mode, "--script", str(script)]
-            if name in {"mixed-windows", "minibuffer"}:
+            if name in {"mixed-windows", "minibuffer", "configuration"}:
                 flags += ["--screenshot", str(artifacts / f"{name}-{suffix}.png")]
-            if name in {"clojure-browser", "retained-views", "retained-buffers", "mixed-windows", "minibuffer"}:
+            if name in {"clojure-browser", "retained-views", "retained-buffers", "mixed-windows", "minibuffer", "configuration"}:
                 flags.append((root / "clj/tests/fixtures/servo.html").as_uri())
             run_case(args.binary, name, flags, success, expected, args.timeout)
 
