@@ -18,7 +18,8 @@ The native frame now uses the dark theme and strong text on emphasized lines.
 Local macOS checks passed: 54 portable tests, the AOT model with nine namespaces, 17 native unit tests, and eleven native process cases per evaluator mode.
 Both nREPL suites, both smokes, the Servo smoke, formatting, and portable and native Clippy also passed.
 Linux CI has not run on this change. [Run 43373187308](https://github.com/csm/bulwark/actions/runs/43373187308) passed for P2.4 on `main`.
-The pinned AOT compiler miscompiled a `loop` in `completion/rank`. The checkpoint records the workaround.
+In the pinned AOT compiler, `next` is not nil at the end of a `take` beyond its collection. This broke a `loop` in `completion/rank`.
+[Clojurust issue #500](https://github.com/csm/clojurust/issues/500) has the minimal reproduction. The checkpoint records the workaround.
 Local builds used the main checkout's `target` directory through `CARGO_TARGET_DIR`.
 
 ## Phase 2.4 modes and contextual keymaps
@@ -427,7 +428,7 @@ The lifecycle suite intentionally emits errors and a panic message in its expect
 1. Run Linux CI on the P2.5 change.
 2. Run the physical keyboard checks in the [mode checkpoint](phase-2-modes.md) and the [minibuffer checkpoint](phase-2-minibuffer.md).
 3. Decide whether the macOS Option key acts as Alt. `M-` bindings depend on that decision.
-4. Reduce the AOT `let` and `loop` defects to minimal Clojurust reproductions.
+4. Reduce the AOT `let` defect in `mode/register!` to a minimal Clojurust reproduction. Issue #500 covers the `take` defect.
 5. Continue with P2.6 in the [Phase 2 implementation plan](phase-2-plan.md).
 
 D1 accepts separate ownership. The foundation implements product transport policies, and the Servo adapter uses those policies.

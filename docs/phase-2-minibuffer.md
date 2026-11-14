@@ -149,10 +149,11 @@ It runs the score, ranking, prompt transition, and prompt description assertions
 The task and driver functions are async, so the AOT binary interprets them. The bridge suite covers them.
 
 The pinned compiler `540e4218` miscompiled the first form of `completion/rank`.
-That form walked the candidates in a `loop` with `(seq ...)`, `first`, and `next` inside a `let`.
-In the AOT binary, `first` returned nil for a nonempty sequence. Both evaluator modes passed.
+That form walked `(seq (take 4096 candidates))` in a `loop` with `first` and `next`.
+In the AOT binary, `next` returns a value that is not nil at the end of a `take` whose count exceeds its collection.
+The loop then ran once more, and `first` returned nil. Both evaluator modes passed.
+`(nil? (next (take 2 [:a])))` is the minimal reproduction. [Clojurust issue #500](https://github.com/csm/clojurust/issues/500) records it.
 The current form uses `reduce` and passes in the AOT binary.
-Two smaller standalone loops did not reproduce the defect. No upstream issue exists yet.
 
 ## Checks and remaining evidence
 
