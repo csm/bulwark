@@ -1,13 +1,9 @@
 (ns bulwark.shell
   (:require [bulwark.native :as native]
             [bulwark.browser :as browser]
-            [bulwark.buffer :as buffer]
-            [bulwark.hooks :as hooks]
             [bulwark.bridge :as bridge]
             [bulwark.config :as config]
-            [bulwark.diagnostics :as diagnostics]
-            [bulwark.help :as help]
-            [bulwark.messages :as messages]
+            [bulwark.default.shell :as defaults]
             [clojure.core.async :refer [timeout]]))
 
 (defn value!
@@ -17,27 +13,12 @@
   (:value reply))
 
 (defn ^:async dispatch!
-  "Displays the selected buffer's titles and native key events in the echo area."
-  [event]
-  (case (:event/type event)
-    ;; A background buffer's title must not replace the visible page's title.
-    :page/title-changed (when (or (nil? (:buffer event)) (= (:buffer event) (buffer/selected-id)))
-                          (await (native/set-echo! (:title event))))
-    :buffer/selected (await (native/set-echo! (buffer/display-name (:buffer event))))
-    :page/crashed (await (native/set-echo! (str "Page crashed: " (:message event))))
-    ;; A command that fails after it suspended has no waiting dispatcher.
-    :command/failed (await (native/set-echo! (str "Command failed: " (ex-message (:error event)))))
-    :input/key (when (and (:pressed event) (= :unbound (:keymap/status event)))
-                 (await (native/set-echo! (str "Key: " (:key event)))))
-    nil))
+  "Runs the default echo policy. Kept for existing startup scripts."
+  [event] (await (defaults/dispatch! event)))
 
 (defn ^:async recover!
-  "Records a dispatch error and keeps the shell usable."
-  [error]
-  (diagnostics/error! :dispatch error {})
-  (try
-    (await (native/set-echo! (str "Error: " (ex-message error))))
-    (catch Exception ignored nil)))
+  "Runs the default recoverable dispatch boundary."
+  [error] (await (defaults/recover! error)))
 
 (defn ^:async run!
   "Installs defaults, loads init, then opens the initial page."
@@ -46,12 +27,8 @@
    (let [ready (promise)]
      (reset! bridge/startup-gate ready)
      (try
-       (browser/install!)
-       (reset! bridge/error-handler #'recover!)
+       (defaults/install!)
        (reset! config/profile profile)
-       (messages/install!)
-       (doseq [event-type [:page/title-changed :page/crashed :command/failed :input/key :buffer/selected]]
-         (hooks/add-hook! event-type :bulwark.shell/echo #'dispatch!))
        (value! (await (native/set-echo! "Bulwark")))
        (await (config/load-init!))
        (await (browser/open! url))

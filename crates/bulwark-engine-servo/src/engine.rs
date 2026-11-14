@@ -3,13 +3,14 @@ use bulwark_engine::{
     bridge::{EventSink, Request, Wake},
 };
 use servo::{
-    EventLoopWaker, JSValue, RenderingContext, Servo, ServoBuilder, SoftwareRenderingContext,
-    WebView, WebViewBuilder, WebViewDelegate,
+    CreateNewWebViewRequest, EventLoopWaker, JSValue, RenderingContext, Servo, ServoBuilder,
+    SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate,
 };
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     rc::Rc,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone)]
@@ -38,7 +39,14 @@ struct Delegate {
     state: Rc<ViewState>,
     events: EventSink,
     wake: Wake,
+    popups: Popups,
 }
+struct Popup {
+    parent: Handle,
+    deadline: Instant,
+    request: CreateNewWebViewRequest,
+}
+type Popups = Rc<RefCell<BTreeMap<Handle, Popup>>>;
 impl Delegate {
     fn emit(&self, kind: EventKind) {
         if !self.state.revoked.get() {
@@ -61,6 +69,27 @@ impl Delegate {
     }
 }
 impl WebViewDelegate for Delegate {
+    fn request_create_new(&self, _: WebView, request: CreateNewWebViewRequest) {
+        let mut pending = self.popups.borrow_mut();
+        if self.state.revoked.get()
+            || pending.len() >= 16
+            || pending.values().filter(|p| p.parent == self.handle).count() >= 4
+        {
+            return; // Dropping the automatic responder denies the request.
+        }
+        let Ok(id) = bulwark_engine::allocate_id().map(Handle) else {
+            return;
+        };
+        pending.insert(
+            id,
+            Popup {
+                parent: self.handle,
+                deadline: Instant::now() + Duration::from_secs(10),
+                request,
+            },
+        );
+        self.emit(EventKind::PopupRequested { request: id });
+    }
     fn notify_url_changed(&self, _: WebView, url: url::Url) {
         self.emit(EventKind::UrlChanged(url.into()));
     }
@@ -106,6 +135,7 @@ pub struct ServoEngine {
     ui: Option<bulwark_engine::ui::Ui>,
     ui_generation: u64,
     pending: Pending,
+    popups: Popups,
     servo: Servo,
     context: Rc<dyn RenderingContext>,
     events: EventSink,
@@ -142,6 +172,7 @@ impl ServoEngine {
             ui: None,
             ui_generation: 0,
             pending: Rc::default(),
+            popups: Rc::default(),
             servo,
             context,
             events,
@@ -179,6 +210,7 @@ impl ServoEngine {
                     state: state.clone(),
                     events: self.events.clone(),
                     wake: self.wake.clone(),
+                    popups: self.popups.clone(),
                 }))
                 .build();
             webview.hide();
@@ -190,6 +222,40 @@ impl ServoEngine {
         if first && self.ui.is_none() {
             self.select(Some(handle))?;
         }
+        Ok(Data::Handle(handle))
+    }
+
+    fn accept_popup(&mut self, id: Handle) -> Result<Data, Fault> {
+        let popup = self
+            .popups
+            .borrow_mut()
+            .remove(&id)
+            .ok_or(Fault::StaleHandle)?;
+        if popup.deadline <= Instant::now() {
+            return Err(Fault::StaleHandle);
+        }
+        self.view(popup.parent)?;
+        let handle = self.views.insert_with(|handle| {
+            let state = Rc::new(ViewState {
+                dirty: Cell::new(true),
+                ..Default::default()
+            });
+            let webview = popup
+                .request
+                .builder(self.context.clone())
+                .hidpi_scale_factor(euclid::Scale::new(self.scale))
+                .delegate(Rc::new(Delegate {
+                    handle,
+                    state: state.clone(),
+                    events: self.events.clone(),
+                    wake: self.wake.clone(),
+                    popups: self.popups.clone(),
+                }))
+                .build();
+            webview.hide();
+            webview.set_focused(false);
+            View { webview, state }
+        })?;
         Ok(Data::Handle(handle))
     }
 
@@ -253,6 +319,9 @@ impl ServoEngine {
         }
         // Suppress late delegate callbacks before dropping the final embedder reference.
         view.state.revoked.set(true);
+        self.popups
+            .borrow_mut()
+            .retain(|_, popup| popup.parent != handle);
         self.reject_pending(Some(handle), Fault::StaleHandle);
         Ok(())
     }
@@ -342,6 +411,28 @@ impl Engine for ServoEngine {
         }
         let result = (|| match &request.command {
             Command::Create { url } => self.create(url),
+            Command::AcceptPopup(id) => self.accept_popup(*id),
+            Command::DenyPopup(id) => {
+                let popup = self
+                    .popups
+                    .borrow_mut()
+                    .remove(id)
+                    .ok_or(Fault::StaleHandle)?;
+                if popup.deadline <= Instant::now() {
+                    return Err(Fault::StaleHandle);
+                }
+                self.view(popup.parent)?;
+                Ok(Data::Nil)
+            }
+            Command::Zoom { view, factor } => {
+                if !factor.is_finite() || !(0.25..=5.0).contains(factor) {
+                    return Err(Fault::Engine(
+                        "Zoom must be a finite number from 0.25 to 5".into(),
+                    ));
+                }
+                self.view(*view)?.webview.set_page_zoom(*factor as f32);
+                Ok(Data::Nil)
+            }
             Command::Close(handle) => {
                 self.view(*handle)?;
                 self.invalidate(*handle)?;
@@ -435,6 +526,10 @@ impl Engine for ServoEngine {
             }
         }
         self.servo.spin_event_loop();
+        let now = Instant::now();
+        self.popups
+            .borrow_mut()
+            .retain(|_, popup| popup.deadline > now);
         let revoked: Vec<_> = self
             .views
             .iter()
@@ -452,6 +547,7 @@ impl Engine for ServoEngine {
             view.state.revoked.set(true);
         }
         self.reject_pending(None, Fault::ShuttingDown);
+        self.popups.borrow_mut().clear();
         self.views.clear();
     }
 }
@@ -478,6 +574,7 @@ mod tests {
                 visible: Cell::new(true),
                 ..Default::default()
             }),
+            popups: Rc::default(),
             events: endpoint.events,
             wake: Arc::new(move || {
                 count.fetch_add(1, Ordering::Relaxed);
@@ -502,6 +599,7 @@ mod tests {
         let delegate = Delegate {
             handle: Handle(1),
             state: Rc::default(),
+            popups: Rc::default(),
             events: endpoint.events,
             wake: Arc::new(|| {}),
         };
@@ -523,6 +621,7 @@ mod tests {
         let delegate = Delegate {
             handle: Handle(1),
             state: Rc::default(),
+            popups: Rc::default(),
             events: endpoint.events,
             wake: Arc::new(|| panic!("A hidden frame must not request a repaint")),
         };

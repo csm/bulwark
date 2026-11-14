@@ -29,7 +29,7 @@
                               (filter (fn [entry] (some #{:webview} (:resources entry))) (help/inventory))))
         found (set (map :name (help/apropos-entries "webview")))]
     (println "P2.6: native inventory")
-    (check! (= 18 (count native-vars)) "The native inventory changed without a documentation assertion")
+    (check! (= 25 (count native-vars)) "The native inventory changed without a documentation assertion")
     (doseq [entry native-vars]
       (let [metadata (meta (second entry))]
         (check! (and (seq (:doc metadata)) (seq (:arglists metadata)) (seq (:resources metadata)))

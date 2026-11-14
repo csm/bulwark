@@ -1,0 +1,67 @@
+(ns bulwark.default.browsing
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.repl :as repl]
+            [bulwark.window :as window]
+            [bulwark.default.pages :as pages]))
+
+(defn ^:async replace-last-buffer!
+  "Default policy after the last web buffer dies: open the new-buffer URL, unless the engine is stopping."
+  [killed]
+  (try
+    (await (browser/open! @browser/new-buffer-url))
+    (catch Exception error
+      (when-not (contains? #{:shutting-down :engine-disconnected} (:error (ex-data error)))
+        (throw error)))))
+
+(defn ^:async split-buffer!
+  "Returns the buffer for a new window. Only one page can be visible, so the split of a
+  page's window shows the most recent text or REPL buffer, or a new *scratch* buffer."
+  []
+  (let [selected (buffer/selected)
+        other (first (filter (fn [id] (not= :web (:buffer/kind (buffer/buffer id))))
+                             (:recent @buffer/registry)))]
+    (cond
+      (not= :web (:buffer/kind selected)) (:buffer/id selected)
+      other other
+      :else (await (buffer/create! {:kind :text :name "*scratch*" :select false})))))
+
+(defn ^:async select-pressed-window!
+  "Default pointer policy: a press in another window selects it."
+  [event]
+  (let [layout (buffer/layout)]
+    (when (and layout (window/window layout (:ui/id event)))
+      (await (browser/select-window! (:ui/id event))))))
+
+(defn install!
+  "Installs browser hooks, the last-buffer policy, and default keys. Repeated installation replaces them."
+  []
+  (repl/install!)
+  (pages/install!)
+  (keymap/bind-key! "C-c e" 'bulwark.repl/open-repl)
+  (hooks/add-hook! :page/title-changed :bulwark.browser/track-page #'browser/track-page!)
+  (hooks/add-hook! :ui/pressed :bulwark.browser/select-window #'select-pressed-window!)
+  (reset! buffer/last-web-buffer-policy #'replace-last-buffer!)
+  (keymap/bind-key! "C-c n" 'bulwark.browser/new-buffer)
+  (keymap/bind-key! "C-x k" 'bulwark.browser/kill-buffer)
+  (keymap/bind-key! "C-x ArrowRight" 'bulwark.browser/next-buffer)
+  (keymap/bind-key! "C-x ArrowLeft" 'bulwark.browser/previous-buffer)
+  (keymap/bind-key! "C-x 2" 'bulwark.browser/split-window-below)
+  (keymap/bind-key! "C-x 3" 'bulwark.browser/split-window-right)
+  (keymap/bind-key! "C-x 0" 'bulwark.browser/delete-window)
+  (keymap/bind-key! "C-x 1" 'bulwark.browser/delete-other-windows)
+  (keymap/bind-key! "C-x o" 'bulwark.browser/other-window)
+  (keymap/bind-key! "C-x ^" 'bulwark.browser/enlarge-window)
+  (keymap/bind-key! "C-x }" 'bulwark.browser/enlarge-window-horizontally)
+  (keymap/bind-key! "C-x {" 'bulwark.browser/shrink-window-horizontally)
+  (keymap/bind-key! "C-c r" 'bulwark.browser/reload)
+  (keymap/bind-key! "C-c b" 'bulwark.browser/back)
+  (keymap/bind-key! "C-c f" 'bulwark.browser/forward)
+  (keymap/bind-key! "C-x h" 'bulwark.browser/history-list)
+  (keymap/bind-key! "M-x" 'bulwark.browser/execute-command)
+  (keymap/bind-key! "C-c x" 'bulwark.browser/execute-command)
+  (keymap/bind-key! "C-x b" 'bulwark.browser/switch-buffer)
+  (keymap/bind-key! "C-l" 'bulwark.browser/open-url)
+  (keymap/bind-key! "C-c h" 'bulwark.browser/select-history))

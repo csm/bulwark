@@ -1,0 +1,41 @@
+(ns bulwark.default.shell
+  (:require [bulwark.native :as native]
+            [bulwark.buffer :as buffer]
+            [bulwark.bridge :as bridge]
+            [bulwark.default.browsing :as browsing]
+            [bulwark.diagnostics :as diagnostics]
+            [bulwark.help :as help]
+            [bulwark.hooks :as hooks]
+            [bulwark.messages :as messages]))
+
+(defn ^:async dispatch!
+  "Displays the selected buffer's titles and native key events in the echo area."
+  [event]
+  (case (:event/type event)
+    ;; A background buffer's title must not replace the visible page's title.
+    :page/title-changed (when (or (nil? (:buffer event)) (= (:buffer event) (buffer/selected-id)))
+                          (await (native/set-echo! (:title event))))
+    :buffer/selected (await (native/set-echo! (buffer/display-name (:buffer event))))
+    :page/crashed (await (native/set-echo! (str "Page crashed: " (:message event))))
+    ;; A command that fails after it suspended has no waiting dispatcher.
+    :command/failed (await (native/set-echo! (str "Command failed: " (ex-message (:error event)))))
+    :input/key (when (and (:pressed event) (= :unbound (:keymap/status event)))
+                 (await (native/set-echo! (str "Key: " (:key event)))))
+    nil))
+
+(defn ^:async recover!
+  "Records a dispatch error and keeps the shell usable."
+  [error]
+  (diagnostics/error! :dispatch error {})
+  (try
+    (await (native/set-echo! (str "Error: " (ex-message error))))
+    (catch Exception ignored nil)))
+
+(defn install!
+  "Installs the ordinary shell policy through the public configuration APIs."
+  []
+  (browsing/install!)
+  (reset! bridge/error-handler #'recover!)
+  (messages/install!)
+  (doseq [event-type [:page/title-changed :page/crashed :command/failed :input/key :buffer/selected]]
+    (hooks/add-hook! event-type :bulwark.shell/echo #'dispatch!)))

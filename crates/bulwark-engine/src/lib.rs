@@ -164,6 +164,13 @@ pub enum Command {
     Back(Handle),
     Forward(Handle),
     Info(Handle),
+    Zoom {
+        view: Handle,
+        factor: f64,
+    },
+    /// Consume a deferred auxiliary-view request without changing its opener.
+    AcceptPopup(Handle),
+    DenyPopup(Handle),
     Evaluate {
         view: Handle,
         script: String,
@@ -226,6 +233,10 @@ pub enum EventKind {
     Crashed(String),
     KeyInput(KeyInput),
     InputReset,
+    FrameFocusChanged(bool),
+    PopupRequested {
+        request: Handle,
+    },
     /// The window's size or scale changed. The runtime reads the snapshot from the bridge.
     ViewportChanged,
     /// A pointer button went down on an identified element of the named revision.
@@ -255,6 +266,8 @@ impl EventKind {
             Self::Crashed(_) => "page/crashed",
             Self::KeyInput(_) => "input/key",
             Self::InputReset => "input/reset",
+            Self::FrameFocusChanged(_) => "frame/focus-changed",
+            Self::PopupRequested { .. } => "page/popup-requested",
             Self::ViewportChanged => "ui/viewport-changed",
             Self::UiPressed { .. } => "ui/pressed",
             Self::UiInputChanged { .. } => "ui/input-changed",

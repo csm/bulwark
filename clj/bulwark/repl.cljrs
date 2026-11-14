@@ -1,0 +1,166 @@
+(ns bulwark.repl
+  (:require [bulwark.buffer :as buffer]
+            [bulwark.commands :refer [defcommand]]
+            [bulwark.diagnostics :as diagnostics]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.native :as native]
+            [bulwark.ui :as ui]
+            [clojure.string :as string]
+            [clojure.core.async :refer [timeout]]))
+
+(def sessions (atom {}))
+(def pump (atom nil))
+(def history-limit 64)
+(def output-limit 16000)
+
+(defn tail [text limit]
+  (if (> (count text) limit) (subs text (- (count text) limit)) text))
+
+(defn append!
+  "Appends bounded transcript text without keeping evaluation values or exceptions."
+  [id text]
+  (when-let [record (buffer/buffer id)]
+    (buffer/set-text! id (tail (str (:buffer/text record) text) output-limit))))
+
+(defn input!
+  "Sets a REPL input's described text and namespace label."
+  [id text]
+  (when-let [session (get @sessions id)]
+    (when (buffer/buffer id)
+      ;; A fresh control clears native edits even when its described text was already empty.
+      (let [input-id (buffer/next-id!)]
+        (swap! sessions update id assoc :input/id input-id :edit text)
+        (buffer/set-local! id :repl/input {:id input-id :text text
+                                          :label (str (:namespace session) "=> ")})))))
+
+(defn ^:async create!
+  "Creates a trusted internal REPL with bounded transcript, source history, and owned jobs."
+  []
+  (let [input-id (buffer/next-id!)
+        id (await (buffer/create! {:kind :repl
+                                   :name (if (buffer/find-named "*REPL*") (str "*REPL " input-id "*") "*REPL*")
+                                   :text "Bulwark internal REPL. C-c C-c interrupts; C-p/C-n recalls input.\n"
+                                   :locals {:repl/input {:id input-id :text "" :label "user=> "}}}))]
+    (swap! sessions assoc id {:input/id input-id :namespace "user" :jobs [] :history [] :cursor nil :draft "" :edit ""})
+    id))
+
+(defcommand ^:async open-repl
+  "Shows the internal REPL, creating one when none exists. It shares the browser's trusted runtime."
+  []
+  (if-let [id (first (filter buffer/buffer (keys @sessions)))]
+    (await (buffer/select! id))
+    (await (create!))))
+
+(defn ^:async submit!
+  "Queues source and immediately returns its job id. The ordered dispatcher never awaits evaluation."
+  [id source]
+  (buffer/buffer! id)
+  (when-not (and (string? source) (<= (count source) ui/max-input-characters))
+    (throw (ex-info "REPL input exceeds 1024 characters" {})))
+  (when (seq (string/trim source))
+    (let [session (or (get @sessions id) (throw (ex-info "No REPL session owns this buffer" {})))
+          job (native/evaluation-start id source (:namespace session))]
+      (swap! sessions update id
+             (fn [session] (assoc session :jobs (conj (:jobs session) job)
+                                  :history (vec (take-last history-limit (conj (:history session) source)))
+                                  :cursor nil :draft "")))
+      (append! id (str (:namespace session) "=> " source "\n"))
+      (input! id "")
+      (await (buffer/refresh!))
+      job)))
+
+(defn ^:async sync!
+  "Drains bounded native output and publishes transcripts. Completed polls consume their job ids."
+  []
+  (doseq [entry @sessions]
+    (let [id (first entry)]
+      (when (buffer/buffer id)
+        (doseq [job (:jobs (second entry))]
+          (when (some #{job} (:jobs (get @sessions id)))
+            (let [reply (native/evaluation-poll job)]
+              (append! id (:output reply))
+              (when (:truncated reply) (append! id "\n[Output truncated]\n"))
+              (when (contains? #{:done :error :interrupted} (:status reply))
+                (when (= :interrupted (:status reply)) (append! id "[Interrupted]\n"))
+                (when (= :error (:status reply))
+                  (diagnostics/report! :evaluation (:output reply) {:buffer id}))
+                (swap! sessions update id
+                       (fn [session]
+                         (when session
+                           (assoc session :jobs (vec (remove #{job} (:jobs session)))
+                                          :namespace (:namespace reply)))))
+                (when (buffer/buffer id)
+                  (buffer/set-local! id :repl/input
+                    (assoc (buffer/local id :repl/input) :label (str (:namespace reply) "=> ")))))))))))
+  (await (buffer/refresh!)))
+
+(defcommand interrupt
+  "Interrupts the oldest unfinished job owned by the selected REPL buffer."
+  []
+  (when-let [job (first (:jobs (get @sessions (buffer/selected-id))))]
+    (native/evaluation-interrupt job)))
+
+(defn ^:async recall! [offset]
+  (let [id (buffer/selected-id) session (get @sessions id)]
+    (when (and session (seq (:history session)))
+      (let [size (count (:history session))
+            current (:cursor session)
+            cursor (max 0 (min size (+ (or current size) offset)))
+            draft (if (nil? current) (:edit session) (:draft session))]
+        (swap! sessions update id assoc :cursor cursor :draft draft)
+        (input! id (if (= cursor size) draft (nth (:history session) cursor)))
+        (await (buffer/refresh!))))))
+
+(defcommand ^:async previous-input "Recalls the previous source in this REPL buffer." [] (await (recall! -1)))
+(defcommand ^:async next-input "Recalls the next source, or restores the unfinished input." [] (await (recall! 1)))
+
+(defn input-owner [event]
+  (first (keep (fn [entry] (when (= (:input/id (second entry)) (:ui/id event)) (first entry))) @sessions)))
+
+(defn ^:async changed! [event]
+  (when-let [id (input-owner event)]
+    ;; Preserve the edit without republishing it until another description is needed.
+    (when (buffer/buffer id) (swap! sessions update id assoc :edit (:text event) :cursor nil))))
+
+(defn ^:async submitted! [event]
+  (when-let [id (input-owner event)] (await (submit! id (:text event)))))
+
+(defn ^:async pressed! [event]
+  (when-let [id (input-owner event)]
+    (when (buffer/buffer id) (await (buffer/select! id)))))
+
+(defn ^:async selected! [event]
+  (let [id (:buffer event)]
+    (when-let [session (get @sessions id)]
+      ;; Hidden inputs leave the native edit registry. Restore their saved draft on return.
+      (when (buffer/buffer id)
+        (input! id (:edit session))
+        (await (buffer/refresh!))))))
+
+(defn killed! [event]
+  (let [id (:buffer event)]
+    (when (contains? @sessions id)
+      (native/evaluation-close id)
+      (swap! sessions dissoc id))))
+
+(defn ^:async run-pump! []
+  (loop []
+    (await (timeout 50))
+    (when (seq @sessions)
+      (try (await (sync!))
+           (catch Exception error (diagnostics/error! :evaluation error {}))))
+    (recur)))
+
+(defn install!
+  "Installs replaceable hooks and a single output pump without opening nREPL."
+  []
+  (hooks/add-hook! :ui/input-changed :bulwark.repl/edit #'changed!)
+  (hooks/add-hook! :ui/input-submitted :bulwark.repl/submit #'submitted!)
+  (hooks/add-hook! :ui/pressed :bulwark.repl/focus #'pressed!)
+  (hooks/add-hook! :buffer/selected :bulwark.repl/restore #'selected!)
+  (hooks/add-hook! :buffer/killed :bulwark.repl/close #'killed!)
+  (keymap/set-keymap! :repl-mode {"C-p" 'bulwark.repl/previous-input
+                                  "C-n" 'bulwark.repl/next-input
+                                  "C-c C-c" 'bulwark.repl/interrupt})
+  (when-not @pump (reset! pump (run-pump!))))

@@ -506,6 +506,7 @@ impl ApplicationHandler<Wake> for App {
                         focused && surface.page_has_focus(),
                     );
                     surface.input.reset();
+                    surface.emit(Handle::NONE, EventKind::FrameFocusChanged(focused));
                     if view.is_some() || surface.engine.ui().is_some() {
                         surface.emit(handle, EventKind::InputReset);
                     }

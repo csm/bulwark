@@ -10,6 +10,7 @@ The [window checkpoint](docs/phase-2-windows.md) adds mixed panes, modelines, an
 The [mode checkpoint](docs/phase-2-modes.md) adds mode definitions and contextual keymaps.
 The [minibuffer checkpoint](docs/phase-2-minibuffer.md) adds prompts, fuzzy completion, and the `M-x` command palette.
 The [introspection checkpoint](docs/phase-2-introspection.md) adds help buffers, Messages, and live init reload.
+The [browsing checkpoint](docs/phase-2-browsing.md) adds default configuration modules, find, zoom, popup support, and an internal REPL.
 The [P2.5/P2.6 validation report](docs/phase-2-shell-acceptance.md) records passing Linux CI and macOS physical checks.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
@@ -78,6 +79,14 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    `M-x reload-init` reloads the file. Errors appear in `M-x show-messages`.
    `M-x describe-command`, `describe-key`, `describe-variable`, and `apropos` open read-only help buffers.
    [examples/init.cljrs](examples/init.cljrs) supplies a buffer binding and a Wikipedia reader mode.
+
+   `C-s` finds page text. `C-c s` selects the next match.
+   `C-c +`, `C-c -`, and `C-c 0` change or reset page zoom.
+   `C-c l` selects a page link for a retained background buffer.
+   Popup policy lives in `bulwark.default.pages/popup-policy` and defaults to background buffers.
+   `C-c e` opens the internal REPL without a network listener.
+   Enter submits source. `C-p` and `C-n` recall input, and `C-c C-c` interrupts an evaluation.
+   The [P2.7 checkpoint](docs/phase-2-browsing.md) records limits, lifecycle hooks, and remaining acceptance work.
 
    Enable the product nREPL listener:
 

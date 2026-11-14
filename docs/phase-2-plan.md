@@ -178,6 +178,9 @@ Exit evidence: complete native introspection, missing and broken init cases, rep
 
 ### P2.7: Complete default browsing and the internal REPL
 
+Implemented locally in the [P2.7 checkpoint](phase-2-browsing.md), 2026-11-14.
+Remote CI and P2.8 acceptance remain open.
+
 1. Move default policy into `clj/bulwark/default/` through the same public APIs available to init files.
 2. Add new buffer, close buffer, switch buffer, back, forward, reload, and address commands.
 3. Add find-in-page through bounded JavaScript requests and zoom through a native engine mechanism.

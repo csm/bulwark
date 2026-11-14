@@ -90,23 +90,27 @@
                     (catch Exception error
                       (when-not (= :window-too-small (:error (ex-data error))) (throw error))
                       alone))]
-    ;; Each window has at most a content element and a modeline.
+    ;; Content and modelines count here. Optional inputs are reserved by the caller.
     (if (> (* 2 (count fitted)) (- max-elements reserved)) alone fitted)))
 
 (defn pane-elements
-  "Returns the elements of one window: its content, then its modeline when both fit."
+  "Returns a window's content, optional editable input, and modeline when they fit."
   [rectangle pane selected text-limit]
   (let [x (:x rectangle) y (:y rectangle) width (:width rectangle) height (:height rectangle)
         modeline (and (:modeline pane) (> height modeline-height))
-        content-height (if modeline (- height modeline-height) height)
+        pane-height (if modeline (- height modeline-height) height)
+        input (when (and (:input pane) (> pane-height echo-height)) (:input pane))
+        content-height (if input (- pane-height echo-height) pane-height)
         place {:ui/id (:window/id rectangle) :x x :y y :width width :height content-height}
         content (if (= :web (:kind pane))
                   (assoc place :ui/kind :web :webview (:view pane))
                   (assoc place :ui/kind :text :text (clip (or (:text pane) "") text-limit)))]
-    (if modeline
-      [content {:ui/kind :line :x x :y (+ y content-height) :width width :height modeline-height
-                :text (clip (:modeline pane) max-line-characters) :emphasis selected}]
-      [content])))
+    (cond-> [content]
+      input (conj {:ui/kind :input :ui/id (:id input) :x x :y (+ y content-height)
+                   :width width :height echo-height :text (clip (:text input) max-input-characters)
+                   :label (clip (:label input) max-line-characters)})
+      modeline (conj {:ui/kind :line :x x :y (+ y pane-height) :width width :height modeline-height
+                      :text (clip (:modeline pane) max-line-characters) :emphasis selected}))))
 
 (defn prompt-elements
   "Returns a prompt's elements: its lines from top to bottom, directly above its input,
@@ -127,7 +131,7 @@
 
 (defn describe
   "Returns a description without a revision. Panes map each window id to
-  {:kind :view :text :modeline}. The selected window's content owns the focus.
+  {:kind :view :text :modeline :input}. A selected pane's input owns focus when present.
   A nil layout leaves only the echo line. A prompt replaces the echo line with its
   input, which owns the focus, and draws its lines over the windows."
   ([layout panes viewport] (describe layout panes viewport nil))
@@ -136,11 +140,13 @@
          chrome (if view
                   (prompt-elements view area)
                   [{:ui/kind :echo :x 0 :y (:height area) :width (:width area) :height echo-height}])
-         rectangles (if layout (rectangles layout area (count chrome)) [])
+         input-count (count (filter :input (vals panes)))
+         rectangles (if layout (rectangles layout area (+ (count chrome) input-count)) [])
+         shown-inputs (count (filter (fn [rectangle] (:input (get panes (:window/id rectangle)))) rectangles))
          ;; Four UTF-8 bytes per character bounds the whole description at 256 KiB.
          ;; Reserve every modeline and the prompt first, then share the remaining budget among panes.
-         reserved (+ (* (+ (count rectangles) (count chrome)) max-line-characters)
-                     (if view max-input-characters 0))
+         reserved (+ (* (+ (count rectangles) (count chrome) shown-inputs) max-line-characters)
+                     (* (+ shown-inputs (if view 1 0)) max-input-characters))
          text-limit (min max-text-characters
                          (quot (- max-description-characters reserved)
                                (max 1 (count rectangles))))
@@ -152,7 +158,11 @@
                                                  text-limit))
                                 rectangles))
                    [])]
-     {:focus (if view (:id view) (when layout (:selected layout)))
+     {:focus (if view (:id view)
+                 (when layout
+                   (let [input-id (:id (:input (get panes (:selected layout))))]
+                     (if (and input-id (some (fn [element] (= input-id (:ui/id element))) windows))
+                       input-id (:selected layout)))))
       :elements (into windows chrome)})))
 
 (defn structure

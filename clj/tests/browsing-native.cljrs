@@ -1,0 +1,89 @@
+(ns bulwark.tests.browsing-native
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands]
+            [bulwark.core :as core]
+            [bulwark.default.pages :as pages]
+            [bulwark.hooks :as hooks]
+            [bulwark.minibuffer :as minibuffer]
+            [bulwark.native :as native]
+            [bulwark.repl :as repl]
+            [bulwark.ui :as ui]
+            [clojure.string :as string]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message] (when-not condition (throw (ex-info message {}))))
+(defn ^:async until! [predicate message]
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (when-not (await (predicate))
+        (check! (< (System/currentTimeMillis) deadline) (str "Timed out: " message))
+        (await (timeout 5)) (recur)))))
+(defn ^:async js! [view text] (browser/value! (await (native/eval-js view text))))
+(defn ^:async submit-prompt! [text]
+  (await (core/dispatch! {:event/type :ui/input-submitted :ui/id (:minibuffer/id @minibuffer/state)
+                          :revision (:revision @ui/issued) :text text})))
+
+(defn ^:async program! []
+  (browser/install!)
+  (let [id (await (browser/open! user/initial-url))
+        view (:buffer/view (buffer/buffer id))]
+    (await (until! (fn [] (= :complete (:load-status (buffer/page id)))) "initial load"))
+    (await (js! view "(()=>{document.body.innerHTML='<p>Needle one</p><p>Needle two</p><a href=\"about:blank\">Safe link</a><a href=\"javascript:alert(1)\">Unsafe link</a>';window.__openerMarker='opener-retained';return 'ready'})()"))
+    ;; Search input is always data, even when it contains JavaScript punctuation.
+    (check! (= "1/2" (await (pages/find! view "Needle"))) "Find lost matches")
+    (check! (= "Needle" (await (js! view "String(window.getSelection())"))) "Find did not select page text")
+    (check! (= "2/2" (await (pages/find! view "Needle"))) "Find-next did not advance")
+    (check! (= "1/2" (await (pages/find! view "Needle"))) "Find did not wrap")
+    (check! (= "No match" (await (pages/find! view "\";window.__injected=true;//"))) "Find query escaped its literal")
+    (check! (= "undefined" (await (js! view "typeof window.__injected"))) "A query executed code")
+    (let [before (parse-long (await (js! view "String(window.innerWidth)")))]
+      (await (pages/zoom! 2.0))
+      (await (until! (fn [] (< (parse-long (await (js! view "String(window.innerWidth)"))) before)) "zoom geometry"))
+      (await (pages/reset-zoom)))
+    (check! (try (native/webview-zoom view 0.0) false (catch Exception error true)) "Invalid zoom was accepted")
+    (check! (= [{:text "about:blank" :value "about:blank"}] (await (pages/links! view))) "Link query accepted an executable scheme")
+    (check! (= :suspended (await (commands/run-task! (fn [] (pages/open-link-in-new-buffer))))) "Link prompt blocked events")
+    (await (submit-prompt! "about:blank"))
+    (check! (= id (buffer/selected-id)) "Background link stole selection")
+    (check! (= 2 (count (buffer/buffers))) "Link did not create a retained buffer")
+    ;; The deferred builder must preserve the actual opener, including same-origin access.
+    (await (js! view "window.__popup=window.open('about:blank'); 'requested'"))
+    (await (until! (fn [] (= 3 (count (buffer/buffers)))) "popup buffer"))
+    (let [popup (last (buffer/buffers)) popup-view (:buffer/view popup)]
+      (check! (= id (buffer/selected-id)) "Background popup stole selection")
+      (check! (= "opener-retained" (await (js! popup-view "window.opener.__openerMarker"))) "Popup lost its opener")
+      (await (js! popup-view "window.opener.__popupMarker='child-to-parent'; 'sent'"))
+      (check! (= "child-to-parent" (await (js! view "window.__popupMarker"))) "Opener communication failed")
+      (await (buffer/kill! (:buffer/id popup))))
+    (reset! pages/popup-policy (fn [event] :deny))
+    (check! (= "true" (await (js! view "String(window.open('about:blank')===null)"))) "Denied popup was created")
+    (check! (= 2 (count (buffer/buffers))) "Denied popup published a buffer")
+    ;; Closing a parent invalidates a pending request and its JavaScript reply.
+    (hooks/remove-hook! :page/popup-requested :bulwark.default.pages/popup)
+    (let [request (atom nil)]
+      (hooks/add-hook! :page/popup-requested :fixture/pending (fn [event] (reset! request (:popup/request event))))
+      (let [pending (native/eval-js view "window.open('about:blank'); 'late'")]
+        (await (until! (fn [] @request) "pending popup request"))
+        (await (buffer/kill! id))
+        (check! (= :stale-handle (:error (await (native/webview-accept-popup @request)))) "A closed parent retained its popup request")
+        (check! (= :stale-handle (:error (await pending))) "Parent close retained its JS evaluation")))
+    ;; A native mixed pane contains the REPL transcript and its own editable control.
+    (await (repl/open-repl))
+    (let [repl-id (buffer/selected-id)]
+      (await (repl/submit! repl-id "(println \"Native REPL output\") (+ 40 2)"))
+      (await (until! (fn [] (empty? (:jobs (get @repl/sessions repl-id)))) "native REPL result"))
+      (check! (string/includes? (:buffer/text (buffer/buffer repl-id)) "42") "Native REPL lost its result")
+      (await (browser/split-window-right))
+      (await (repl/submit! repl-id "(await (clojure.core.async/timeout 60000))"))
+      (await (timeout 100))
+      (await (buffer/kill! repl-id)))
+    (await (repl/open-repl))
+    (await (repl/submit! (buffer/selected-id) "(println \"P2.7 native REPL\") (+ 20 22)"))
+    (await (until! (fn [] (empty? (:jobs (get @repl/sessions (buffer/selected-id))))) "final transcript"))
+    ;; Leave an owned parked job for the native shutdown regression and final frame.
+    (await (repl/submit! (buffer/selected-id) "(await (clojure.core.async/timeout 60000))"))
+    (await (timeout 200)))
+  (browser/value! (await (native/log "Default browsing and internal REPL assertions passed")))
+  :browsing-native-passed)
+(program!)

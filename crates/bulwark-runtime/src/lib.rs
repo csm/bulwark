@@ -1,5 +1,6 @@
 //! Thread-affine Clojurust host. No browser policy belongs here.
 
+pub mod evaluation;
 pub mod native;
 pub mod nrepl;
 pub mod worker;
@@ -62,6 +63,22 @@ impl RuntimeHost {
             .builtin_source(
                 "bulwark.browser",
                 include_str!("../../../clj/bulwark/browser.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.default.browsing",
+                include_str!("../../../clj/bulwark/default/browsing.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.default.pages",
+                include_str!("../../../clj/bulwark/default/pages.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.default.shell",
+                include_str!("../../../clj/bulwark/default/shell.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.repl",
+                include_str!("../../../clj/bulwark/repl.cljrs"),
             )
             .builtin_source(
                 "bulwark.commands",
@@ -144,6 +161,7 @@ impl RuntimeHost {
             )?;
             host.eval(
                 "(bulwark.buffer/set-host! {:create bulwark.native/webview-create \
+                                           :accept-popup bulwark.native/webview-accept-popup \
                                            :close bulwark.native/webview-close \
                                            :next-id bulwark.native/allocate-id!})",
             )?;

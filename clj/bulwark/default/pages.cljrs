@@ -1,0 +1,117 @@
+(ns bulwark.default.pages
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.commands :refer [defcommand]]
+            [bulwark.completion :as completion]
+            [bulwark.hooks :as hooks]
+            [bulwark.keymap :as keymap]
+            [bulwark.minibuffer :as minibuffer]
+            [bulwark.native :as native]
+            [clojure.string :as string]))
+
+(def popup-policy (atom (fn [event] :background)))
+
+(defn ^:async popup!
+  "Applies the trusted popup policy: :foreground, :background, or any other value to deny.
+  The engine request preserves the opener and owns the destination URL."
+  [event]
+  (let [request (:popup/request event)]
+    (try
+      (let [decision (@popup-policy event)]
+        (if (and (buffer/owner (:webview event)) (contains? #{:foreground :background} decision))
+          (await (buffer/create! {:kind :web :popup/request request :select (= :foreground decision)}))
+          (browser/value! (await (native/webview-deny-popup request)))))
+      (catch Exception error
+        ;; A policy error must also release the deferred engine responder.
+        (await (native/webview-deny-popup request))
+        (when-not (= :stale-handle (:error (ex-data error))) (throw error))))))
+
+(defn ^:async zoom! [factor]
+  (let [id (buffer/selected-id) view (browser/current-view!)]
+    (browser/value! (await (native/webview-zoom view factor)))
+    (when (buffer/buffer id) (buffer/set-local! id :page/zoom factor))
+    (await (browser/set-echo! (str "Zoom: " (int (* 100 factor)) "%")))))
+
+(defcommand ^:async zoom-in "Increases the selected page's zoom, up to 500 percent." []
+  (await (zoom! (min 5.0 (+ 0.1 (buffer/local (buffer/selected-id) :page/zoom 1.0))))))
+(defcommand ^:async zoom-out "Decreases the selected page's zoom, down to 25 percent." []
+  (await (zoom! (max 0.25 (- (buffer/local (buffer/selected-id) :page/zoom 1.0) 0.1)))))
+(defcommand ^:async reset-zoom "Restores the selected page's zoom to 100 percent." [] (await (zoom! 1.0)))
+
+(def find-script
+  "const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+   let n,visited=0,chars=0,matches=[],limited=false;
+   while((n=walker.nextNode())){
+     if(++visited>10000 || (chars+=n.length)>1048576){limited=true;break;}
+     const p=n.parentElement;
+     if(!p || /^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA|INPUT)$/.test(p.tagName) || !p.getClientRects().length)continue;
+     let start=0,pos,hay=n.data;
+     while((pos=hay.indexOf(query,start))>=0){
+       matches.push([n,pos]);start=pos+query.length;
+       if(matches.length>=1000){limited=true;break;}
+     }
+     if(limited)break;
+   }
+   if(!matches.length)return limited?'No match in search limit':'No match';
+   const old=window.__bulwarkFind;
+   const index=old&&old.query===query?(old.index+1)%matches.length:0;
+   const [node,pos]=matches[index],range=document.createRange();
+   range.setStart(node,pos);range.setEnd(node,pos+query.length);
+   const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
+   node.parentElement.scrollIntoView({block:'center'});
+   window.__bulwarkFind={query,index};
+   return String(index+1)+'/'+matches.length+(limited?' (search limit)':'');")
+
+(defn ^:async find! [view query]
+  (when-not (and (string? query) (seq query) (<= (count query) 256))
+    (throw (ex-info "Find needs 1 to 256 characters" {})))
+  (let [reply (browser/value! (await (native/eval-js view
+                  (str "(()=>{const query=" (pr-str query) ";" find-script "})()"))))]
+    (when-let [id (buffer/owner view)] (buffer/set-local! id :page/find query))
+    (await (browser/set-echo! reply))
+    reply))
+
+(defcommand ^:async find-in-page
+  "Finds text in the selected page. Repeating a query selects the next match, with wrapping."
+  []
+  (let [view (browser/current-view!)
+        reply (await (minibuffer/read! {:prompt "Find: " :literal (fn [text] (when (seq text) text))}))]
+    (when (= :accepted (:status reply)) (await (find! view (:value reply))))))
+
+(defcommand ^:async find-next "Selects the next match for this page's most recent query." []
+  (let [query (buffer/local (buffer/selected-id) :page/find)]
+    (if query (await (find! (browser/current-view!) query)) (await (find-in-page)))))
+
+(defn link-url?
+  "Accepts page links as navigation data. Executable and unsupported schemes are rejected."
+  [url]
+  (and (string? url) (<= (count url) 2048) (not (re-find #"\s" url))
+       (boolean (re-find #"^(https?://|file:///|about:blank$)" url))))
+
+(defn ^:async links! [view]
+  (let [text (browser/value! (await (native/eval-js view
+      "Array.from(document.querySelectorAll('a[href]')).slice(0,100).map(a=>a.href).filter(h=>h.length<=2048&&!/[\\r\\n]/.test(h)).join('\\n')")))]
+    (mapv (fn [url] {:text url :value url})
+          (distinct (filter link-url? (string/split text #"\n"))))))
+
+(defcommand ^:async open-link-in-new-buffer
+  "Selects one of the first 100 page links and opens it in a retained background buffer."
+  []
+  (let [entries (await (links! (browser/current-view!)))
+        reply (await (minibuffer/read! {:prompt "Link in new buffer: "
+                                        :provider (completion/fuzzy (fn [] entries))}))]
+    (when (= :accepted (:status reply))
+      (let [url (:value reply)]
+        (when-not (link-url? url) (throw (ex-info "Unsupported page link" {})))
+        (await (browser/open! url {:select false}))))))
+
+(defn install!
+  "Installs named page hooks and default page keys through public shell APIs."
+  []
+  (hooks/add-hook! :page/popup-requested :bulwark.default.pages/popup #'popup!)
+  (keymap/bind-key! "C-s" 'bulwark.default.pages/find-in-page)
+  (keymap/bind-key! "C-c s" 'bulwark.default.pages/find-next)
+  (keymap/bind-key! "C-c +" 'bulwark.default.pages/zoom-in)
+  (keymap/bind-key! "C-c -" 'bulwark.default.pages/zoom-out)
+  (keymap/bind-key! "C-c 0" 'bulwark.default.pages/reset-zoom)
+  (keymap/bind-key! "C-c l" 'bulwark.default.pages/open-link-in-new-buffer))

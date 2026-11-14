@@ -89,8 +89,18 @@ def probe(a, b, controller, native):
         time.sleep(0.01)
     b.expect('(get (bulwark.shell/value! (await (bulwark.native/webview-info '
              '(bulwark.browser/active-view)))) :url)', json.dumps(url))
+    # Internal REPL cancellation must leave a parked nREPL session and another owner alive.
+    parked_eval(a, "internal-repl-peer")
+    b.evaluate('''
+      (def retained-page (bulwark.buffer/selected-id))
+      (def internal-buffer (await (bulwark.repl/create!)))
+      (await (bulwark.repl/submit! internal-buffer "(await (clojure.core.async/timeout 60000))"))
+      (await (bulwark.buffer/kill! internal-buffer))
+      (await (bulwark.buffer/select! retained-page))''')
+    interrupt(controller, a, "internal-repl-peer")
+    a.expect("(+ 30 12)", "42")
     return {**result, "ordered_burst": count, "live_commands_and_hooks": True,
-            "cross_session_browser_calls": True}
+            "cross_session_browser_calls": True, "internal_repl_cancellation_isolated": True}
 
 
 def run_case(args, case):

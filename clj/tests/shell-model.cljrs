@@ -589,5 +589,14 @@
       (check! (= [256 1024] [(count (:label clipped)) (count (:text clipped))]) "The prompt's texts are not clipped"))
     (check! (fails? (fn [] (ui/set-prompt! {:id 1 :label "p" :text "" :lines (vec (repeat 9 {:text ""}))})))
             "A prompt with too many lines was accepted")))
+(let [record (buffer/make-buffer 9001 :repl
+                 {:locals {:repl/input {:id 9002 :label "user=> " :text "(+ 1 2)"}}})
+      state (buffer/select (buffer/add buffer/empty-registry record) 9001 9003)
+      split (buffer/change-layout state window/split 9003 9004 :row 9001)
+      description (ui/describe (:layout split) (buffer/panes split) ui/default-viewport)
+      inputs (filter (fn [element] (= :input (:ui/kind element))) (:elements description))]
+  (check! (= 1 (count inputs)) "A split REPL duplicated its input identifier")
+  (check! (= 9002 (:focus description)) "The selected REPL input lost focus")
+  (check! (= "(+ 1 2)" (:text (first inputs))) "The REPL description lost its input text"))
 (println "Shell model assertions passed")
 :shell-model-passed

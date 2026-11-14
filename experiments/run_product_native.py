@@ -82,6 +82,8 @@ def main():
         config_preamble = (f"(def test-profile {json.dumps(str(profile))})\n"
                            f"(def example-init-source {json.dumps((root / 'examples/init.cljrs').read_text())})\n")
         programs = [
+            ("default-browsing", (root / "clj/tests/browsing-native.cljrs").read_text(),
+             True, ["Default browsing and internal REPL assertions passed"]),
             ("configuration", config_preamble + (root / "clj/tests/config-native.cljrs").read_text(),
              True, ["Native configuration assertions passed"]),
             ("retained-views", "(def retained-fixture-url user/initial-url)\n" +
@@ -122,9 +124,9 @@ def main():
             script = directory / f"{name}.cljrs"
             script.write_text(source)
             flags = [*mode, "--script", str(script)]
-            if name in {"mixed-windows", "minibuffer", "configuration"}:
+            if name in {"mixed-windows", "minibuffer", "configuration", "default-browsing"}:
                 flags += ["--screenshot", str(artifacts / f"{name}-{suffix}.png")]
-            if name in {"clojure-browser", "retained-views", "retained-buffers", "mixed-windows", "minibuffer", "configuration"}:
+            if name in {"clojure-browser", "retained-views", "retained-buffers", "mixed-windows", "minibuffer", "configuration", "default-browsing"}:
                 flags.append((root / "clj/tests/fixtures/servo.html").as_uri())
             run_case(args.binary, name, flags, success, expected, args.timeout)
 

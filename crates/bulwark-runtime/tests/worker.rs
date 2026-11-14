@@ -291,6 +291,20 @@ fn portable_shell_model_passes_in_interpreter_and_tiered_modes() {
 }
 
 #[test]
+fn internal_repl_jobs_are_bounded_and_owned_in_both_modes() {
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        run_product_clojure(
+            include_str!("../../../clj/tests/repl.cljrs"),
+            ":repl-passed",
+            mode,
+        );
+    }
+}
+
+#[test]
 fn foundation_passes_in_interpreter_and_tiered_modes() {
     for mode in [
         cljrs_runtime::ExecutionMode::TreeWalk,
@@ -414,6 +428,7 @@ fn frame_events_and_the_viewport_snapshot_reach_clojure() {
             revision: 4,
             text: "abc".into(),
         },
+        EventKind::FrameFocusChanged(false),
     ] {
         endpoint.events.emit(Handle::NONE, kind).unwrap();
     }
@@ -425,15 +440,16 @@ fn frame_events_and_the_viewport_snapshot_reach_clojure() {
         (defn dispatch! [event] (swap! events conj event))
         (defn ^:async verify! []
           (loop []
-            (when (< (count @events) 4)
+            (when (< (count @events) 5)
               (await (clojure.core.async/timeout 1)) (recur)))
-          (if (and (= [:ui/viewport-changed :ui/pressed :ui/input-changed :ui/input-submitted]
+          (if (and (= [:ui/viewport-changed :ui/pressed :ui/input-changed :ui/input-submitted :frame/focus-changed]
                       (mapv :event/type @events))
                    (not-any? (fn [event] (contains? event :webview)) @events)
                    (= {:width 1000 :height 760 :scale 2.0} (bulwark.native/ui-viewport))
                    (= [12 3] (mapv (nth @events 1) [:ui/id :revision]))
                    (= [13 3 \"ab\"] (mapv (nth @events 2) [:ui/id :revision :text]))
-                   (= [13 4 \"abc\"] (mapv (nth @events 3) [:ui/id :revision :text])))
+                   (= [13 4 \"abc\"] (mapv (nth @events 3) [:ui/id :revision :text]))
+                   (= false (:focused (nth @events 4))))
             :frame-events-passed
             (throw (ex-info \"Wrong frame event payload\" {:events @events}))))
         (verify!)"

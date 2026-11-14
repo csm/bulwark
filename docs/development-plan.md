@@ -556,6 +556,7 @@ adjusting; decide which before Phase 2.
 The [Phase 2 implementation plan](phase-2-plan.md) expands this scope into ordered milestones and acceptance evidence.
 It uses the accepted Phase 1 baseline and records the owner's confirmed Phase 2 scope.
 The [P2.6 checkpoint](phase-2-introspection.md) adds help, Messages, and live configuration reload.
+The [P2.7 checkpoint](phase-2-browsing.md) adds default configuration modules, page commands, auxiliary views, and a bounded internal REPL.
 The [mechanism checkpoint](phase-2-mechanisms.md) begins P2.1 with retained webviews and standalone AOT assertions.
 The [buffer checkpoint](phase-2-buffers.md) implements P2.2 with the buffer registry and explicit lifecycles.
 The [mode checkpoint](phase-2-modes.md) implements P2.4 with mode definitions and contextual keymaps.

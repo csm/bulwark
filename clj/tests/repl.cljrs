@@ -1,0 +1,126 @@
+(ns bulwark.tests.repl
+  (:require [bulwark.browser :as browser]
+            [bulwark.buffer :as buffer]
+            [bulwark.commands :as commands]
+            [bulwark.core :as core]
+            [bulwark.diagnostics :as diagnostics]
+            [bulwark.hooks :as hooks]
+            [bulwark.native :as native]
+            [bulwark.repl :as repl]
+            [bulwark.ui :as ui]
+            [clojure.string :as string]
+            [clojure.core.async :refer [timeout]]))
+
+(defn check! [condition message] (when-not condition (throw (ex-info message {}))))
+(defn ^:async until! [predicate message]
+  (let [deadline (+ (System/currentTimeMillis) 5000)]
+    (loop []
+      (when-not (predicate)
+        (check! (< (System/currentTimeMillis) deadline) (str "Timed out: " message))
+        (await (timeout 2)) (recur)))))
+(defn ^:async idle! [id]
+  (await (until! (fn [] (empty? (:jobs (get @repl/sessions id)))) "REPL completion")))
+
+(defn ^:async run! []
+  (browser/install!)
+  (let [caller-namespace (ns-name *ns*)
+        lifecycle (atom [])
+        installed (doseq [event-type [:buffer/created :buffer/selected :window/changed]]
+                    (hooks/add-hook! event-type :repl/lifecycle
+                      (fn [event] (swap! lifecycle conj (:event/type event)))))
+        id (await (repl/create!))
+        input-id (:input/id (get @repl/sessions id))]
+    (check! (= [:buffer/created :buffer/selected :window/changed] @lifecycle) "Buffer and window hook order changed")
+    (check! (= input-id (:focus (:description @ui/issued))) "The REPL input did not own focus")
+    (check! (= :repl (:buffer/kind (buffer/buffer id))) "The REPL has the wrong buffer kind")
+    ;; A real UI submission only queues work and leaves ordered events available.
+    (await (core/dispatch! {:event/type :ui/input-submitted :revision (:revision @ui/issued)
+                            :ui/id input-id :text "(def internal-answer 41) (+ internal-answer 1)"}))
+    (await (idle! id))
+    (check! (= 41 user/internal-answer) "The REPL did not share globals")
+    (check! (string/includes? (:buffer/text (buffer/buffer id)) "42") "The REPL lost the result")
+    (await (repl/submit! id "(bulwark.commands/defcommand internal-command \"An internal command.\" [] :before)"))
+    (await (idle! id))
+    (check! (= :before (await (commands/invoke! 'user/internal-command))) "The REPL registered a command in another namespace")
+    (await (repl/submit! id "(defn internal-command [] :after)"))
+    (await (idle! id))
+    (check! (= :after (await (commands/invoke! 'user/internal-command))) "Internal redefinition retained an obsolete command")
+    (await (repl/submit! id "(println \"REPL output\") (throw (ex-info \"REPL fixture error\" {}))"))
+    (await (idle! id))
+    (check! (string/includes? (:buffer/text (buffer/buffer id)) "REPL output") "Printed output was lost")
+    (check! (string/includes? (diagnostics/text) "REPL fixture error") "REPL errors missed Messages")
+    (await (repl/previous-input))
+    (check! (string/includes? (:text (buffer/local id :repl/input)) "REPL output") "Input history lost source")
+    (await (repl/next-input))
+    (check! (= "" (:text (buffer/local id :repl/input))) "Input history lost the draft")
+    (let [control (:input/id (get @repl/sessions id))]
+      (await (core/dispatch! {:event/type :ui/input-changed :revision (:revision @ui/issued)
+                              :ui/id control :text "unfinished draft"}))
+      (check! (= control (:input/id (get @repl/sessions id))) "Ordinary edits replaced the control")
+      (await (repl/previous-input))
+      (await (repl/next-input))
+      (check! (= "unfinished draft" (:text (buffer/local id :repl/input))) "History did not restore native edits")
+      (let [notes (await (buffer/create! {:kind :text :text "another buffer"}))]
+        (await (buffer/select! id))
+        (check! (= "unfinished draft" (:text (buffer/local id :repl/input))) "Buffer switching lost a REPL draft")
+        (await (buffer/kill! notes))))
+    ;; Parked evaluations leave both the ordered dispatcher and another REPL usable.
+    (await (repl/submit! id "(println \"parked-live-output\") (await (clojure.core.async/timeout 60000)) (def should-not-run true)"))
+    (await (until! (fn [] (string/includes? (:buffer/text (buffer/buffer id)) "parked-live-output\nnil"))
+                   "output while evaluation is parked"))
+    (await (timeout 10))
+    (let [other (await (repl/create!))]
+      (await (repl/submit! other "(+ user/internal-answer 9)"))
+      (await (idle! other))
+      (check! (string/includes? (:buffer/text (buffer/buffer other)) "50") "Another owner was blocked")
+      (await (buffer/select! id))
+      (await (commands/invoke! 'bulwark.repl/interrupt))
+      (await (idle! id))
+      (check! (string/includes? (:buffer/text (buffer/buffer id)) "[Interrupted]") "Parked interrupt failed")
+      (check! (nil? (ns-resolve 'user 'should-not-run)) "An interrupted evaluation continued")
+      ;; Safepoints let a CPU-bound evaluation yield to its own interrupt command.
+      (await (repl/submit! id "(loop [] (recur))"))
+      (await (timeout 20))
+      (repl/interrupt)
+      (await (idle! id))
+      ;; Capacity includes queued and parked jobs. An interrupted queued job has no effects.
+      (doseq [n (range 7)] (await (repl/submit! id "(await (clojure.core.async/timeout 60000))")))
+      (await (repl/submit! id "(def queued-should-not-run true)"))
+      (check! (try (native/evaluation-start id "nil" "user") false (catch Exception error true))
+              "The per-owner job bound failed")
+      (native/evaluation-interrupt (last (:jobs (get @repl/sessions id))))
+      (await (repl/sync!))
+      (check! (= 7 (count (:jobs (get @repl/sessions id)))) "Queued interruption did not recover capacity")
+      (await (buffer/kill! id))
+      (check! (nil? (get @repl/sessions id)) "A killed REPL retained its session")
+      (await (timeout 10))
+      (check! (nil? (ns-resolve 'user 'queued-should-not-run)) "Cancelled queued source ran")
+      ;; Namespace changes reach the next queued evaluation in the same buffer.
+      (await (repl/submit! other "(ns user.internal-test) (def local-answer 7)"))
+      (await (repl/submit! other "(+ local-answer 1)"))
+      (await (idle! other))
+      (check! (= "user.internal-test" (:namespace (get @repl/sessions other))) "REPL namespace was lost")
+      (check! (string/includes? (:buffer/text (buffer/buffer other)) "8\n") "Queued namespace change was lost")
+      (await (repl/submit! other "(ns user.parked-repl) (await (clojure.core.async/timeout 40)) (bulwark.commands/defcommand parked-command \"A parked command.\" [] :parked)"))
+      (await (timeout 10))
+      (check! (= caller-namespace (ns-name *ns*)) "A parked REPL changed its caller's namespace")
+      (await (idle! other))
+      (check! (= :parked (await (commands/invoke! 'user.parked-repl/parked-command))) "A resumed REPL expanded macros in another namespace")
+      (check! (= caller-namespace (ns-name *ns*)) "A finished REPL changed its caller's namespace")
+      (await (repl/submit! other "(apply str (repeat 20000 \"x\"))"))
+      (await (idle! other))
+      (check! (<= (count (:buffer/text (buffer/buffer other))) repl/output-limit) "Transcript retention failed")
+      (check! (string/includes? (:buffer/text (buffer/buffer other)) "[Output truncated]") "Output overflow was silent")
+      (await (buffer/kill! other))))
+  ;; Global capacity counts queued jobs, and close releases unused owners.
+  (let [owners (mapv (fn [n] (buffer/next-id!)) (range 4))]
+    (doseq [owner owners n (range 8)] (native/evaluation-start owner "nil" "user"))
+    (check! (try (native/evaluation-start (buffer/next-id!) "nil" "user") false (catch Exception error true))
+            "The global evaluation bound failed")
+    (doseq [owner owners] (native/evaluation-close owner))
+    (let [owner (buffer/next-id!) job (native/evaluation-start owner "nil" "user")]
+      (native/evaluation-close owner)
+      (check! (try (native/evaluation-poll job) false (catch Exception error true)) "A closed job id stayed valid")))
+  (println "Internal REPL assertions passed")
+  :repl-passed)
+(run!)

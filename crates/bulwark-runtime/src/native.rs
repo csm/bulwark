@@ -9,13 +9,13 @@ use cljrs_value::{Arity, Keyword, MapValue, NativeFn, Value, ValueError};
 use std::{rc::Rc, sync::Arc};
 use tokio::sync::Mutex;
 
-fn keyword(name: &str) -> Value {
+pub(crate) fn keyword(name: &str) -> Value {
     Value::keyword(match name.split_once('/') {
         Some((ns, name)) => Keyword::qualified(ns, name),
         None => Keyword::simple(name),
     })
 }
-fn map(fields: Vec<(&str, Value)>) -> Value {
+pub(crate) fn map(fields: Vec<(&str, Value)>) -> Value {
     Value::Map(MapValue::from_pairs(
         fields.into_iter().map(|(k, v)| (keyword(k), v)).collect(),
     ))
@@ -94,6 +94,10 @@ fn event_value(event: Event) -> Value {
             ("pressed", Value::Bool(key.pressed)),
         ]),
         EventKind::UiPressed { element, revision } => fields.extend(interaction(element, revision)),
+        EventKind::PopupRequested { request } => {
+            fields.push(("popup/request", Value::Long(request.0 as i64)))
+        }
+        EventKind::FrameFocusChanged(focused) => fields.push(("focused", Value::Bool(focused))),
         EventKind::UiInputChanged {
             element,
             revision,
@@ -228,6 +232,26 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             Ok(Command::Create { url: text(&a[0])? })
         }),
         ("webview-close", 1, |a| Ok(Command::Close(handle(&a[0])?))),
+        ("webview-accept-popup", 1, |a| {
+            Ok(Command::AcceptPopup(handle(&a[0])?))
+        }),
+        ("webview-deny-popup", 1, |a| {
+            Ok(Command::DenyPopup(handle(&a[0])?))
+        }),
+        ("webview-zoom", 2, |a| {
+            let factor = match a[1] {
+                Value::Long(n) => n as f64,
+                Value::Double(n) => n,
+                _ => return Err(invalid("Zoom must be a finite number from 0.25 to 5")),
+            };
+            if !factor.is_finite() || !(0.25..=5.0).contains(&factor) {
+                return Err(invalid("Zoom must be a finite number from 0.25 to 5"));
+            }
+            Ok(Command::Zoom {
+                view: handle(&a[0])?,
+                factor,
+            })
+        }),
         ("webview-select", 1, |a| {
             Ok(Command::Select(if matches!(a[0], Value::Nil) {
                 None
@@ -403,6 +427,7 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
         "read-source".into(),
         Value::NativeFunction(GcPtr::new(native)),
     );
+    crate::evaluation::install(globals);
     install_metadata(globals);
     globals.mark_loaded("bulwark.native");
 }
@@ -410,6 +435,48 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
 /// One inventory supplies the metadata used by help and apropos.
 fn install_metadata(globals: &GlobalEnv) {
     let operations: &[(&str, &str, &str, &[&str])] = &[
+        (
+            "webview-zoom",
+            "[webview factor]",
+            "Sets a webview's page zoom to a finite factor from 0.25 to 5. Returns a reply future. Stale handles leave other views unchanged.",
+            &["webview"],
+        ),
+        (
+            "webview-accept-popup",
+            "[request]",
+            "Consumes an auxiliary webview request and returns its new retained handle in a reply future. Preserves the engine's opener relationship. Caller owns the view. Requests expire after ten seconds or parent close; at most 16 globally and four per parent.",
+            &["webview", "popup"],
+        ),
+        (
+            "webview-deny-popup",
+            "[request]",
+            "Denies and consumes an auxiliary webview request. Returns a reply future. Expired or consumed requests return :stale-handle.",
+            &["webview", "popup"],
+        ),
+        (
+            "evaluation-start",
+            "[owner source namespace]",
+            "Queues trusted Clojure source of at most 4096 bytes in the shared runtime. Returns a job id. At most 32 retained jobs and eight per owner; four admissions per millisecond turn. Jobs of one owner run in order. No listener is opened.",
+            &["evaluation"],
+        ),
+        (
+            "evaluation-poll",
+            "[job]",
+            "Drains a job's bounded output and reads its status and namespace. A terminal poll consumes the id. Each job retains at most 16384 output bytes, with a truncation flag.",
+            &["evaluation"],
+        ),
+        (
+            "evaluation-interrupt",
+            "[job]",
+            "Interrupts one evaluation at evaluator safepoints and wakes its parked waits. Queued work runs no forms. Returns nil; stale ids throw.",
+            &["evaluation"],
+        ),
+        (
+            "evaluation-close",
+            "[owner]",
+            "Cancels an owner's queued and running jobs and discards their output. Other owners and nREPL jobs remain active. Returns nil.",
+            &["evaluation"],
+        ),
         (
             "webview-create",
             "[url]",

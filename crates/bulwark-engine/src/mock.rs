@@ -95,6 +95,17 @@ impl Engine for MockEngine {
                 Ok(Data::Handle(view))
             }
             Command::Close(view) => self.close(*view),
+            Command::AcceptPopup(_) | Command::DenyPopup(_) => Err(Fault::StaleHandle),
+            Command::Zoom { view, factor } => {
+                self.views.get(*view)?;
+                if factor.is_finite() && (0.25..=5.0).contains(factor) {
+                    Ok(Data::Nil)
+                } else {
+                    Err(Fault::Engine(
+                        "Zoom must be a finite number from 0.25 to 5".into(),
+                    ))
+                }
+            }
             Command::Select(view) => {
                 if let Some(view) = view {
                     self.views.get(*view)?;

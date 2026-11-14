@@ -197,7 +197,7 @@
   (str " " (:name context) (when (:url (:page context)) (str "  " (:url (:page context))))))
 
 (defn panes
-  "Returns each window's pane for bulwark.ui/describe: {:kind :view :text :modeline}.
+  "Returns each window's pane for bulwark.ui/describe: {:kind :view :text :modeline :input}.
   @modeline-format, or default-modeline, formats the modeline."
   [state]
   (let [layout (:layout state) format (or @modeline-format default-modeline)]
@@ -210,7 +210,10 @@
                              :selected (= (:window/id leaf) (:selected layout))}]
                 (assoc result (:window/id leaf)
                        {:kind (:buffer/kind record) :view (:buffer/view record)
-                        :text (:buffer/text record) :modeline (format context)})))
+                        :text (:buffer/text record) :modeline (format context)
+                        :input (when (and (= :repl (:buffer/kind record))
+                                          (= (:window/id leaf) (:selected layout)))
+                                 (:repl/input (:buffer/locals record)))})))
             {}
             (if layout (window/windows layout) []))))
 
@@ -417,7 +420,7 @@
 ;; Lifecycle operations use host-supplied native mechanisms.
 
 (defn set-host!
-  "Installs native mechanisms: :create [url] and :close [view] return awaitable replies,
+  "Installs native mechanisms: :create [url], :accept-popup [request], and :close [view] return replies,
   and :next-id returns a fresh identifier. Nil keeps the namespace portable.
   bulwark.ui publishes the windows, so the visible page follows the layout."
   [operations]
@@ -492,20 +495,26 @@
   "Selects a buffer, shows it in its display window, and runs :buffer/selected hooks.
   The hook event contains :buffer and :previous, which can name a killed buffer."
   [id]
-  (let [previous (selected-id)]
+  (let [previous (selected-id)
+        previous-layout (layout)]
     (await (commit-selection! id))
     (when-not (= previous id)
       (await (hooks/run-hooks! {:event/type :buffer/selected :buffer id :previous previous})))
+    (when-not (= previous-layout (layout))
+      (await (hooks/run-hooks! {:event/type :window/changed :layout (layout) :previous previous-layout})))
     id))
 
 (defn ^:async create!
   "Creates a buffer and returns its id. Options: :kind (default :web), :url for web buffers,
-  :select (default true), :name, :major-mode, :locals, and :text.
+  :select (default true), :name, :major-mode, :locals, and :text. :popup/request consumes a popup instead of a URL.
   The buffer is published only after native creation succeeds. A failed publication closes
   the new webview. Runs :buffer/created hooks, then :buffer/selected hooks."
   [options]
   (let [kind (get options :kind :web)
-        view (when (= kind :web) (value! (await ((host-operation :create) (:url options)))))
+        view (when (= kind :web)
+               (value! (await (if (:popup/request options)
+                                ((host-operation :accept-popup) (:popup/request options))
+                                ((host-operation :create) (:url options))))))
         outcome (try
                   (let [id (next-id!)]
                     (swap! registry add (make-buffer id kind (assoc options :view view)))
@@ -515,6 +524,7 @@
       (when view (await ((host-operation :close) view)))
       (throw (:error outcome)))
     (let [id (:id outcome)
+          previous-layout (layout)
           previous (selected-id)
           selecting (get options :select true)]
       ;; An engine without a description shows its first view. The registry decides instead.
@@ -522,12 +532,14 @@
       (await (hooks/run-hooks! {:event/type :buffer/created :buffer id}))
       (when (and selecting (not= previous id))
         (await (hooks/run-hooks! {:event/type :buffer/selected :buffer id :previous previous})))
+      (when-not (= previous-layout (layout))
+        (await (hooks/run-hooks! {:event/type :window/changed :layout (layout) :previous previous-layout})))
       id)))
 
 (defn ^:async settle-removal!
   "Publishes the windows after a removal, runs :buffer/killed hooks, then :buffer/selected
   hooks when a removed selected buffer has a successor, and applies the last-web-buffer policy."
-  [record was-selected]
+  [record was-selected previous-layout]
   (let [id (:buffer/id record)
         successor (when was-selected (selected-id))]
     (sync-keymaps-after-removal!)
@@ -536,6 +548,8 @@
     (await (hooks/run-hooks! {:event/type :buffer/killed :buffer id :buffer/record record}))
     (when successor
       (await (hooks/run-hooks! {:event/type :buffer/selected :buffer successor :previous id})))
+    (when-not (= previous-layout (layout))
+      (await (hooks/run-hooks! {:event/type :window/changed :layout (layout) :previous previous-layout})))
     (when (and (= :web (:buffer/kind record))
                (not (some (fn [other] (= :web (:buffer/kind other))) (buffers))))
       (when-let [policy @last-web-buffer-policy]
@@ -549,11 +563,12 @@
   visible, or is deleted."
   [id]
   (let [record (buffer! id)
+        previous-layout (layout)
         was-selected (= id (selected-id))
         view (:buffer/view record)]
     (swap! registry remove-buffer id)
     (let [reply (when view (await ((host-operation :close) view)))]
-      (await (settle-removal! record was-selected))
+      (await (settle-removal! record was-selected previous-layout))
       (when (and reply (not (:ok reply)) (not= :stale-handle (:error reply)))
         (throw (ex-info "Native webview close failed" (assoc reply :buffer id))))
       id)))
@@ -564,9 +579,9 @@
   [event]
   (let [id (owner (:webview event))]
     (if (and id (= :page/closed (:event/type event)))
-      (let [record (buffer id) was-selected (= id (selected-id))]
+      (let [record (buffer id) was-selected (= id (selected-id)) previous-layout (layout)]
         (swap! registry (fn [state] (page-event (remove-buffer state id) event)))
-        (await (settle-removal! record was-selected)))
+        (await (settle-removal! record was-selected previous-layout)))
       (let [before (:pages @registry)]
         (swap! registry page-event event)
         ;; Modelines show page titles and URLs.
@@ -580,6 +595,7 @@
   page or does not fit the frame. Runs :buffer/selected hooks when the selection moves."
   [operation & args]
   (let [previous (selected-id)
+        previous-layout (layout)
         change (fn [state] (apply change-layout state operation args))
         candidate (change @registry)]
     (ui/check-fit! (:layout candidate))
@@ -596,4 +612,6 @@
       (when-not (= previous selected)
         (keymap/reset-prefix!)
         (await (hooks/run-hooks! {:event/type :buffer/selected :buffer selected :previous previous}))))
+    (when-not (= previous-layout (layout))
+      (await (hooks/run-hooks! {:event/type :window/changed :layout (layout) :previous previous-layout})))
     nil))
