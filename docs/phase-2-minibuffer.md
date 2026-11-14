@@ -152,7 +152,7 @@ The pinned compiler `540e4218` miscompiled the first form of `completion/rank`.
 That form walked `(seq (take 4096 candidates))` in a `loop` with `first` and `next`.
 In the AOT binary, `next` returns a value that is not nil at the end of a `take` whose count exceeds its collection.
 The loop then ran once more, and `first` returned nil. Both evaluator modes passed.
-`(nil? (next (take 2 [:a])))` is the minimal reproduction. [Clojurust issue #500](https://github.com/csm/clojurust/issues/500) records it.
+`(nil? (next (take 2 [:a])))` is the minimal reproduction. [Clojurust issue #500](https://github.com/csm/clojurust/issues/500) records it. It also occurs on upstream `main` at `52ef4b13`.
 The current form uses `reduce` and passes in the AOT binary.
 
 ## Checks and remaining evidence
