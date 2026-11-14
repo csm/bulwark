@@ -9,6 +9,7 @@ The [buffer checkpoint](docs/phase-2-buffers.md) adds the Clojure buffer registr
 The [window checkpoint](docs/phase-2-windows.md) adds mixed panes, modelines, and bounded UI descriptions.
 The [mode checkpoint](docs/phase-2-modes.md) adds mode definitions and contextual keymaps.
 The [minibuffer checkpoint](docs/phase-2-minibuffer.md) adds prompts, fuzzy completion, and the `M-x` command palette.
+The [introspection checkpoint](docs/phase-2-introspection.md) adds help buffers, Messages, and live init reload.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -70,6 +71,12 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    The native shell reserves command sequences before Servo receives them.
    Unbound keys reach Servo without a runtime wait.
    The [key interception checkpoint](docs/phase-1-keys.md) records ownership rules and coverage.
+
+   The shell loads `~/.bulwark/init.cljrs` after the default configuration.
+   `--profile DIR` selects `DIR/init.cljrs` without an nREPL requirement.
+   `M-x reload-init` reloads the file. Errors appear in `M-x show-messages`.
+   `M-x describe-command`, `describe-key`, `describe-variable`, and `apropos` open read-only help buffers.
+   [examples/init.cljrs](examples/init.cljrs) supplies a buffer binding and a Wikipedia reader mode.
 
    Enable the product nREPL listener:
 

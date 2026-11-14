@@ -3,6 +3,11 @@
             [bulwark.browser :as browser]
             [bulwark.buffer :as buffer]
             [bulwark.hooks :as hooks]
+            [bulwark.bridge :as bridge]
+            [bulwark.config :as config]
+            [bulwark.diagnostics :as diagnostics]
+            [bulwark.help :as help]
+            [bulwark.messages :as messages]
             [clojure.core.async :refer [timeout]]))
 
 (defn value!
@@ -26,12 +31,31 @@
                  (await (native/set-echo! (str "Key: " (:key event)))))
     nil))
 
+(defn ^:async recover!
+  "Records a dispatch error and keeps the shell usable."
+  [error]
+  (diagnostics/error! :dispatch error {})
+  (try
+    (await (native/set-echo! (str "Error: " (ex-message error))))
+    (catch Exception ignored nil)))
+
 (defn ^:async run!
-  "Opens the initial page and keeps the runtime alive until native shutdown."
-  [url]
-  (browser/install!)
-  (doseq [event-type [:page/title-changed :page/crashed :command/failed :input/key :buffer/selected]]
-    (hooks/add-hook! event-type :bulwark.shell/echo #'dispatch!))
-  (value! (await (native/set-echo! "Bulwark")))
-  (await (browser/open! url))
-  (loop [] (await (timeout 60000)) (recur)))
+  "Installs defaults, loads init, then opens the initial page."
+  ([url] (await (run! url nil)))
+  ([url profile]
+   (let [ready (promise)]
+     (reset! bridge/startup-gate ready)
+     (try
+       (browser/install!)
+       (reset! bridge/error-handler #'recover!)
+       (reset! config/profile profile)
+       (messages/install!)
+       (doseq [event-type [:page/title-changed :page/crashed :command/failed :input/key :buffer/selected]]
+         (hooks/add-hook! event-type :bulwark.shell/echo #'dispatch!))
+       (value! (await (native/set-echo! "Bulwark")))
+       (await (config/load-init!))
+       (await (browser/open! url))
+       (finally
+         (reset! bridge/startup-gate nil)
+         (deliver ready true))))
+   (loop [] (await (timeout 60000)) (recur))))

@@ -1,4 +1,5 @@
-(ns bulwark.hooks)
+(ns bulwark.hooks
+  (:require [bulwark.diagnostics :as diagnostics]))
 
 (def registry (atom {}))
 
@@ -27,4 +28,8 @@
   [event]
   (let [handlers (get @registry (:event/type event))]
     (doseq [entry handlers]
-      (await ((second entry) event)))))
+      (try
+        (await ((second entry) event))
+        (catch Exception error
+          (diagnostics/error! :hook error {:event (:event/type event) :hook (str (first entry))})
+          (throw error))))))

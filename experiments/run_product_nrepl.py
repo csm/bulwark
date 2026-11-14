@@ -50,6 +50,20 @@ def probe(a, b, controller, native):
             raise RuntimeError(f"Wrong ordered reply {index}")
     b.expect(f"@{NS}/order", "[" + " ".join(map(str, range(count))) + "]")
 
+    # Evaluation failures retain the original nREPL reply and reach Messages.
+    b.send("reported-error", op="eval", code='(throw (ex-info "P2.6 evaluation fixture" {}))')
+    replies = []
+    while True:
+        reply = decode(b.stream)
+        if reply.get("id") != "reported-error":
+            raise RuntimeError(f"Out-of-order error response: {reply}")
+        replies.append(reply)
+        if "done" in reply.get("status", []):
+            break
+    if not any("eval-error" in reply.get("status", []) for reply in replies):
+        raise RuntimeError("Evaluation error lost its nREPL status")
+    b.expect('(clojure.string/includes? (bulwark.diagnostics/text) "P2.6 evaluation fixture")', "true")
+
     # Install a real product hook and command over nREPL, then redefine its Var.
     b.evaluate('''
       (def observed-titles (atom []))
@@ -92,7 +106,8 @@ def run_case(args, case):
                 command += ["--close-after-ms", "3000"]
         else:
             command += ["--nrepl-smoke"]
-        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        environment = {**os.environ, "BULWARK_TEST_PROFILE": str(profile)}
+        proc = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, errors="replace")
         lines = []
         messages = queue.Queue()
@@ -147,6 +162,7 @@ def run_case(args, case):
                 elif case == "dispatcher-error":
                     fixture = (ROOT / "clj/tests/fixtures/servo.html").as_uri()
                     b.send("stop", op="eval", code='''
+                      (reset! bulwark.bridge/error-handler nil)
                       (bulwark.hooks/add-hook! :page/title-changed :failure
                         (fn [event] (throw (ex-info "Injected nREPL hook failure" {}))))
                       (await (bulwark.browser/navigate! "''' + fixture + '''"))''')
@@ -205,9 +221,9 @@ def main():
     # Flags alone must not accidentally enable a listener or create a profile.
     with tempfile.TemporaryDirectory(prefix="bulwark-nrepl-disabled-") as directory:
         profile = Path(directory) / "unused"
-        result = subprocess.run([str(args.binary), "--profile", str(profile)],
+        result = subprocess.run([str(args.binary), "--headless-smoke", "--profile", str(profile)],
                                 capture_output=True, timeout=args.timeout)
-        if result.returncode == 0 or profile.exists():
+        if result.returncode != 0 or profile.exists():
             raise RuntimeError("Profile flag enabled nREPL without opt-in")
     for case in ["normal", "runtime-error", "dispatcher-error"] + (["close"] if args.native else []):
         run_case(args, case)

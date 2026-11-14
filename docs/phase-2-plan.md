@@ -15,6 +15,7 @@ The [buffer checkpoint](phase-2-buffers.md) records P2.2.
 The [window checkpoint](phase-2-windows.md) records P2.3.
 The [mode checkpoint](phase-2-modes.md) records P2.4.
 The [minibuffer checkpoint](phase-2-minibuffer.md) records P2.5.
+The [introspection checkpoint](phase-2-introspection.md) records P2.6.
 
 Phase 2 delivers buffers, layouts, modes, completion, introspection, default browsing commands, user configuration, and an internal REPL.
 Commands, hooks, keymaps, title history, input reservations, and opt-in nREPL already exist in the accepted baseline.

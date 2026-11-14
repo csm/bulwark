@@ -1,6 +1,28 @@
 # Development handoff
 
-Snapshot: Phase 2.5 continuation after `dcf9a23`, 2026-11-13.
+Snapshot: Phase 2.6 on `codex/phase-2-6-introspection`, based on `main` at `17bb3ed`, 2026-11-13.
+
+## Phase 2.6 introspection, Messages, and configuration
+
+This continuation starts after the merge of [PR #14](https://github.com/csm/bulwark/pull/14).
+The [introspection checkpoint](phase-2-introspection.md) records the API and validation evidence.
+
+`bulwark.help` adds four help commands and a reusable read-only text buffer.
+Every installed native function now has documentation, signatures, and resource tags.
+`bulwark.diagnostics` retains bounded error text. `bulwark.messages` updates its text buffer without a selection change.
+The ordinary shell recovers from command and hook errors. Lower-level test scripts preserve fatal dispatcher checks.
+The nREPL evaluator reports evaluation errors without a reply or namespace change.
+
+`--profile` now works without nREPL. The ordinary shell loads init after defaults and before it releases ordered events.
+`bulwark.config/reload-init` repeats that incremental load and records top-level source locations on errors.
+The native source reader parks filesystem IO and limits files to 256 KiB.
+[examples/init.cljrs](../examples/init.cljrs) replaces a buffer binding and enables a small Wikipedia reader mode.
+The native fixture checks the same transformation against a local page through public APIs.
+
+Local macOS checks passed: all 57 portable tests, standalone AOT, and 15 native process cases per evaluator mode.
+Both nREPL suites, both smokes, the Servo contract, 17 native unit tests, formatting, and Clippy also passed.
+The final validation results appear in the checkpoint. Linux CI and physical input checks remain open.
+Continue with P2.7: default browsing commands and the internal REPL.
 
 ## Phase 2.5 minibuffer and command palette
 

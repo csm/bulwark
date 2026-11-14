@@ -11,9 +11,52 @@ use cljrs_runtime::tiered::{Env, eval};
 use cljrs_runtime::{ExecutionMode, Runtime};
 use cljrs_value::Value;
 
+/// Quotes owned text as a Clojure source string, including control characters.
+pub fn source_string(text: &str) -> String {
+    // Source construction also runs on the native thread, before a runtime exists.
+    // Quote owned text without allocating any GC-managed values on that thread.
+    let mut quoted = String::with_capacity(text.len() + 2);
+    quoted.push('"');
+    for character in text.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            control if control.is_control() => {
+                quoted.push_str(&format!("\\u{:04x}", control as u32));
+            }
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 /// Owns one runtime environment on its creating thread.
 pub struct RuntimeHost {
     env: Env,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_strings_round_trip_without_interpreting_their_contents() {
+        let mut host = RuntimeHost::new(ExecutionMode::TreeWalk).unwrap();
+        for text in [
+            "profile with spaces/日本語😀",
+            "quote\" backslash\\ newline\n tab\t carriage\r nul\0 backspace\u{8}",
+            "\")(throw (ex-info \"source injection\" {}))\"",
+        ] {
+            let Value::Str(value) = host.eval(&source_string(text)).unwrap() else {
+                panic!("Quoted text must evaluate to a string");
+            };
+            assert_eq!(value.get(), text);
+        }
+    }
 }
 
 impl RuntimeHost {
@@ -67,6 +110,22 @@ impl RuntimeHost {
             .builtin_source(
                 "bulwark.mode",
                 include_str!("../../../clj/bulwark/mode.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.diagnostics",
+                include_str!("../../../clj/bulwark/diagnostics.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.messages",
+                include_str!("../../../clj/bulwark/messages.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.help",
+                include_str!("../../../clj/bulwark/help.cljrs"),
+            )
+            .builtin_source(
+                "bulwark.config",
+                include_str!("../../../clj/bulwark/config.cljrs"),
             )
             .builtin_source("bulwark.ui", include_str!("../../../clj/bulwark/ui.cljrs"))
             .builtin_source(

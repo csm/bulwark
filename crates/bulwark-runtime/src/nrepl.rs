@@ -101,9 +101,9 @@ impl Driver {
     pub fn admit(&mut self, local: &LocalSet) -> Result<()> {
         let started = Instant::now();
         // Yield back to the LocalSet between batches, including under overload.
-        let batch =
-            self.poller
-                .spawn_pending_budget(local, cljrs_runtime::tiered::eval, ADMISSION_BUDGET);
+        let batch = self
+            .poller
+            .spawn_pending_budget(local, eval_reported, ADMISSION_BUDGET);
         self.calls += 1;
         self.max_admission = self.max_admission.max(started.elapsed());
         self.max_jobs = self.max_jobs.max(batch.jobs);
@@ -131,6 +131,45 @@ impl Drop for Driver {
     }
 }
 
+// The nREPL evaluator callback requires the upstream EvalResult type.
+#[allow(clippy::result_large_err)]
+fn eval_reported(
+    form: &cljrs_reader::Form,
+    env: &mut cljrs_runtime::tiered::Env,
+) -> cljrs_runtime::env::error::EvalResult {
+    let result = cljrs_runtime::tiered::eval(form, env);
+    if let Err(error) = &result
+        && let Some(report) = env.globals.lookup_in_ns("bulwark.diagnostics", "report!")
+    {
+        // The reporter can allocate or force collection. Preserve the original thrown
+        // value until the nREPL engine receives it, including its exception data.
+        let _error_root = match error {
+            cljrs_runtime::env::error::EvalError::Thrown(value) => {
+                Some(cljrs_runtime::env::gc_roots::root_value(value))
+            }
+            cljrs_runtime::env::error::EvalError::Recur(values) => {
+                Some(cljrs_runtime::env::gc_roots::root_values(values))
+            }
+            _ => None,
+        };
+        let message = format!(
+            "{}:{}:{}: {error}",
+            form.span.file, form.span.line, form.span.col
+        );
+        // Reporting must not replace the evaluator's result or the session's namespace.
+        let _ = cljrs_runtime::env::apply::apply_value(
+            &report,
+            vec![
+                cljrs_value::Value::keyword(cljrs_value::Keyword::simple("evaluation")),
+                cljrs_value::Value::string(message),
+                cljrs_value::Value::Nil,
+            ],
+            env,
+        );
+    }
+    result
+}
+
 pub(crate) async fn next_turn(driver: &mut Option<Driver>) {
     if let Some(driver) = driver {
         driver.interval.tick().await;
@@ -142,6 +181,33 @@ pub(crate) async fn next_turn(driver: &mut Option<Driver>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evaluation_reporting_preserves_the_original_exception_across_collection() {
+        use cljrs_runtime::{ExecutionMode, env::gc_roots, tiered::Env};
+        use cljrs_value::{Arity, NativeFn, Value};
+        let mut host = crate::RuntimeHost::new(ExecutionMode::TreeWalk).unwrap();
+        let globals = host.env().globals.clone();
+        let reporter = NativeFn::with_closure("test/report", Arity::Fixed(3), move |_| {
+            gc_roots::force_collect(&Env::new(globals.clone(), "user"));
+            Ok(Value::Nil)
+        });
+        host.env().globals.intern(
+            "bulwark.diagnostics",
+            "report!".into(),
+            Value::NativeFunction(cljrs_gc::GcPtr::new(reporter)),
+        );
+        let error = host
+            .eval_with(
+                "(throw (ex-info \"Original evaluation failure\" {:retained [1 2 3]}))",
+                eval_reported,
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Original evaluation failure"), "{error}");
+        assert!(error.contains(":retained [1 2 3]"), "{error}");
+        assert_eq!(host.env().current_ns.as_ref(), "user");
+    }
 
     #[test]
     fn profile_reservation_preserves_existing_discovery_and_cleans_up() {

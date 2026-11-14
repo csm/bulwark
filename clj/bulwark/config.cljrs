@@ -1,0 +1,53 @@
+(ns bulwark.config
+  (:require [bulwark.native :as native]
+            [bulwark.commands :refer [defcommand]]
+            [bulwark.diagnostics :as diagnostics]
+            [bulwark.messages :as messages]))
+
+(def profile (atom nil))
+(def last-result (atom nil))
+(def loading (atom false))
+
+(defn init-path []
+  (str (or @profile (str (System/getenv "HOME") "/.bulwark")) "/init.cljrs"))
+
+(defn located-form
+  "Wraps a top-level form so an error identifies its file, line, and column."
+  [path entry]
+  (list 'try (:form entry)
+        (list 'catch 'Exception 'error
+              (list 'throw
+                    (list 'ex-info (list 'ex-message 'error)
+                          (list 'merge (list 'ex-data 'error)
+                                {:source path :line (:line entry) :column (:column entry)}))))))
+
+(defn ^:async load-init!
+  "Loads trusted init code incrementally. Missing files keep defaults. Errors are
+  retained in *Messages* with the top-level source location. Reloads never undo earlier forms."
+  []
+  (when-not (compare-and-set! loading false true)
+    (throw (ex-info "An init load is already in progress" {:error :config-busy})))
+  (try
+    (let [path (init-path)
+          result (try
+                   (let [forms (native/read-source path)]
+                     (if (nil? forms)
+                       {:status :missing :source path}
+                       (do
+                         ;; One evaluation preserves namespace changes between forms.
+                         (await (eval (cons 'do
+                                      (cons '(ns user.init)
+                                            (map (fn [entry] (located-form path entry)) forms)))))
+                         {:status :loaded :source path})))
+                   (catch Exception error
+                     (diagnostics/error! :configuration error {:source path})
+                     {:status :error :source path :message (ex-message error)}))]
+      (reset! last-result result)
+      (await (messages/sync!))
+      result)
+    (finally (reset! loading false))))
+
+(defcommand ^:async reload-init
+  "Reloads the selected profile's init.cljrs without restarting the browser."
+  []
+  (await (load-init!)))

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub struct Options {
     pub args: Vec<String>,
     pub nrepl: Option<Config>,
+    pub profile: PathBuf,
     pub mode: cljrs_runtime::ExecutionMode,
 }
 
@@ -46,27 +47,22 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options> {
             _ => remaining.push(arg),
         }
     }
-    ensure!(
-        enabled || profile.is_none(),
-        "--profile currently requires --nrepl"
-    );
-    let config = if enabled {
-        let profile = match profile {
-            Some(profile) => profile,
-            None => PathBuf::from(
-                std::env::var_os("HOME")
-                    .filter(|home| !home.is_empty())
-                    .ok_or_else(|| anyhow!("Set --profile when HOME is unavailable"))?,
-            )
-            .join(".bulwark"),
-        };
-        Some(Config { profile })
-    } else {
-        None
+    let profile = match profile {
+        Some(profile) => profile,
+        None => PathBuf::from(
+            std::env::var_os("HOME")
+                .filter(|home| !home.is_empty())
+                .ok_or_else(|| anyhow!("Set --profile when HOME is unavailable"))?,
+        )
+        .join(".bulwark"),
     };
+    let config = enabled.then(|| Config {
+        profile: profile.clone(),
+    });
     Ok(Options {
         args: remaining,
         nrepl: config,
+        profile,
         mode: if interpreter {
             cljrs_runtime::ExecutionMode::TreeWalk
         } else {
@@ -86,6 +82,9 @@ mod tests {
     #[test]
     fn nrepl_is_opt_in_and_preserves_native_arguments() {
         assert!(parse_args(&[]).unwrap().nrepl.is_none());
+        let standalone = parse_args(&["--profile", "/tmp/profile"]).unwrap();
+        assert!(standalone.nrepl.is_none());
+        assert_eq!(standalone.profile, PathBuf::from("/tmp/profile"));
         let Options {
             args,
             nrepl: config,
@@ -119,7 +118,6 @@ mod tests {
             vec!["--interpreter", "--interpreter"],
             vec!["--profile"],
             vec!["--profile", "--nrepl"],
-            vec!["--profile", "/tmp/profile"],
             vec!["--nrepl", "--nrepl"],
             vec!["--nrepl", "--profile", "a", "--profile", "b"],
         ] {
