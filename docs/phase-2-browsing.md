@@ -1,6 +1,6 @@
 # Phase 2 default browsing and internal REPL checkpoint
 
-Status: implemented locally, 2026-11-14. Phase 2 acceptance remains open.
+Status: implemented with passing main CI, 2026-11-14. Phase 2 acceptance remains open.
 Base: `main` at `34b1f1a`, after P2.6.
 This checkpoint implements P2.7 of the [implementation plan](phase-2-plan.md).
 The Servo and Clojurust pins remain unchanged.
@@ -160,8 +160,23 @@ The final composed REPL frames are under `target/phase-2-browsing-evidence/`.
 | Native nREPL suite | Four cases passed in each evaluator mode. |
 | Foundation and software Servo | Passed in each evaluator mode. |
 
-The [handoff](handoff.md) records the continuation point.
-GitHub CI for this checkpoint remains open.
+## Main CI close-out
+
+The [main CI run](https://github.com/csm/bulwark/actions/runs/43629036365) passed all four jobs at `9835f77`.
+Every job step completed successfully.
+
+| Job | Evidence |
+|---|---|
+| [Linux runtime](https://github.com/csm/bulwark/actions/runs/43629036365/job/132551294202) | 58 portable tests, both foundation and mock nREPL modes, and the existing experiment regressions passed. |
+| [macOS runtime](https://github.com/csm/bulwark/actions/runs/43629036365/job/132551294209) | The same portable tests and runtime checks passed. |
+| [Linux Servo](https://github.com/csm/bulwark/actions/runs/43629036365/job/132551294217) | 17 native unit tests, the contract, both software modes, 32 native process cases, and eight native nREPL cases passed. |
+| [Standalone AOT](https://github.com/csm/bulwark/actions/runs/43629036365/job/132551293969) | The pinned compiler built the binary, which completed the shared shell assertions. |
+
+The native process totals cover 16 cases in each evaluator mode.
+Both runtime hosts and Linux Servo reported internal REPL cancellation isolation in both modes.
+The local CI log is `target/phase-2-browsing-evidence/main-ci-43629036365.log`.
+This result closes the P2.7 automated checkpoint.
+The [handoff](handoff.md) now starts with P2.8 acceptance.
 The earlier P2.5/P2.6 CI and physical results remain in the [validation report](phase-2-shell-acceptance.md).
 P2.8 still requires clean-profile physical workflows, the five site tasks, release startup measurements, and the native policy review.
 IME, clipboard, display-scale transitions, interactive Linux behavior, and Option-as-Alt policy retain their earlier limits.
