@@ -1,6 +1,6 @@
 # Development handoff
 
-Snapshot: Phase 2.6 on `codex/phase-2-6-introspection`, based on `main` at `17bb3ed`, 2026-11-13.
+Snapshot: Phase 2.6 validation on `codex/phase-2-6-introspection`, based on `main` at `17bb3ed`, 2026-11-14.
 
 ## Phase 2.6 introspection, Messages, and configuration
 
@@ -21,7 +21,10 @@ The native fixture checks the same transformation against a local page through p
 
 Local macOS checks passed: all 57 portable tests, standalone AOT, and 15 native process cases per evaluator mode.
 Both nREPL suites, both smokes, the Servo contract, 17 native unit tests, formatting, and Clippy also passed.
-The final validation results appear in the checkpoint. Linux CI and physical input checks remain open.
+The [validation report](phase-2-shell-acceptance.md) records P2.6 physical checks and the P2.5 physical backfill.
+Physical checks passed within the documented Option-key, IME, and clipboard limits.
+The [final CI run](https://github.com/csm/bulwark/actions/runs/43622541434) passed all four jobs at `090e2c5`.
+Validation corrected test-module placement, Linux window focus, initial-load synchronization, and init namespace restoration.
 Continue with P2.7: default browsing commands and the internal REPL.
 
 ## Phase 2.5 minibuffer and command palette
@@ -39,7 +42,8 @@ The native frame now uses the dark theme and strong text on emphasized lines.
 
 Local macOS checks passed: 54 portable tests, the AOT model with nine namespaces, 17 native unit tests, and eleven native process cases per evaluator mode.
 Both nREPL suites, both smokes, the Servo smoke, formatting, and portable and native Clippy also passed.
-Linux CI has not run on this change. [Run 43373187308](https://github.com/csm/bulwark/actions/runs/43373187308) passed for P2.4 on `main`.
+The [validation report](phase-2-shell-acceptance.md) now records passing Linux CI and the physical backfill.
+[Run 43373187308](https://github.com/csm/bulwark/actions/runs/43373187308) passed for P2.4 on `main`.
 In the pinned AOT compiler, `next` is not nil at the end of a `take` beyond its collection. This broke a `loop` in `completion/rank`.
 [Clojurust issue #500](https://github.com/csm/clojurust/issues/500) has the minimal reproduction. The checkpoint records the workaround.
 Local builds used the main checkout's `target` directory through `CARGO_TARGET_DIR`.

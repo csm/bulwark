@@ -1,6 +1,6 @@
 # Phase 2 minibuffer and command palette checkpoint
 
-Status: implemented, 2026-11-13. Linux CI and physical keyboard checks remain open.
+Status: implemented. Linux CI and macOS physical results are recorded in the [validation report](phase-2-shell-acceptance.md), 2026-11-14.
 Base: `main` at `dcf9a23`, which contains P2.4.
 
 This checkpoint implements the six P2.5 items in the [implementation plan](phase-2-plan.md).
@@ -168,14 +168,15 @@ The current form uses `reduce` and passes in the AOT binary.
 | Native nREPL, mock nREPL, both smokes, Servo smoke | Passed in both evaluator modes. |
 | Formatting and Clippy | Portable workspace and native targets. |
 
-All results come from local macOS runs on 2026-11-13. Linux CI has not run on this change.
+All results come from local macOS runs on 2026-11-13. The original checkpoint preceded Linux CI. The [validation report](phase-2-shell-acceptance.md) records the later runs.
 [Run 43373187308](https://github.com/csm/bulwark/actions/runs/43373187308) passed on `main` at `dcf9a23`, so P2.4 now has Linux CI evidence.
 
 The native case sends key and interaction events through `core/dispatch!`. It sends no physical key.
 `python3 experiments/run_product_native.py --artifacts-dir DIR` retains `minibuffer-<mode>.png`.
 That frame shows the label, the completed input with its cursor at the end, and the candidate lines.
 
-Physical keyboard checks remain open:
+The [physical backfill](phase-2-shell-acceptance.md#p25-physical-backfill) records the 2026-11-14 results.
+The steps that follow repeat those checks:
 
 ```sh
 cargo run --locked -- --nrepl --profile /tmp/bulwark-p25-physical https://example.com
@@ -191,6 +192,6 @@ cargo run --locked -- --nrepl --profile /tmp/bulwark-p25-physical https://exampl
 
 On macOS, the Option key can change the logical key. `M-x` then arrives as another stroke and opens nothing.
 winit can treat Option as Alt, but pages then lose Option characters. That choice needs an owner decision.
-IME composition and clipboard use in the control also have no evidence yet.
+Native Unicode Option-key entry passed. Multi-stage IME composition and clipboard support remain unverified.
 
 After these checks, the next milestone is P2.6: introspection, messages, and configuration.

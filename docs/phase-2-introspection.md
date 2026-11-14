@@ -1,6 +1,6 @@
 # Phase 2 introspection and configuration checkpoint
 
-Status: implemented and validated locally, 2026-11-13. Linux CI and physical input checks remain open.
+Status: implemented with macOS physical validation, 2026-11-14. The [validation report](phase-2-shell-acceptance.md) records CI and physical results.
 Base: `main` at `17bb3ed`, after P2.5 and PR #14.
 
 This checkpoint implements P2.6 in the [Phase 2 plan](phase-2-plan.md).
@@ -76,6 +76,7 @@ The reader runs no code and has no profile policy.
 
 Clojure evaluates the forms in one namespace context, initially `user.init`.
 An explicit `ns` form changes that context for later forms.
+The loader restores the caller namespace after success or failure.
 Each runtime error records the start location of its top-level form.
 Parse errors preserve the reader's source diagnostic.
 This location identifies the top-level form, rather than a complete stack trace inside a called function.
@@ -127,7 +128,8 @@ It now compiles ten shell namespaces, including the new diagnostics dependency.
 
 The native runner saves `configuration-<mode>.png` through `--artifacts-dir DIR`.
 The Help frame received visual inspection on macOS.
-Linux CI and physical input checks for the new help commands remain open.
+The [physical report](phase-2-shell-acceptance.md#p26-physical-checks) records passing help, Messages, and configuration checks.
+Its CI section records the passing four-job run at `090e2c5` and the validation corrections.
 The existing GL texture and large unwind-section warnings remain.
 
 The next milestone is P2.7: default browsing commands and the internal REPL.

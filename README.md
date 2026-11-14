@@ -10,6 +10,7 @@ The [window checkpoint](docs/phase-2-windows.md) adds mixed panes, modelines, an
 The [mode checkpoint](docs/phase-2-modes.md) adds mode definitions and contextual keymaps.
 The [minibuffer checkpoint](docs/phase-2-minibuffer.md) adds prompts, fuzzy completion, and the `M-x` command palette.
 The [introspection checkpoint](docs/phase-2-introspection.md) adds help buffers, Messages, and live init reload.
+The [P2.5/P2.6 validation report](docs/phase-2-shell-acceptance.md) records passing Linux CI and macOS physical checks.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
