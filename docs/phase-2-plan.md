@@ -206,6 +206,10 @@ Exit evidence: no-init browsing workflow, find and zoom, link opening, popup fix
 
 ### P2.8: Run acceptance and record the exit review
 
+The [acceptance review](phase-2-acceptance.md) records the 2026-11-14 macOS workflows, startup samples, and native policy review.
+B2 remains open: BBC News fails its article task, and GitHub source navigation needs a workaround.
+Current-change CI and owner acceptance remain outstanding. Phase 2 is not complete.
+
 1. Run the acceptance matrix below from a clean profile.
 2. Record release startup measurements on the development laptop.
 3. Record manual macOS results and Linux CI results separately.

@@ -83,7 +83,7 @@ def main():
                            f"(def example-init-source {json.dumps((root / 'examples/init.cljrs').read_text())})\n")
         programs = [
             ("default-browsing", (root / "clj/tests/browsing-native.cljrs").read_text(),
-             True, ["Default browsing and internal REPL assertions passed"]),
+             True, ["Default browsing and internal REPL assertions passed", "first-content-presented"]),
             ("configuration", config_preamble + (root / "clj/tests/config-native.cljrs").read_text(),
              True, ["Native configuration assertions passed"]),
             ("retained-views", "(def retained-fixture-url user/initial-url)\n" +

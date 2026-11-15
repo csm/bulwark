@@ -12,6 +12,8 @@ The [minibuffer checkpoint](docs/phase-2-minibuffer.md) adds prompts, fuzzy comp
 The [introspection checkpoint](docs/phase-2-introspection.md) adds help buffers, Messages, and live init reload.
 The [browsing checkpoint](docs/phase-2-browsing.md) adds default configuration modules, find, zoom, popup support, and an internal REPL.
 The [P2.5/P2.6 validation report](docs/phase-2-shell-acceptance.md) records passing Linux CI and macOS physical checks.
+The [P2.8 acceptance review](docs/phase-2-acceptance.md) records physical browsing and REPL checks, release startup samples, and the native policy review.
+Phase 2 remains open: BBC News fails its required task, and GitHub source navigation needs a workaround.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 
@@ -87,6 +89,16 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    `C-c e` opens the internal REPL without a network listener.
    Enter submits source. `C-p` and `C-n` recall input, and `C-c C-c` interrupts an evaluation.
    The [P2.7 checkpoint](docs/phase-2-browsing.md) records limits, lifecycle hooks, and remaining acceptance work.
+
+   Record startup from process creation to the first page/chrome presentation:
+
+   ```sh
+   cargo build --locked --release -p bulwark-shell
+   python3 experiments/measure_product_startup.py
+   ```
+
+   Each sample uses a new empty profile at `about:blank`, without nREPL.
+   The [acceptance review](docs/phase-2-acceptance.md#release-startup-measurements) records the timing definition, hardware, and cache conditions.
 
    Enable the product nREPL listener:
 
@@ -170,6 +182,7 @@ Use `--no-default-features` for the portable workspace checks without Servo.
 ## Project references
 
 - [Phase 2 implementation plan](docs/phase-2-plan.md)
+- [Phase 2 acceptance review and open site tasks](docs/phase-2-acceptance.md)
 - [Phase 2 mechanism checkpoint](docs/phase-2-mechanisms.md)
 - [Phase 2 buffer checkpoint](docs/phase-2-buffers.md)
 - [Phase 2 window and UI checkpoint](docs/phase-2-windows.md)

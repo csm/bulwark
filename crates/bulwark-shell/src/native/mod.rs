@@ -44,6 +44,7 @@ struct Surface {
     page_rect: Option<input::PageRect>,
     focused: bool,
     presentations: u64,
+    content_presented: bool,
     echo_presented: String,
 }
 impl Surface {
@@ -183,6 +184,12 @@ impl Surface {
         self.context.present();
         self.presentations += 1;
         self.echo_presented.clone_from(&self.echo);
+        // A native presentation alone can be an empty startup frame. Wait for
+        // both a painted page and the runtime's first UI description.
+        if !self.content_presented && self.engine.frame_count() > 0 && self.engine.ui().is_some() {
+            self.content_presented = true;
+            println!("Bulwark native: first-content-presented");
+        }
         Ok(())
     }
 }
@@ -275,6 +282,7 @@ impl App {
             page_rect,
             focused: true,
             presentations: 0,
+            content_presented: false,
             echo_presented: String::new(),
         });
         self.endpoint = Some(endpoint);

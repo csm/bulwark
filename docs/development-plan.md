@@ -557,6 +557,8 @@ The [Phase 2 implementation plan](phase-2-plan.md) expands this scope into order
 It uses the accepted Phase 1 baseline and records the owner's confirmed Phase 2 scope.
 The [P2.6 checkpoint](phase-2-introspection.md) adds help, Messages, and live configuration reload.
 The [P2.7 checkpoint](phase-2-browsing.md) adds default configuration modules, page commands, auxiliary views, and a bounded internal REPL.
+The [P2.8 acceptance review](phase-2-acceptance.md) records physical workflows, release startup samples, and the native policy review.
+Phase 2 remains open because the required BBC task fails and GitHub source navigation needs a workaround.
 The [mechanism checkpoint](phase-2-mechanisms.md) begins P2.1 with retained webviews and standalone AOT assertions.
 The [buffer checkpoint](phase-2-buffers.md) implements P2.2 with the buffer registry and explicit lifecycles.
 The [mode checkpoint](phase-2-modes.md) implements P2.4 with mode definitions and contextual keymaps.
@@ -596,8 +598,8 @@ Acceptance criteria:
   minor mode that auto-reader-modes a given domain; both work after `reload-init` with no
   restart.
 - B4. `apropos "webview"` lists every native function touching webviews, with docstrings.
-- B5. `git grep` in Rust crates for site names, keybinding strings, or command names returns
-  nothing: policy lives in `clj/`.
+- B5. Source review finds no browser policy in Rust. Search results distinguish native mechanisms,
+  embedded Clojure source paths, license text, and test fixtures from product policy.
 - B6. Startup to first paint under 1.5 s on a developer laptop in release build (Servo
   dominated; record the number, do not gate on it until Phase 4).
 - B7. Automated: a Clojure test suite for keymap resolution, layout, buffer registry, and
@@ -752,8 +754,10 @@ The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072)
 The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
 All Phase 1 acceptance criteria now pass.
 
-1. Complete the NUC validation in the [P2.3 report](phase-2-window-acceptance.md). Physical macOS mixed-pane input checks now pass.
-2. Continue the ordered milestones in the [Phase 2 plan](phase-2-plan.md).
+1. Resolve the live-site failures and navigation limits in the [P2.8 review](phase-2-acceptance.md).
+   A failed required task needs a compatibility correction or an explicit owner scope decision.
+2. Run current-change CI for the presentation diagnostic and obtain owner acceptance after all required criteria pass.
+3. Resolve the Option-as-Alt policy before changing native key translation.
 
 E5 remains mandatory for simultaneous web content splits.
 Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.
