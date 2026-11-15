@@ -8,6 +8,8 @@ Owner acceptance remains outstanding.
 
 The subsequent [BBC investigation](phase-2-bbc-investigation.md) identified a missing Bulwark build feature and tested a correction.
 Its diagnostic results do not replace the physical acceptance results below.
+The [physical follow-up at `833ad5f`](phase-2-bbc-investigation.md#physical-follow-up-after-consent) still failed after consent.
+The latest Linux runtime CI also failed a REPL-completion check.
 
 ## Source and method
 
@@ -46,7 +48,7 @@ Those release captures establish rendering at capture time, not additional physi
 
 | Criterion | Result |
 |---|---|
-| B1: preserve Phase 1 | Passed the current automated regression checks. Earlier accepted physical input and stall evidence remains in the Phase 1 review. |
+| B1: preserve Phase 1 | Open on the latest commit: Linux runtime CI at `833ad5f` timed out in REPL completion. Earlier physical input and stall evidence remains in the Phase 1 review. |
 | B2: default browser | Open. Default workflows pass, but BBC fails and GitHub needs a navigation workaround. |
 | B3: live configuration | Passed on live Wikipedia. Reload changed the binding and enabled reader mode without restart or duplicate hooks. |
 | B4: introspection | Passed. The installed inventory contains 25 documented native functions. Physical apropos opened a text buffer. |
@@ -54,6 +56,20 @@ Those release captures establish rendering at capture time, not additional physi
 | B6: startup | Recorded. Seven release samples have a median of 0.265 seconds under the conditions below. |
 | B7: language coverage | Passed interpreter assertions and the standalone pinned AOT binary locally. The P2.8 Linux CI also passed both paths. |
 | Other Phase 2 deliverables | Automated checks passed in both modes. Physical mixed-pane REPL focus, interruption, close, and native shutdown passed. |
+
+## BBC physical follow-up at `833ad5f`
+
+The [follow-up report](phase-2-bbc-investigation.md#physical-follow-up-after-consent) records the 2026-11-14 check with WebCrypto enabled.
+Physical address entry loaded BBC News. The user approved the Terms of Use acceptance before the physical button click.
+The article link opened the original article URL, then the client-side exception replaced its content.
+Physical reload reproduced the exception after a brief article render.
+Physical scrolling left the error page at offset zero. The required BBC task still failed.
+Read-only observations confirmed that `crypto.getRandomValues` remained available.
+No diagnostic script, user-agent override, or programmatic page action supplied this result.
+
+The [latest CI run](https://github.com/csm/bulwark/actions/runs/43680513338) passed the Servo, macOS runtime, and standalone AOT jobs.
+Its Linux runtime job failed `internal_repl_jobs_are_bounded_and_owned_in_both_modes` with `Timed out: REPL completion`.
+The original P2.8 evidence below remains historical evidence from its recorded source checkpoint.
 
 ## Physical default workflows and internal REPL
 

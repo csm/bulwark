@@ -18,7 +18,10 @@ No site substitution or scope exception is accepted by the report.
 The [BBC investigation](phase-2-bbc-investigation.md) identified the missing Servo `webcrypto` build feature in Bulwark.
 The correction exposes `crypto.getRandomValues` and restores BBC page content in native diagnostic runs.
 The original BBC URLs also support programmatic scrolling after the correction.
-Physical acceptance remains open. Servo's experimental IntersectionObserver remains disabled.
+The physical follow-up at `833ad5f` still failed after user-approved consent: article click and reload produced a client-side exception.
+WebCrypto remained available. The failing script remains unidentified. Servo's experimental IntersectionObserver remains disabled.
+The [CI run at `833ad5f`](https://github.com/csm/bulwark/actions/runs/43680513338) failed Linux REPL completion.
+Its Servo, macOS runtime, and standalone AOT jobs passed.
 
 Rust owns native mechanisms and bounded transport. Clojure owns commands, state, bindings, and browser policy.
 The native policy review found no browser policy in the eleven Phase 2 native additions.
@@ -60,8 +63,9 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Repeat the physical BBC task with the WebCrypto correction and investigate the remaining GitHub navigation limits.
-   The BBC report records the remaining Servo limitations and the dependency constraint.
+1. Capture the consented BBC article's script exception and investigate the remaining GitHub navigation limits.
+   The BBC report records the failed physical follow-up, remaining Servo limitations, and dependency constraint.
+   Diagnose the latest Linux `Timed out: REPL completion` CI failure.
 2. Repeat the required checks after compatibility corrections.
    Obtain owner acceptance only after the required criteria pass. Phase 3 has not started.
 3. Resolve the Option-as-Alt policy with the owner before changing key translation.

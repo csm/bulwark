@@ -2,14 +2,14 @@
 
 Date: 2026-11-14. Baseline: `5d2b40f`, equal to the fetched `origin/main`.
 
-The fatal BBC exception came from a missing Bulwark build feature.
+The initial BBC exception before consent came from a missing Bulwark build feature.
 Bulwark disabled Servo's default Cargo features and enabled only `bundled` and `js_jit`.
 That build omitted `webcrypto`, so page scripts did not have access to `window.crypto`.
 BBC's UUID code threw during client initialization and Next.js replaced the page with its application error screen.
 
 The correction adds Servo's `webcrypto` Cargo feature.
 The Servo version remains `=0.7.0`. No user-agent override, page replacement, or JavaScript polyfill supplies the correction.
-The [acceptance review](phase-2-acceptance.md) remains open pending physical task checks and the separate GitHub navigation investigation.
+The physical follow-up below still failed after consent. The [acceptance review](phase-2-acceptance.md) remains open.
 
 ## Evidence and isolation
 
@@ -50,6 +50,7 @@ The pinned [Cargo manifest](https://github.com/servo/servo/blob/v0.7.0/component
 | WebCrypto, default Servo preferences | Page content present | Article content present |
 | WebCrypto and experimental IntersectionObserver, diagnostic only | Page content present | Article content present |
 | Rebuilt Bulwark, WebCrypto and default Servo preferences | Content present, `scrollY` reached 600 | Article content present, `scrollY` reached 600 |
+| Physical follow-up at `833ad5f`, after consent | Homepage rendered | Article click and reload produced a client-side exception |
 
 The native product runs used separate empty profiles, the ordinary Tiered shell, and the original acceptance URLs.
 They injected no diagnostic user script and retained the default Servo user agent.
@@ -67,6 +68,49 @@ The suite passed in both Tiered and interpreter modes. The portable workspace pa
 All 17 native unit tests and the Servo contract passed. Native Clippy passed with warnings denied.
 The final standalone probe also passed its diagnostic run without instrumentation.
 Its final stack-script run produced no instrumentation redeclaration error.
+
+## Physical follow-up after consent
+
+The physical macOS check on 2026-11-14 used source commit `833ad5f` and a fresh profile without an init file.
+The temporary app contained a byte-identical copy of the rebuilt `target/debug/bulwark-shell`.
+Its SHA-256 was `907504ac7e844adf38adfd8b9cb222d10c0f8a8d3b49f42f1a916e4fc83495f3`.
+The normal Tiered shell started at `about:blank` with an opt-in loopback nREPL listener.
+
+Computer Use supplied address entry, pointer clicks, the reload shortcut, and scrolling.
+Read-only nREPL observations recorded the resulting page state.
+No nREPL navigation, scrolling, dispatcher call, or diagnostic script supplied a physical result.
+The keyboard layout remained Dvorak. Computer Use attachment took approximately four minutes.
+
+Physical address entry loaded BBC News and displayed its content behind the Terms of Use overlay.
+The user explicitly approved acceptance in this chat. A physical click on “Accept and Continue” dismissed the overlay.
+A physical click on the lead article changed the URL to `https://www.bbc.com/news/articles/cwvg2l312ylqo`.
+The page then displayed the client-side exception screen.
+
+The physical `C-c r` reload briefly displayed the article before the same exception returned.
+The document time origin changed from `2208665431.35` to `2208680840.67` milliseconds, consistent with a new document.
+The document title and body both reported the application error after initialization.
+`crypto.getRandomValues` remained a function, so WebCrypto was available during this failure.
+A physical downward scroll left `scrollY` at zero. The error document and viewport were both 710 pixels high.
+
+The required article-open, scroll, and reload task failed. The WebCrypto correction resolves one failure but does not complete BBC acceptance.
+The earlier diagnostic runs did not establish this consented workflow.
+This follow-up did not capture the failing script exception, so its cause remains unresolved.
+The next diagnosis needs console evidence from the consented article path.
+
+After verification, an nREPL quit request stopped the test process and captured its final error frame.
+This request was cleanup, outside the physical acceptance task.
+The process returned zero, joined its worker, and removed its port file.
+
+Local evidence resides in `target/bbc-physical-evidence/`.
+`observations.jsonl` records the homepage, article failure, reload failure, and final scroll state.
+`session.json` records the physical actions and consent approval. `binary-hashes.json` records the identical executable hashes.
+`physical.log`, `cleanup.json`, and `exit-status` record cleanup. `final.png` shows the application error.
+Computer Use screenshots in this chat also show the approved overlay dismissal, article click, reload, and scroll result.
+
+The [CI run at `833ad5f`](https://github.com/csm/bulwark/actions/runs/43680513338) also failed.
+The Linux portable runtime job failed `internal_repl_jobs_are_bounded_and_owned_in_both_modes` with `Timed out: REPL completion`.
+The macOS runtime, Servo, and standalone AOT jobs passed.
+`target/bbc-physical-evidence/ci-failed.log` retains the failure output. This investigation does not classify the timeout as transient.
 
 ## Known Servo limitations
 
