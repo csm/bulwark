@@ -8,7 +8,7 @@ use servo::{
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -29,6 +29,7 @@ struct ViewState {
     revoked: Cell<bool>,
     dirty: Cell<bool>,
     visible: Cell<bool>,
+    console_messages: RefCell<BTreeSet<String>>,
 }
 struct View {
     webview: WebView,
@@ -69,6 +70,34 @@ impl Delegate {
     }
 }
 impl WebViewDelegate for Delegate {
+    fn show_console_message(&self, _: WebView, level: servo::ConsoleLogLevel, message: String) {
+        // Opt-in diagnostics stay outside the ordered product event queue.
+        // Bound distinct warnings/errors for each view, including across reloads.
+        // Low-severity page debug logs must not consume the error budget.
+        if self.state.revoked.get()
+            || !matches!(
+                level,
+                servo::ConsoleLogLevel::Error | servo::ConsoleLogLevel::Warn
+            )
+            || std::env::var_os("BULWARK_LOG_PAGE_CONSOLE").as_deref()
+                != Some(std::ffi::OsStr::new("1"))
+        {
+            return;
+        }
+        let message: String = message.chars().take(2048).collect();
+        let message = format!("{level:?}: {message}");
+        let mut messages = self.state.console_messages.borrow_mut();
+        if messages.len() >= 64 || !messages.insert(message.clone()) {
+            return;
+        }
+        eprintln!("Servo page console {:?}: {message:?}", self.handle);
+        if messages.len() == 64 {
+            eprintln!(
+                "Servo page console {:?}: message limit reached",
+                self.handle
+            );
+        }
+    }
     fn request_create_new(&self, _: WebView, request: CreateNewWebViewRequest) {
         let mut pending = self.popups.borrow_mut();
         if self.state.revoked.get()

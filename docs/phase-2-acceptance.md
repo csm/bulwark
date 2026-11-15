@@ -10,6 +10,8 @@ The subsequent [BBC investigation](phase-2-bbc-investigation.md) identified a mi
 Its diagnostic results do not replace the physical acceptance results below.
 The [physical follow-up at `833ad5f`](phase-2-bbc-investigation.md#physical-follow-up-after-consent) still failed after consent.
 The latest Linux runtime CI also failed a REPL-completion check.
+The [controlled continuation](phase-2-bbc-investigation.md#controlled-diagnosis-of-the-consented-failure) identifies BBC's unguarded IntersectionObserver constructor as a fatal path.
+Enabling Servo's experimental preference resolves that probe case. This diagnostic result does not close physical acceptance.
 
 ## Source and method
 

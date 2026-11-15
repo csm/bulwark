@@ -19,7 +19,9 @@ The [BBC investigation](phase-2-bbc-investigation.md) identified the missing Ser
 The correction exposes `crypto.getRandomValues` and restores BBC page content in native diagnostic runs.
 The original BBC URLs also support programmatic scrolling after the correction.
 The physical follow-up at `833ad5f` still failed after user-approved consent: article click and reload produced a client-side exception.
-WebCrypto remained available. The failing script remains unidentified. Servo's experimental IntersectionObserver remains disabled.
+WebCrypto remained available. The subsequent controlled probe identified an unguarded IntersectionObserver constructor in BBC's advertising placeholder React effect.
+The default Servo preference reproduces the fatal article error. Enabling the preference preserves article content through navigation and reload.
+This is diagnostic evidence. The product preference remains disabled pending compatibility and performance evaluation.
 The [CI run at `833ad5f`](https://github.com/csm/bulwark/actions/runs/43680513338) failed Linux REPL completion.
 Its Servo, macOS runtime, and standalone AOT jobs passed.
 
@@ -63,8 +65,9 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Capture the consented BBC article's script exception and investigate the remaining GitHub navigation limits.
-   The BBC report records the failed physical follow-up, remaining Servo limitations, and dependency constraint.
+1. Evaluate the IntersectionObserver preference against the required site tasks and known performance limitations.
+   Repeat physical BBC acceptance after a product correction and investigate the remaining GitHub navigation limits.
+   The BBC report records the reproduced advertising-placeholder exception, failed physical follow-up, and dependency constraint.
    Diagnose the latest Linux `Timed out: REPL completion` CI failure.
 2. Repeat the required checks after compatibility corrections.
    Obtain owner acceptance only after the required criteria pass. Phase 3 has not started.
