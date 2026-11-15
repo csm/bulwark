@@ -6,6 +6,9 @@ GitHub source navigation also needs the workaround recorded here.
 No site substitution or scope exception is accepted by this report.
 Owner acceptance remains outstanding.
 
+The subsequent [BBC investigation](phase-2-bbc-investigation.md) identified a missing Bulwark build feature and tested a correction.
+Its diagnostic results do not replace the physical acceptance results below.
+
 ## Source and method
 
 The source baseline is `d628a87`, after the P2.7 implementation at `9835f77`.
@@ -115,7 +118,8 @@ Next-match moved the selection's anchor offset to 20.
 The BBC exception appeared before a later Terms of Use overlay.
 No acceptance action occurred on that overlay.
 The direct article and reload also failed, so the required article task remains incomplete.
-This run does not identify the failing site script or missing engine feature.
+This acceptance run did not identify the failing site script or missing engine feature.
+The subsequent [investigation](phase-2-bbc-investigation.md) identifies the missing WebCrypto feature and records the remaining Servo limitations.
 No alternate site, disabled script, user-agent override, or transformed page supplies a passing result.
 
 Several pages also displayed solid black icon placeholders or incomplete navigation chrome.

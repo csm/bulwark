@@ -20,7 +20,8 @@ cljrs-gc = { git = "https://github.com/csm/clojurust", rev = "540e42181ad0604611
 cljrs-async = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false }
 cljrs-nrepl = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false }
 cljrs-compiler = { git = "https://github.com/csm/clojurust", rev = "540e42181ad06046116f0e2007e7f0c449efaa65", default-features = false, features = ["regex-full"] }
-servo = { version = "=0.7.0", default-features = false, features = ["bundled", "js_jit"] }
+# WebCrypto exposes window.crypto, which sites use during client initialization.
+servo = { version = "=0.7.0", default-features = false, features = ["bundled", "js_jit", "webcrypto"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 winit = "0.30.13"
 url = "2"

@@ -49,6 +49,11 @@
     (let [info (value! (await (native/webview-info view)))]
       (check! (= user/servo-fixture-url (:url info)) "Wrong fixture URL")
       (check! (= "Bulwark Servo fixture" (:title info)) "Wrong fixture title"))
+    ;; BBC's UUID dependency requires this API during client initialization.
+    ;; Check the real engine API without a network dependency or random-value assertion.
+    (check! (= "true" (value! (await (native/eval-js view
+      "(()=>{const bytes=new Uint8Array(16);return String(crypto.getRandomValues(bytes)===bytes&&bytes.length===16)})()"))))
+      "WebCrypto getRandomValues is unavailable")
     (let [other (value! (await (native/webview-create "about:blank")))]
       (value! (await (native/webview-select other)))
       (value! (await (native/webview-select view)))

@@ -5,7 +5,7 @@
 P2.8 acceptance evidence is recorded in the [Phase 2 review](phase-2-acceptance.md), 2026-11-14.
 The source baseline is `d628a87`, after P2.7 at `9835f77`.
 The P2.8 code checkpoint is `689ba2d` on `codex/phase-2-acceptance`.
-The current change adds a native presentation diagnostic and a reproducible release startup runner.
+That checkpoint added a native presentation diagnostic and a reproducible release startup runner.
 Phases 0 and 1 remain accepted. Phase 2 remains open.
 
 B2 does not pass under the agreed five-site scope.
@@ -14,6 +14,11 @@ GitHub renders repository and source pages, but a normal source-link click did n
 Address entry loads the file. Its anchors fall outside the default selector's first 100 links.
 Wikipedia, Hacker News, and MDN passed their named tasks.
 No site substitution or scope exception is accepted by the report.
+
+The [BBC investigation](phase-2-bbc-investigation.md) identified the missing Servo `webcrypto` build feature in Bulwark.
+The correction exposes `crypto.getRandomValues` and restores BBC page content in native diagnostic runs.
+The original BBC URLs also support programmatic scrolling after the correction.
+Physical acceptance remains open. Servo's experimental IntersectionObserver remains disabled.
 
 Rust owns native mechanisms and bounded transport. Clojure owns commands, state, bindings, and browser policy.
 The native policy review found no browser policy in the eleven Phase 2 native additions.
@@ -55,8 +60,8 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Diagnose the BBC exception and GitHub navigation limits recorded in the acceptance review.
-   Correct compatibility or obtain an explicit owner scope decision before changing any required site task.
+1. Repeat the physical BBC task with the WebCrypto correction and investigate the remaining GitHub navigation limits.
+   The BBC report records the remaining Servo limitations and the dependency constraint.
 2. Repeat the required checks after compatibility corrections.
    Obtain owner acceptance only after the required criteria pass. Phase 3 has not started.
 3. Resolve the Option-as-Alt policy with the owner before changing key translation.

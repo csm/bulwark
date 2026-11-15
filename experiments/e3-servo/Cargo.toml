@@ -19,3 +19,7 @@ winit.workspace = true
 euclid.workspace = true
 url.workspace = true
 rustls.workspace = true
+
+[[example]]
+name = "bbc_probe"
+required-features = ["servo"]

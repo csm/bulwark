@@ -1,6 +1,6 @@
 # Upstream dependencies
 
-Last inspection: 2026-11-12.
+Last inspection: 2026-11-14.
 
 ## Pins
 
@@ -27,7 +27,10 @@ It covers direct calls, applied calls, parked fibers, watches, AOT, and no-GC ex
 The product model suite includes the conflicting-update regression.
 The optional AOT test feature uses the same revision as the product runtime.
 
-Servo enables `bundled` and `js_jit` with default features disabled.
+Servo enables `bundled`, `js_jit`, and `webcrypto` with default features disabled.
+The [BBC investigation](phase-2-bbc-investigation.md) identified the missing WebCrypto feature during Phase 2 acceptance.
+`Cargo.lock` retains `pkcs1` at `0.8.0-rc.4`, as in Servo 0.7.0's own lockfile.
+The stable `pkcs1` 0.8.0 release does not compile with Servo's `rsa` 0.10.0-rc.18 dependency.
 The initial probe excludes multiprocess, GStreamer, WebGL, WebGPU, and WebXR.
 These choices establish the E3 baseline. They do not settle the Phase 1 feature set.
 The owner confirmed single process first, followed by a multiprocess comparison, under Q5 on 2026-10-27.
