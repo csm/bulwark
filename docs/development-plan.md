@@ -756,7 +756,7 @@ All Phase 1 acceptance criteria now pass.
 
 1. Resolve the live-site failures and navigation limits in the [P2.8 review](phase-2-acceptance.md).
    A failed required task needs a compatibility correction or an explicit owner scope decision.
-2. Run current-change CI for the presentation diagnostic and obtain owner acceptance after all required criteria pass.
+2. Repeat the required checks after compatibility corrections and obtain owner acceptance after all required criteria pass.
 3. Resolve the Option-as-Alt policy before changing native key translation.
 
 E5 remains mandatory for simultaneous web content splits.

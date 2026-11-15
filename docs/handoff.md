@@ -4,6 +4,7 @@
 
 P2.8 acceptance evidence is recorded in the [Phase 2 review](phase-2-acceptance.md), 2026-11-14.
 The source baseline is `d628a87`, after P2.7 at `9835f77`.
+The P2.8 code checkpoint is `689ba2d` on `codex/phase-2-acceptance`.
 The current change adds a native presentation diagnostic and a reproducible release startup runner.
 Phases 0 and 1 remain accepted. Phase 2 remains open.
 
@@ -47,15 +48,16 @@ Timing runs from parent process creation to receipt of the first page/chrome pre
 The report records all samples, hashes, hardware, and timing limits.
 Local logs and composed frames reside in `target/phase-2-acceptance-evidence/`.
 
-The [P2.7 main CI run](https://github.com/csm/bulwark/actions/runs/43629036365) passed all four jobs at `9835f77`.
-Its Linux results precede the new diagnostic and runner assertion. Current-change CI remains pending.
+The [P2.8 branch CI run](https://github.com/csm/bulwark/actions/runs/43670796887) passed all four jobs at `689ba2d`.
+Linux passed both native process and nREPL modes, including the new presentation assertion.
+Linux and macOS passed runtime checks. The standalone Linux AOT job passed.
 The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase-2-shell-acceptance.md) retain earlier evidence.
 
 ## Next steps
 
 1. Diagnose the BBC exception and GitHub navigation limits recorded in the acceptance review.
    Correct compatibility or obtain an explicit owner scope decision before changing any required site task.
-2. Complete current-change CI for the presentation diagnostic and assertion.
+2. Repeat the required checks after compatibility corrections.
    Obtain owner acceptance only after the required criteria pass. Phase 3 has not started.
 3. Resolve the Option-as-Alt policy with the owner before changing key translation.
    `C-c x` remains the palette fallback.

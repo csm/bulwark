@@ -9,6 +9,7 @@ Owner acceptance remains outstanding.
 ## Source and method
 
 The source baseline is `d628a87`, after the P2.7 implementation at `9835f77`.
+The P2.8 code checkpoint is `689ba2d` on `codex/phase-2-acceptance`.
 This change adds a native presentation diagnostic and a release measurement runner.
 It changes no browser policy, key translation, dependency pin, or queue limit.
 Clojurust remains at `540e4218`. Servo remains at `0.7.0`.
@@ -48,7 +49,7 @@ Those release captures establish rendering at capture time, not additional physi
 | B4: introspection | Passed. The installed inventory contains 25 documented native functions. Physical apropos opened a text buffer. |
 | B5: policy boundary | Passed the source review below. Native additions provide mechanisms. Clojure retains browser policy. |
 | B6: startup | Recorded. Seven release samples have a median of 0.265 seconds under the conditions below. |
-| B7: language coverage | Passed interpreter assertions and the standalone pinned AOT binary locally. The preceding Linux CI also passed both paths. |
+| B7: language coverage | Passed interpreter assertions and the standalone pinned AOT binary locally. The P2.8 Linux CI also passed both paths. |
 | Other Phase 2 deliverables | Automated checks passed in both modes. Physical mixed-pane REPL focus, interruption, close, and native shutdown passed. |
 
 ## Physical default workflows and internal REPL
@@ -188,7 +189,7 @@ python3 experiments/measure_product_startup.py > target/startup.json
 
 Each sample starts a separate process at `about:blank` with a new empty profile and no nREPL listener.
 The parent monotonic clock starts before process creation.
-It stops when the parent receives `Bulwark native: first-content-presented` through the output pipe.
+When the parent receives `Bulwark native: first-content-presented` through the output pipe, the clock stops.
 The host emits that marker once, after a presentation with a painted webview and a runtime UI description.
 The interval includes process creation, dynamic loading, bootstrap, native presentation, and pipe-delivery delay.
 It measures the presentation call, not physical display scanout or live-site load completion.
@@ -230,12 +231,13 @@ That run overlapped native checks. `startup-initial.json` retains all its sample
 The initial sandboxed Servo contract did not create its rendering surface and panicked in Surfman.
 The same test passed with native display access. That failed attempt is not product acceptance evidence.
 
-The [P2.7 main CI run](https://github.com/csm/bulwark/actions/runs/43629036365) passed all four jobs at `9835f77`.
-This review retrieved and checked its job results.
+The [P2.8 branch CI run](https://github.com/csm/bulwark/actions/runs/43670796887) passed all four jobs at `689ba2d`.
 Linux and macOS passed the portable suite and mock nREPL modes.
-Linux passed native/Servo checks, both process and native nREPL modes, and the standalone AOT job.
-These Linux results precede the new presentation diagnostic and runner assertion in this change.
-They do not establish current-change CI or interactive Linux behavior.
+Linux passed native/Servo Clippy, unit tests, the contract, and both software checks.
+Both Linux native process modes passed, including the new presentation assertion.
+Both native nREPL modes and the standalone AOT job also passed.
+These results do not establish interactive Linux behavior.
+The earlier [P2.7 main CI run](https://github.com/csm/bulwark/actions/runs/43629036365) passed at `9835f77`.
 
 ## Exit disposition
 
@@ -243,7 +245,6 @@ P2.8 now has physical macOS workflows, live-site results, release measurements, 
 The required BBC task still fails, and GitHub retains the documented navigation limits.
 Phase 2 cannot close under the agreed site scope.
 The next work must diagnose compatibility or obtain an explicit scope decision before any failed task changes.
-The presentation diagnostic and assertion also need current-change CI.
 Owner acceptance follows the required passing criteria. This report does not supply that acceptance.
 
 E5 remains deferred beyond Phase 2 under the owner's single-visible-webview scope decision.
