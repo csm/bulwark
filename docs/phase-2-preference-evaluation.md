@@ -165,7 +165,21 @@ This report supplies no owner acceptance for Phase 2.
 | Formatting, whitespace, Python compilation | Passed. |
 | Native release build | Passed. |
 | Physical BBC | Both consented article workflows passed. Native close returned zero and removed the port file. |
-Current Linux CI and the additional small-host deadline failures remain open.
+
+The [CI run at `4d406d6`](https://github.com/csm/bulwark/actions/runs/44986893459) passed all four jobs.
+The tested commit is `4d406d669d42d0cd4530be39f41ed7a1ca9b272a`.
+
+| CI job | Result |
+|---|---|
+| Linux runtime | Passed, including the corrected REPL truncation regression and both product nREPL modes. |
+| Linux Servo | Passed both local fixture modes, both 16-case native suites, and both native nREPL modes. |
+| Linux standalone AOT | Passed. |
+| macOS runtime | Passed. |
+
+The new observer and adopted stylesheet assertions passed on Linux in both evaluator modes.
+No CI deadline or assertion changed for this run.
+The earlier browser-history, introspection, and embedded-shell deadline failures on the two-core host remain unresolved.
+The passing GitHub Actions run does not establish their causes or a passing repeat on that host.
 This report supplies no owner acceptance.
 
 Local evidence resides in `target/preference-evaluation/`.
@@ -173,4 +187,5 @@ Local evidence resides in `target/preference-evaluation/`.
 `banner-release/` retains the three named banner loads and the observation script hash.
 `checks/` retains every command, status, test log, and native fixture frame.
 `physical/` retains binary hashes, read-only observations, and native process evidence.
+`linux-ci/` retains the Actions job summary, complete logs, and watch output for the tested commit.
 Saved browser state remains outside the repository.

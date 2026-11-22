@@ -11,6 +11,8 @@ GitHub's placeholders fell from 83 to zero. Amazon displayed a gate, so its stor
 Three named Wikipedia banner repeats completed all heartbeats, with maximum delays of 302–766 ms.
 After explicit Terms of Use approval, physical BBC article, scroll, and reload tasks passed for the current lead and original failing URL.
 Native close returned zero, joined the runtime worker, and removed the port file.
+The [preference correction CI](https://github.com/csm/bulwark/actions/runs/44986893459) passed all four jobs at `4d406d6`.
+Linux passed runtime, Servo, and standalone AOT checks. The macOS runtime job also passed.
 
 The 2026-11-21 [compatibility follow-up](phase-2-compatibility-follow-up.md) started from `1ef0723`, then equal to fetched `origin/main`.
 That checkpoint integrated the work from `codex/phase-2-compatibility` into `main`.
@@ -21,7 +23,7 @@ A chunked fixture produces the same 20,000-character result and passes with the 
 The production scheduler and bounds did not change. Failures now include stage labels and bounded diagnostic context.
 The corrected REPL check passed in both Linux evaluator modes.
 Full portable runs on the small Linux host still failed separate browser-history, introspection, and embedded-shell deadlines.
-A passing current Linux CI run remains required.
+The current Linux CI run passed. The separate small-host deadline failures remain unresolved.
 
 The IntersectionObserver comparison covers the five required sites and both upstream performance URLs.
 The [Wikipedia investigation](phase-2-wikipedia-investigation.md) reproduced a 34-second reply delay that later recovered.
@@ -66,7 +68,9 @@ The observer diagnostic now retains repeated runs and optional thread samples. I
 The isolated radio optimization passed the focused equivalence comparison, preparation checks, and final probe Clippy.
 The [engine report](phase-2-engine-optimization.md) records the release timings and live banner coverage.
 The [main CI run at `c8a3bdc`](https://github.com/csm/bulwark/actions/runs/44985004958) passed all four jobs.
-The current preference correction still requires its own Linux CI run.
+The [preference correction CI at `4d406d6`](https://github.com/csm/bulwark/actions/runs/44986893459) also passed all four jobs.
+Linux passed both Servo fixture modes, both native process suites, and both native nREPL modes.
+The Linux runtime job passed the corrected REPL truncation regression without a deadline change.
 The [follow-up report](phase-2-compatibility-follow-up.md) retains the additional Linux failures and all limits.
 
 ## P2.8 evidence
@@ -103,13 +107,13 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Repeat current Linux CI after the REPL fixture and preference corrections.
-   Keep the additional small-host deadline failures visible until their causes are resolved.
-2. Repeat the physical GitHub workflow with the corrected product preferences.
+1. Repeat the physical GitHub workflow with the corrected product preferences.
    The broader release comparison clears all 83 placeholders with both interfaces enabled.
    Keep initial window activation separate from the successful active-window source workflow.
-3. Repeat the remaining required checks after compatibility corrections under the existing five-site scope.
+2. Repeat the remaining required checks after compatibility corrections under the existing five-site scope.
    Obtain owner acceptance only after the required criteria pass. Phase 3 has not started.
+3. Diagnose the small-host browser-history, introspection, and embedded-shell deadline failures.
+   The passing GitHub Actions run does not resolve their causes.
 4. Resolve the Option-as-Alt policy with the owner before changing key translation.
    `C-c x` remains the palette fallback.
 5. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).

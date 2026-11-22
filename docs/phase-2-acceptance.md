@@ -9,7 +9,7 @@ Owner acceptance remains outstanding.
 The subsequent [BBC investigation](phase-2-bbc-investigation.md) identified a missing Bulwark build feature and tested a correction.
 Its diagnostic results do not replace the physical acceptance results below.
 The [physical follow-up at `833ad5f`](phase-2-bbc-investigation.md#physical-follow-up-after-consent) still failed after consent.
-The latest Linux runtime CI also failed a REPL-completion check.
+The Linux runtime CI at that checkpoint also failed a REPL-completion check.
 The [controlled continuation](phase-2-bbc-investigation.md#controlled-diagnosis-of-the-consented-failure) identifies BBC's unguarded IntersectionObserver constructor as a fatal path.
 Enabling Servo's experimental preference resolves that probe case. This diagnostic result does not close physical acceptance.
 
@@ -22,7 +22,9 @@ That physical round retained GitHub placeholders and left BBC acceptance and cur
 The later [preference decision](phase-2-preference-evaluation.md) enables IntersectionObserver and adopted stylesheets on the unchanged engine pin.
 It records the broader release comparison and three named Wikipedia banner repeats.
 The consented physical BBC article, scroll, and reload tasks passed for the current lead and original failing URL.
-The required five-site scope remains unchanged. Current Linux CI, the remaining physical repeats, and owner acceptance remain open.
+The [CI run at `4d406d6`](https://github.com/csm/bulwark/actions/runs/44986893459) passed all four jobs after the preference correction.
+Linux passed runtime, Servo, and standalone AOT checks. The macOS runtime job also passed.
+The required five-site scope remains unchanged. The remaining physical repeats, small-host deadline investigation, and owner acceptance remain open.
 
 ## Source and method
 
@@ -61,7 +63,7 @@ Those release captures establish rendering at capture time, not additional physi
 
 | Criterion | Result |
 |---|---|
-| B1: preserve Phase 1 | Open on the latest commit: Linux runtime CI at `833ad5f` timed out in REPL completion. Earlier physical input and stall evidence remains in the Phase 1 review. |
+| B1: preserve Phase 1 | Current CI passed all four jobs at `4d406d6`. Earlier physical input and stall evidence remains in the Phase 1 review. The separate small-host deadline failures remain unresolved. |
 | B2: default browser | Open. The latest preference correction passes the consented BBC task. Remaining physical repeats under the five-site scope remain required. |
 | B3: live configuration | Passed on live Wikipedia. Reload changed the binding and enabled reader mode without restart or duplicate hooks. |
 | B4: introspection | Passed. The installed inventory contains 25 documented native functions. Physical apropos opened a text buffer. |
