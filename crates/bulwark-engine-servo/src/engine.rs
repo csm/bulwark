@@ -193,6 +193,13 @@ impl ServoEngine {
             .make_current()
             .map_err(|error| Fault::Engine(format!("GL context: {error:?}")))?;
         let servo = ServoBuilder::default()
+            // BBC and GitHub require these real interfaces during client startup.
+            // Keep the remaining experimental preferences at their defaults.
+            .preferences(servo::Preferences {
+                dom_intersection_observer_enabled: true,
+                dom_adoptedstylesheet_enabled: true,
+                ..Default::default()
+            })
             .event_loop_waker(Box::new(Waker(wake.clone())))
             .build();
         Ok(Self {

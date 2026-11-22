@@ -198,3 +198,4 @@ Retain this upstream candidate as a measured partial optimization.
 Prefer an upstream release containing the correction over promoting this experimental backport without broader validation.
 Reducing repeated group scans remains relevant if large-group latency stays unacceptable after this change.
 BBC acceptance and the five-site preference evaluation remain separate Phase 2 requirements.
+The later [preference decision](phase-2-preference-evaluation.md) selects the upstream release path and records those compatibility checks.

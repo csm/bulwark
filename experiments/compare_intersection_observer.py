@@ -29,6 +29,11 @@ SITES = {
 
 
 DEFAULT_SITES = tuple(SITES)
+CONFIGURATIONS = {
+    "default": [],
+    "enabled": ["--intersection-observer"],
+    "compatibility": ["--intersection-observer", "--adopted-stylesheets"],
+}
 RADIO_FIXTURE = (Path(__file__).resolve().parent / "e3-servo/fixtures/radio-group.html").as_uri()
 SITES.update({"radio-group": RADIO_FIXTURE, "radio-text": RADIO_FIXTURE + "?type=text"})
 
@@ -113,6 +118,10 @@ def main():
     selection.add_argument("--site", action="append", choices=SITES)
     selection.add_argument("--url", help="An explicit URL, including a local reduction fixture")
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--configuration", action="append", choices=CONFIGURATIONS,
+                        help="Preference configurations to compare (default: default and enabled)")
+    parser.add_argument("--user-script", type=Path,
+                        help="Optional diagnostic script applied equally to every configuration")
     parser.add_argument("--sample-on-stall", action="store_true", help="Capture a macOS thread sample after a reply gap")
     parser.add_argument("--stall-seconds", type=float, default=3)
     parser.add_argument("--seconds", type=int, default=30)
@@ -125,30 +134,39 @@ def main():
     if args.sample_on_stall and sys.platform != "darwin":
         parser.error("--sample-on-stall requires macOS /usr/bin/sample")
     binary = args.binary.resolve(strict=True)
+    user_script = args.user_script.resolve(strict=True) if args.user_script else None
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output = args.out or Path("target/observer-comparisons") / timestamp
     output.mkdir(parents=True, exist_ok=False)
     report = {"started_utc": timestamp, "binary": str(binary),
               "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
               "seconds": args.seconds, "repeat": args.repeat,
+              "configurations": list(dict.fromkeys(args.configuration or ["default", "enabled"])),
+              "user_script": str(user_script) if user_script else None,
+              "user_script_sha256": hashlib.sha256(user_script.read_bytes()).hexdigest() if user_script else None,
               "stall_seconds": args.stall_seconds, "cases": []}
     sites = {"custom": args.url} if args.url else {site: SITES[site] for site in args.site or DEFAULT_SITES}
     for iteration in range(args.repeat):
         for site, url in sites.items():
-            for enabled in [False, True]:
-                name = f"{site}-{'enabled' if enabled else 'default'}"
+            configurations = report["configurations"]
+            # Alternate repeat order to avoid always measuring the candidate last.
+            order = configurations if iteration % 2 == 0 else reversed(configurations)
+            for configuration in order:
+                name = f"{site}-{configuration}"
                 if args.repeat > 1:
                     name += f"-{iteration + 1:02d}"
                 command = [str(binary), url, "--seconds", str(args.seconds), "--measure"]
-                if enabled:
-                    command.append("--intersection-observer")
+                command.extend(CONFIGURATIONS[configuration])
+                if user_script:
+                    command.extend(["--user-script", str(user_script)])
                 result = probe(command, output, name, args.seconds, args.sample_on_stall, args.stall_seconds)
                 log = result.pop("log")
                 heartbeats = [int(n) for n in re.findall(r"heartbeat: ms=(\d+) ok=true", log)]
                 samples = [json.loads(line.removeprefix("inspection: "))
                            for line in log.splitlines() if line.startswith("inspection: ")]
                 turns = re.findall(r"longest-turn-ms: (\d+)", log)
-                case = {"name": name, "url": url, "command": command, **result,
+                case = {"name": name, "configuration": configuration,
+                        "url": url, "command": command, **result,
                         "cpu_per_wall": result["cpu_seconds"] / result["wall_seconds"],
                         "heartbeats": len(heartbeats), "max_heartbeat_ms": max(heartbeats, default=None),
                         "longest_turn_ms": int(turns[-1]) if turns else None, "samples": samples}

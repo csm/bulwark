@@ -54,6 +54,49 @@
     (check! (= "true" (value! (await (native/eval-js view
       "(()=>{const bytes=new Uint8Array(16);return String(crypto.getRandomValues(bytes)===bytes&&bytes.length===16)})()"))))
       "WebCrypto getRandomValues is unavailable")
+    ;; Exercise the interfaces needed by BBC and GitHub without live-site timing.
+    (check! (= "true" (value! (await (native/eval-js view
+      "(()=>{
+        const sheet=new CSSStyleSheet();
+        sheet.replaceSync('#adopted-test { color: rgb(7, 11, 13); }');
+        const node=document.createElement('div');
+        node.id='adopted-test';
+        document.body.appendChild(node);
+        document.adoptedStyleSheets=[sheet];
+        const host=document.createElement('div');
+        document.body.appendChild(host);
+        const shadow=host.attachShadow({mode:'open'});
+        const child=document.createElement('span');
+        shadow.appendChild(child);
+        const shadowSheet=new CSSStyleSheet();
+        shadowSheet.replaceSync('span { color: rgb(17, 19, 23); }');
+        shadow.adoptedStyleSheets=[shadowSheet];
+        const ok=document.adoptedStyleSheets[0]===sheet &&
+          getComputedStyle(node).color==='rgb(7, 11, 13)' &&
+          shadow.adoptedStyleSheets[0]===shadowSheet &&
+          getComputedStyle(child).color==='rgb(17, 19, 23)';
+        document.adoptedStyleSheets=[];
+        node.remove(); host.remove();
+        return String(ok);
+      })()"))))
+      "Constructed stylesheets did not apply to the document and shadow root")
+    (value! (await (native/eval-js view
+      "(()=>{
+        window.observerResult='pending';
+        window.fixtureObserver=new IntersectionObserver(entries=>{
+          if(entries.some(entry=>entry.target===document.querySelector('h1') && entry.isIntersecting)) {
+            window.observerResult='visible';
+            window.fixtureObserver.disconnect();
+          }
+        });
+        window.fixtureObserver.observe(document.querySelector('h1'));
+        return 'observing';
+      })()")))
+    (loop [attempt 0]
+      (when-not (= "visible" (value! (await (native/eval-js view "window.observerResult"))))
+        (check! (< attempt 100) "IntersectionObserver did not report the visible heading")
+        (await (timeout 50))
+        (recur (inc attempt))))
     (let [other (value! (await (native/webview-create "about:blank")))]
       (value! (await (native/webview-select other)))
       (value! (await (native/webview-select view)))

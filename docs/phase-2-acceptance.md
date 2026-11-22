@@ -1,8 +1,8 @@
 # Phase 2 acceptance review
 
 Date: 2026-11-14. P2.8 evidence is recorded. Phase 2 remains open.
-B2 does not pass: BBC News produces a client-side exception page.
-GitHub source navigation also needs the workaround recorded here.
+B2 remains open pending the required checks after the compatibility corrections.
+The original BBC failure and GitHub workaround remain historical evidence in this report.
 No site substitution or scope exception is accepted by this report.
 Owner acceptance remains outstanding.
 
@@ -15,9 +15,14 @@ Enabling Servo's experimental preference resolves that probe case. This diagnost
 
 The [2026-11-21 follow-up](phase-2-compatibility-follow-up.md) corrects the REPL truncation fixture and the link inventory cutoff.
 It also records an intermittent Wikipedia response failure with IntersectionObserver enabled.
-The product observer preference remains disabled. Physical site acceptance and current Linux CI remain open.
+That checkpoint retained the disabled observer preference. Physical site acceptance and current Linux CI remained open.
 The later [physical follow-up](phase-2-physical-follow-up.md) passed active-window GitHub source navigation, link completion, REPL checks, and native shutdown.
-GitHub retains client-loading placeholders. BBC acceptance and current Linux CI remain open.
+That physical round retained GitHub placeholders and left BBC acceptance and current Linux CI open.
+
+The later [preference decision](phase-2-preference-evaluation.md) enables IntersectionObserver and adopted stylesheets on the unchanged engine pin.
+It records the broader release comparison and three named Wikipedia banner repeats.
+The consented physical BBC article, scroll, and reload tasks passed for the current lead and original failing URL.
+The required five-site scope remains unchanged. Current Linux CI, the remaining physical repeats, and owner acceptance remain open.
 
 ## Source and method
 
@@ -57,7 +62,7 @@ Those release captures establish rendering at capture time, not additional physi
 | Criterion | Result |
 |---|---|
 | B1: preserve Phase 1 | Open on the latest commit: Linux runtime CI at `833ad5f` timed out in REPL completion. Earlier physical input and stall evidence remains in the Phase 1 review. |
-| B2: default browser | Open. Default workflows pass, but BBC fails and GitHub needs a navigation workaround. |
+| B2: default browser | Open. The latest preference correction passes the consented BBC task. Remaining physical repeats under the five-site scope remain required. |
 | B3: live configuration | Passed on live Wikipedia. Reload changed the binding and enabled reader mode without restart or duplicate hooks. |
 | B4: introspection | Passed. The installed inventory contains 25 documented native functions. Physical apropos opened a text buffer. |
 | B5: policy boundary | Passed the source review below. Native additions provide mechanisms. Clojure retains browser policy. |
