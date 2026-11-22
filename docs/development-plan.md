@@ -558,7 +558,8 @@ It uses the accepted Phase 1 baseline and records the owner's confirmed Phase 2 
 The [P2.6 checkpoint](phase-2-introspection.md) adds help, Messages, and live configuration reload.
 The [P2.7 checkpoint](phase-2-browsing.md) adds default configuration modules, page commands, auxiliary views, and a bounded internal REPL.
 The [P2.8 acceptance review](phase-2-acceptance.md) records physical workflows, release startup samples, and the native policy review.
-Phase 2 remains open because the required BBC task fails and GitHub source navigation needs a workaround.
+The latest [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks after the compatibility corrections.
+Phase 2 remains open for the Option-as-Alt decision, the small-host deadline investigation, and owner acceptance.
 The [mechanism checkpoint](phase-2-mechanisms.md) begins P2.1 with retained webviews and standalone AOT assertions.
 The [buffer checkpoint](phase-2-buffers.md) implements P2.2 with the buffer registry and explicit lifecycles.
 The [mode checkpoint](phase-2-modes.md) implements P2.4 with mode definitions and contextual keymaps.
@@ -754,13 +755,12 @@ The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072)
 The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
 All Phase 1 acceptance criteria now pass.
 
-1. Resolve the live-site failures and navigation limits in the [P2.8 review](phase-2-acceptance.md).
-   A failed required task needs a compatibility correction or an explicit owner scope decision.
-2. Repeat the required checks after compatibility corrections and obtain owner acceptance after all required criteria pass.
-3. Resolve the Option-as-Alt policy before changing native key translation.
+1. Resolve the Option-as-Alt policy before changing native key translation.
+2. Retry the small Linux host and diagnose its remaining deadline failures.
+3. Review the [repeat checks](phase-2-repeat-checks.md) and obtain owner acceptance after all required criteria pass.
 
 E5 remains mandatory for simultaneous web content splits.
-Linux native validation, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.
+Interactive Linux behavior, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.
 The [gap register](clojurust-async-gaps.md) records the adopted upstream mechanisms and their limits.
 
 ---

@@ -2,6 +2,15 @@
 
 ## Current state
 
+The latest [repeat checks](phase-2-repeat-checks.md) used the unchanged `4d406d6` product source and the normal Tiered release shell.
+All five required physical site tasks passed from an empty profile before loading an init file.
+GitHub's ordinary source click, Back, and Forward passed with zero loading placeholders.
+Live init reload, reader mode, introspection, REPL history, interruption, mixed panes, and parked shutdown also passed.
+All sixteen local repeat commands passed, including both native suites, four nREPL runs, and standalone AOT.
+Startup had a 0.230-second median across seven samples, including a 2.458-second first sample.
+The two-core Linux host remained unreachable after two bounded SSH attempts. Its earlier deadline failures remain unresolved.
+Option-as-Alt remains unchanged for the owner discussion. Phase 2 remains open. Phase 3 has not started.
+
 The 2026-11-21 [preference decision](phase-2-preference-evaluation.md) starts from `c8a3bdc`, equal to fetched `origin/main`.
 The product now enables IntersectionObserver and adopted stylesheets on the unchanged Servo `0.7.0` pin.
 The engine correction path uses a future tagged upstream release containing the measured radio optimization.
@@ -56,6 +65,11 @@ Text and REPL panes support splits.
 
 ## Current checks
 
+The latest repeat passed all 58 portable tests, all 17 native unit tests, and the Servo contract.
+Both 16-case native process suites, both Servo fixture modes, all four nREPL runs, and standalone pinned AOT passed again.
+Portable and native Clippy passed. No deadline, assertion, engine preference, or key translation changed.
+The [repeat report](phase-2-repeat-checks.md) retains every startup sample and the physical input qualifications.
+
 The preference correction passed all 58 portable tests, all 17 native unit tests, and the Servo contract.
 The local fixture passed actual observer callbacks and stylesheet adoption in both evaluator modes.
 Both native process suites passed all 16 cases. Portable and native Clippy passed with warnings denied.
@@ -107,16 +121,13 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Repeat the physical GitHub workflow with the corrected product preferences.
-   The broader release comparison clears all 83 placeholders with both interfaces enabled.
-   Keep initial window activation separate from the successful active-window source workflow.
-2. Repeat the remaining required checks after compatibility corrections under the existing five-site scope.
-   Obtain owner acceptance only after the required criteria pass. Phase 3 has not started.
-3. Diagnose the small-host browser-history, introspection, and embedded-shell deadline failures.
-   The passing GitHub Actions run does not resolve their causes.
-4. Resolve the Option-as-Alt policy with the owner before changing key translation.
+1. Resolve the Option-as-Alt policy with the owner before changing key translation.
    `C-c x` remains the palette fallback.
-5. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
+2. Retry the two-core Linux host when it is available.
+   Diagnose its browser-history, introspection, and embedded-shell deadline failures. Current GitHub Actions does not resolve their causes.
+3. Review the exit evidence and obtain owner acceptance only after the required criteria pass.
+   Keep inactive-window input and icon rendering limits distinct from the passing named site workflows.
+4. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
    Remove the two AOT workarounds only after that pin passes their regressions.
 
 E5 remains deferred beyond Phase 2 under the accepted single-visible-webview scope.

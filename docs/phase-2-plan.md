@@ -207,7 +207,9 @@ Exit evidence: no-init browsing workflow, find and zoom, link opening, popup fix
 ### P2.8: Run acceptance and record the exit review
 
 The [acceptance review](phase-2-acceptance.md) records the 2026-11-14 macOS workflows, startup samples, and native policy review.
-B2 remains open: BBC News fails its article task, and GitHub source navigation needs a workaround.
+The latest [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks after the compatibility corrections.
+Live configuration, introspection, REPL checks, and local automated suites also passed again.
+The Option-as-Alt decision and the separate small-host deadline investigation remain open.
 The [P2.8 CI run](https://github.com/csm/bulwark/actions/runs/43670796887) passed all four jobs at `689ba2d`.
 Owner acceptance remains outstanding. Phase 2 is not complete.
 

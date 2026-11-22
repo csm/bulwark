@@ -13,10 +13,11 @@ The [introspection checkpoint](docs/phase-2-introspection.md) adds help buffers,
 The [browsing checkpoint](docs/phase-2-browsing.md) adds default configuration modules, find, zoom, popup support, and an internal REPL.
 The [P2.5/P2.6 validation report](docs/phase-2-shell-acceptance.md) records passing Linux CI and macOS physical checks.
 The [P2.8 acceptance review](docs/phase-2-acceptance.md) records physical browsing and REPL checks, release startup samples, and the native policy review.
-Phase 2 remains open pending the remaining physical repeats, the small-host deadline investigation, and owner acceptance.
+Phase 2 remains open for the Option-as-Alt decision, the small-host deadline investigation, and owner acceptance.
 The [physical follow-up](docs/phase-2-physical-follow-up.md) records passing active-window GitHub navigation and the remaining compatibility limits.
 The [preference correction](docs/phase-2-preference-evaluation.md) passes the consented BBC article task and clears GitHub placeholders in the release comparison.
 Its [CI run](https://github.com/csm/bulwark/actions/runs/44986893459) passed all Linux jobs and the macOS runtime job.
+The [repeat checks](docs/phase-2-repeat-checks.md) passed all five physical site tasks, live configuration, introspection, REPL checks, and local automated suites.
 See the [foundation checkpoint](docs/phase-1-foundation.md) and [Phase 0 exit review](docs/phase-0-exit.md).
 macOS is the first development platform. The initial browser chrome will use egui.
 

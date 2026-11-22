@@ -1,7 +1,7 @@
 # Phase 2 acceptance review
 
 Date: 2026-11-14. P2.8 evidence is recorded. Phase 2 remains open.
-B2 remains open pending the required checks after the compatibility corrections.
+The latest named five-site tasks passed after the compatibility corrections.
 The original BBC failure and GitHub workaround remain historical evidence in this report.
 No site substitution or scope exception is accepted by this report.
 Owner acceptance remains outstanding.
@@ -24,7 +24,9 @@ It records the broader release comparison and three named Wikipedia banner repea
 The consented physical BBC article, scroll, and reload tasks passed for the current lead and original failing URL.
 The [CI run at `4d406d6`](https://github.com/csm/bulwark/actions/runs/44986893459) passed all four jobs after the preference correction.
 Linux passed runtime, Servo, and standalone AOT checks. The macOS runtime job also passed.
-The required five-site scope remains unchanged. The remaining physical repeats, small-host deadline investigation, and owner acceptance remain open.
+The later [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks, live configuration, introspection, and REPL checks.
+All local automated suites passed again. Startup had a 0.230-second median, with a 2.458-second first sample retained.
+The required five-site scope remains unchanged. Option-as-Alt, the small-host deadline investigation, and owner acceptance remain open.
 
 ## Source and method
 
@@ -64,12 +66,12 @@ Those release captures establish rendering at capture time, not additional physi
 | Criterion | Result |
 |---|---|
 | B1: preserve Phase 1 | Current CI passed all four jobs at `4d406d6`. Earlier physical input and stall evidence remains in the Phase 1 review. The separate small-host deadline failures remain unresolved. |
-| B2: default browser | Open. The latest preference correction passes the consented BBC task. Remaining physical repeats under the five-site scope remain required. |
-| B3: live configuration | Passed on live Wikipedia. Reload changed the binding and enabled reader mode without restart or duplicate hooks. |
+| B2: default browser | Passed all five named physical workflows in the latest repeat. Initial inactive-window behavior and icon rendering limits remain separate. |
+| B3: live configuration | Passed again on live Wikipedia. Reload changed the binding and applied reader mode without a new document or duplicate hooks and styles. |
 | B4: introspection | Passed. The installed inventory contains 25 documented native functions. Physical apropos opened a text buffer. |
 | B5: policy boundary | Passed the source review below. Native additions provide mechanisms. Clojure retains browser policy. |
-| B6: startup | Recorded. Seven release samples have a median of 0.265 seconds under the conditions below. |
-| B7: language coverage | Passed interpreter assertions and the standalone pinned AOT binary locally. The P2.8 Linux CI also passed both paths. |
+| B6: startup | Recorded again. The latest seven release samples have a 0.230-second median, including a 2.458-second first sample. The target remains informational. |
+| B7: language coverage | Interpreter assertions and the standalone pinned AOT binary passed again locally. Current Linux CI also passed both paths. |
 | Other Phase 2 deliverables | Automated checks passed in both modes. Physical mixed-pane REPL focus, interruption, close, and native shutdown passed. |
 
 ## BBC physical follow-up at `833ad5f`
