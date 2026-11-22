@@ -27,6 +27,8 @@ Linux passed runtime, Servo, and standalone AOT checks. The macOS runtime job al
 The later [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks, live configuration, introspection, and REPL checks.
 All local automated suites passed again. Startup had a 0.230-second median, with a 2.458-second first sample retained.
 The required five-site scope remains unchanged. Option-as-Alt, the small-host deadline investigation, and owner acceptance remain open.
+The [small Linux follow-up](phase-2-small-linux-follow-up.md) restored connectivity and passed browser history and the corrected REPL regression in both modes.
+Embedded-shell startup and TreeWalk introspection still failed their existing deadlines. The complete small-host portable suite did not pass.
 
 ## Source and method
 

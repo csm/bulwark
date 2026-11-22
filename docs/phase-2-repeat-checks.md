@@ -115,6 +115,8 @@ Each attempt used a ten-second connection timeout and no agent forwarding.
 No small-host test ran in this round.
 The earlier browser-history, introspection, and embedded-shell deadline failures remain unresolved.
 The passing GitHub Actions run at `4d406d6` does not establish their causes.
+The later [small Linux follow-up](phase-2-small-linux-follow-up.md) restored connectivity and repeated the current source.
+Browser history passed both modes. Embedded-shell startup and introspection still failed their existing deadlines.
 
 The source review retained the Rust/Clojure policy boundary.
 The focused Rust search found a reservation-publication comment and embedded Clojure test source.

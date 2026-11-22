@@ -2,13 +2,21 @@
 
 ## Current state
 
+The [small Linux follow-up](phase-2-small-linux-follow-up.md) reconnected after the owner enabled Tailscale.
+A clean isolated worktree at `e4dc233` passed formatting and Clippy, but workspace tests failed two of 55 attempted tests.
+Browser history and the corrected REPL regression passed both evaluator modes.
+Embedded-shell startup still exceeded two seconds. Introspection still exceeded its 60-second TreeWalk budget during retention checks.
+The runner stopped at command three of seventeen. Later portable commands did not run.
+The earlier browser-history failure did not reproduce; its earlier timing variation remains unexplained.
+
 The latest [repeat checks](phase-2-repeat-checks.md) used the unchanged `4d406d6` product source and the normal Tiered release shell.
 All five required physical site tasks passed from an empty profile before loading an init file.
 GitHub's ordinary source click, Back, and Forward passed with zero loading placeholders.
 Live init reload, reader mode, introspection, REPL history, interruption, mixed panes, and parked shutdown also passed.
 All sixteen local repeat commands passed, including both native suites, four nREPL runs, and standalone AOT.
 Startup had a 0.230-second median across seven samples, including a 2.458-second first sample.
-The two-core Linux host remained unreachable after two bounded SSH attempts. Its earlier deadline failures remain unresolved.
+During that physical repeat, the two-core Linux host was unreachable after two bounded SSH attempts.
+The subsequent small-host follow-up records the restored connection and current test failures.
 Option-as-Alt remains unchanged for the owner discussion. Phase 2 remains open. Phase 3 has not started.
 
 The 2026-11-21 [preference decision](phase-2-preference-evaluation.md) starts from `c8a3bdc`, equal to fetched `origin/main`.
@@ -123,8 +131,8 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 1. Resolve the Option-as-Alt policy with the owner before changing key translation.
    `C-c x` remains the palette fallback.
-2. Retry the two-core Linux host when it is available.
-   Diagnose its browser-history, introspection, and embedded-shell deadline failures. Current GitHub Actions does not resolve their causes.
+2. Measure embedded startup stages and isolate introspection retention costs on the connected small Linux host.
+   Retain the failed baseline, passing current browser-history repeat, and earlier timing variation.
 3. Review the exit evidence and obtain owner acceptance only after the required criteria pass.
    Keep inactive-window input and icon rendering limits distinct from the passing named site workflows.
 4. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).

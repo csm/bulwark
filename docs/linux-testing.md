@@ -77,7 +77,7 @@ SSH agent forwarding is unnecessary for public dependency sources.
 The default deadline is one hour per command.
 `RUST_TEST_THREADS` can override the default Rust test parallelism.
 The runner sets `BULWARK_TEST_PROGRAM_TIMEOUT_SECS=60` for the bulk Clojure assertion programs.
-The ordinary harness default remains ten seconds without this environment variable.
+The ordinary harness default is thirty seconds without this environment variable.
 The summary records the selected budget. Each program reports its execution mode and duration.
 The runner retains Rust test output through `RUST_TEST_NOCAPTURE=1`.
 The existing two-second shutdown and cleanup deadlines remain unchanged.
@@ -112,3 +112,12 @@ Do not copy macOS build artifacts onto the Linux host.
 If a run uses an uncommitted runner change, record that change alongside the source revision.
 Keep host addresses and SSH credentials outside repository configuration.
 The connected host's SSH target and checkout paths are in the ignored local file `target/linux-host.json`.
+
+## Current Phase 2 repeat
+
+The [2026-11-21 follow-up](phase-2-small-linux-follow-up.md) used a clean isolated worktree at `e4dc233` after Tailscale connectivity returned.
+Formatting and Clippy passed. Workspace tests passed 53 of 55 attempted tests.
+Browser history and the corrected REPL regression passed in both evaluator modes.
+Embedded-shell startup exceeded its two-second deadline. TreeWalk introspection exceeded sixty seconds during retention checks.
+The runner stopped at command three of seventeen, so later portable commands did not run.
+No assertion, production bound, or deadline changed. The two current failures remain unresolved.
