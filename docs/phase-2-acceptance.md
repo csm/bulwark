@@ -13,6 +13,12 @@ The latest Linux runtime CI also failed a REPL-completion check.
 The [controlled continuation](phase-2-bbc-investigation.md#controlled-diagnosis-of-the-consented-failure) identifies BBC's unguarded IntersectionObserver constructor as a fatal path.
 Enabling Servo's experimental preference resolves that probe case. This diagnostic result does not close physical acceptance.
 
+The [2026-11-21 follow-up](phase-2-compatibility-follow-up.md) corrects the REPL truncation fixture and the link inventory cutoff.
+It also records an intermittent Wikipedia response failure with IntersectionObserver enabled.
+The product observer preference remains disabled. Physical site acceptance and current Linux CI remain open.
+The later [physical follow-up](phase-2-physical-follow-up.md) passed active-window GitHub source navigation, link completion, REPL checks, and native shutdown.
+GitHub retains client-loading placeholders. BBC acceptance and current Linux CI remain open.
+
 ## Source and method
 
 The source baseline is `d628a87`, after the P2.7 implementation at `9835f77`.

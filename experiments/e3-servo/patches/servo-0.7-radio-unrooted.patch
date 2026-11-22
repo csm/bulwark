@@ -1,0 +1,166 @@
+--- a/dom/html/form_controls/htmlinputelement.rs
++++ b/dom/html/form_controls/htmlinputelement.rs
+@@ -687,10 +687,10 @@
+     }
+ 
+     /// <https://html.spec.whatwg.org/multipage/#suffering-from-being-missing>
+-    fn suffers_from_being_missing(&self, value: &DOMString) -> bool {
++    fn suffers_from_being_missing(&self, no_gc: &NoGC, value: &DOMString) -> bool {
+         self.input_type()
+             .as_specific()
+-            .suffers_from_being_missing(self, value)
++            .suffers_from_being_missing(no_gc, self, value)
+     }
+ 
+     /// <https://html.spec.whatwg.org/multipage/#suffering-from-a-type-mismatch>
+@@ -2462,7 +2462,7 @@
+         let value = self.Value();
+ 
+         if validate_flags.contains(ValidationFlags::VALUE_MISSING) &&
+-            self.suffers_from_being_missing(&value)
++            self.suffers_from_being_missing(cx.no_gc(), &value)
+         {
+             failed_flags.insert(ValidationFlags::VALUE_MISSING);
+         }
+--- a/dom/html/form_controls/input_type/mod.rs
++++ b/dom/html/form_controls/input_type/mod.rs
+@@ -2,7 +2,7 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+ use embedder_traits::InputMethodType;
+-use js::context::JSContext;
++use js::context::{JSContext, NoGC};
+ use script_bindings::cell::DomRefCell;
+ use script_bindings::codegen::GenericBindings::HTMLInputElementBinding::HTMLInputElementMethods;
+ use script_bindings::domstring::DOMString;
+@@ -389,7 +389,12 @@
+     }
+ 
+     /// <https://html.spec.whatwg.org/multipage/#the-required-attribute%3Asuffering-from-being-missing>
+-    fn suffers_from_being_missing(&self, input: &HTMLInputElement, value: &DOMString) -> bool {
++    fn suffers_from_being_missing(
++        &self,
++        _no_gc: &NoGC,
++        input: &HTMLInputElement,
++        value: &DOMString,
++    ) -> bool {
+         input.Required() &&
+             input.value_mode() == ValueMode::Value &&
+             input.is_mutable() &&
+--- a/dom/html/form_controls/input_type/checkbox_input_type.rs
++++ b/dom/html/form_controls/input_type/checkbox_input_type.rs
+@@ -1,7 +1,7 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+-use js::context::JSContext;
++use js::context::{JSContext, NoGC};
+ use script_bindings::cell::DomRefCell;
+ use script_bindings::codegen::GenericBindings::HTMLInputElementBinding::HTMLInputElementMethods;
+ use script_bindings::domstring::DOMString;
+@@ -30,7 +30,12 @@
+     }
+ 
+     /// <https://html.spec.whatwg.org/multipage/#checkbox-state-(type=checkbox):suffering-from-being-missing>
+-    fn suffers_from_being_missing(&self, input: &HTMLInputElement, _value: &DOMString) -> bool {
++    fn suffers_from_being_missing(
++        &self,
++        _no_gc: &NoGC,
++        input: &HTMLInputElement,
++        _value: &DOMString,
++    ) -> bool {
+         input.Required() && !input.Checked()
+     }
+ 
+--- a/dom/html/form_controls/input_type/file_input_type.rs
++++ b/dom/html/form_controls/input_type/file_input_type.rs
+@@ -7,7 +7,7 @@
+ 
+ use embedder_traits::{EmbedderControlRequest, FilePickerRequest, FilterPattern, SelectedFile};
+ use html5ever::{local_name, ns};
+-use js::context::JSContext;
++use js::context::{JSContext, NoGC};
+ use markup5ever::QualName;
+ use script_bindings::cell::DomRefCell;
+ use script_bindings::codegen::GenericBindings::FileListBinding::FileListMethods;
+@@ -139,7 +139,12 @@
+     }
+ 
+     /// <https://html.spec.whatwg.org/multipage/#file-upload-state-(type=file):suffering-from-being-missing>
+-    fn suffers_from_being_missing(&self, input: &HTMLInputElement, _value: &DOMString) -> bool {
++    fn suffers_from_being_missing(
++        &self,
++        _no_gc: &NoGC,
++        input: &HTMLInputElement,
++        _value: &DOMString,
++    ) -> bool {
+         input.Required() && self.filelist.get().is_none_or(|files| files.Length() == 0)
+     }
+ 
+--- a/dom/html/form_controls/input_type/radio_input_type.rs
++++ b/dom/html/form_controls/input_type/radio_input_type.rs
+@@ -2,12 +2,13 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+ use html5ever::local_name;
+-use js::context::JSContext;
++use js::context::{JSContext, NoGC};
+ use script_bindings::cell::DomRefCell;
+ use script_bindings::codegen::GenericBindings::HTMLInputElementBinding::HTMLInputElementMethods;
+ use script_bindings::codegen::GenericBindings::NodeBinding::NodeMethods;
+ use script_bindings::domstring::DOMString;
+-use script_bindings::root::DomRoot;
++use script_bindings::dom::UnrootedDom;
++use script_bindings::root::{Dom, DomRoot};
+ use stylo_atoms::Atom;
+ 
+ use crate::dom::bindings::codegen::Bindings::NodeBinding::GetRootNodeOptions;
+@@ -43,7 +44,12 @@
+     }
+ 
+     /// <https://html.spec.whatwg.org/multipage/#radio-button-state-(type=radio):suffering-from-being-missing>
+-    fn suffers_from_being_missing(&self, input: &HTMLInputElement, _value: &DOMString) -> bool {
++    fn suffers_from_being_missing(
++        &self,
++        no_gc: &NoGC,
++        input: &HTMLInputElement,
++        _value: &DOMString,
++    ) -> bool {
+         if input.radio_group_name().is_none() {
+             return false;
+         }
+@@ -53,7 +59,8 @@
+             .upcast::<Node>()
+             .GetRootNode(&GetRootNodeOptions::empty());
+         let form = input.form_owner();
+-        for other in radio_group_iter(
++        for other in radio_group_iter_unrooted(
++            no_gc,
+             input,
+             input.radio_group_name().as_ref(),
+             form.as_deref(),
+@@ -237,6 +244,24 @@
+         .filter(move |r| &**r == elem || in_same_group(r, form, group, Some(root)))
+ }
+ 
++pub(crate) fn radio_group_iter_unrooted<'a, 'no_gc>(
++    no_gc: &'no_gc NoGC,
++    elem: &'a HTMLInputElement,
++    group: Option<&'a Atom>,
++    form: Option<&'a HTMLFormElement>,
++    root: &'a Node,
++) -> impl Iterator<Item = UnrootedDom<'no_gc, HTMLInputElement>> + 'a
++where
++    'no_gc: 'a,
++{
++    root.traverse_preorder_non_rooting(no_gc, ShadowIncluding::No)
++        .filter_map(UnrootedDom::downcast::<HTMLInputElement>)
++        .filter(move |current_element| {
++            **current_element == Dom::from_ref(elem) ||
++                in_same_group(current_element, form, group, Some(root))
++        })
++}
++
+ pub(crate) fn broadcast_radio_checked(
+     cx: &mut JSContext,
+     broadcaster: &HTMLInputElement,

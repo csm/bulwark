@@ -5,6 +5,7 @@ use servo::{
     WebView, WebViewBuilder, WebViewDelegate,
 };
 use std::{
+    cell::Cell,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -38,6 +39,10 @@ JSON.stringify({
     crypto: typeof crypto,
     getRandomValues: typeof globalThis.crypto?.getRandomValues,
     intersectionObserver: typeof IntersectionObserver,
+    adoptedStyleSheets: typeof document.adoptedStyleSheets,
+    skeletons: document.querySelectorAll('.Skeleton').length,
+    radioInputs: document.querySelectorAll('input[type=radio]').length,
+    radioInsertion: globalThis.reduction ?? null,
     h1: Array.from(document.querySelectorAll('h1')).map(e => e.textContent),
     scrollHeight: document.documentElement.scrollHeight
 })
@@ -52,6 +57,9 @@ fn main() -> anyhow::Result<()> {
     let mut user_script = None;
     let mut screenshot = None;
     let mut intersection_observer = false;
+    let mut adopted_stylesheets = false;
+    let mut measure = false;
+    let mut await_reduction = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--diagnostics" => diagnostics = true,
@@ -68,6 +76,9 @@ fn main() -> anyhow::Result<()> {
                 ));
             }
             "--intersection-observer" => intersection_observer = true,
+            "--adopted-stylesheets" => adopted_stylesheets = true,
+            "--measure" => measure = true,
+            "--await-reduction" => await_reduction = true,
             "--seconds" => {
                 seconds = Some(
                     args.next()
@@ -84,7 +95,7 @@ fn main() -> anyhow::Result<()> {
             }
             _ if !arg.starts_with("--") && url.is_none() => url = Some(arg.parse::<url::Url>()?),
             _ => anyhow::bail!(
-                "Usage: bbc_probe [URL] [--diagnostics] [--intersection-observer] [--seconds N] [--navigate URL] [--user-script PATH] [--screenshot PATH]"
+                "Usage: bbc_probe [URL] [--diagnostics] [--intersection-observer] [--adopted-stylesheets] [--measure] [--await-reduction] [--seconds N] [--navigate URL] [--user-script PATH] [--screenshot PATH]"
             ),
         }
     }
@@ -109,6 +120,9 @@ fn main() -> anyhow::Result<()> {
     let mut preferences = servo::Preferences::default();
     if intersection_observer {
         preferences.dom_intersection_observer_enabled = true;
+    }
+    if adopted_stylesheets {
+        preferences.dom_adoptedstylesheet_enabled = true;
     }
     let servo = ServoBuilder::default()
         .preferences(preferences)
@@ -145,9 +159,49 @@ fn main() -> anyhow::Result<()> {
     let mut inspect_at = Duration::from_secs(20);
     let mut navigated = false;
     let mut reloaded = false;
-    while started.elapsed() < Duration::from_secs(seconds) {
+    let mut heartbeat_at = Duration::from_secs(1);
+    let mut longest_turn = Duration::ZERO;
+    let reduction_done = Rc::new(Cell::new(false));
+    let reduction_pending = Rc::new(Cell::new(false));
+    let mut reduction_at = Duration::from_millis(100);
+    while started.elapsed() < Duration::from_secs(seconds) && !reduction_done.get() {
+        let turn = Instant::now();
         servo.spin_event_loop();
         view.paint();
+        longest_turn = longest_turn.max(turn.elapsed());
+        if await_reduction
+            && started.elapsed() >= reduction_at
+            && !reduction_pending.get()
+            && !reduction_done.get()
+        {
+            reduction_at = started.elapsed() + Duration::from_millis(100);
+            reduction_pending.set(true);
+            let pending = reduction_pending.clone();
+            let done = reduction_done.clone();
+            view.evaluate_javascript(
+                "JSON.stringify(globalThis.reduction ?? null)",
+                move |result| {
+                    pending.set(false);
+                    if let Ok(servo::JSValue::String(json)) = result
+                        && json != "null"
+                        && !done.replace(true)
+                    {
+                        println!("reduction: {json}");
+                    }
+                },
+            );
+        }
+        if measure && started.elapsed() >= heartbeat_at {
+            heartbeat_at = started.elapsed() + Duration::from_secs(1);
+            let requested = Instant::now();
+            view.evaluate_javascript("0", move |result| {
+                println!(
+                    "heartbeat: ms={} ok={}",
+                    requested.elapsed().as_millis(),
+                    result.is_ok()
+                );
+            });
+        }
         if !navigated
             && started.elapsed() > Duration::from_secs(30)
             && let Some(url) = &navigate
@@ -182,5 +236,12 @@ fn main() -> anyhow::Result<()> {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+    if measure {
+        println!("longest-turn-ms: {}", longest_turn.as_millis());
+    }
+    anyhow::ensure!(
+        !await_reduction || reduction_done.get(),
+        "Reduction did not complete before the diagnostic deadline"
+    );
     Ok(())
 }

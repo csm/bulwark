@@ -43,6 +43,16 @@
       (await (pages/reset-zoom)))
     (check! (try (native/webview-zoom view 0.0) false (catch Exception error true)) "Invalid zoom was accepted")
     (check! (= [{:text "about:blank" :value "about:blank"}] (await (pages/links! view))) "Link query accepted an executable scheme")
+    ;; Duplicate and unsupported anchors must not hide useful links after the first 100.
+    (await (js! view "(()=>{for(let i=0;i<150;i++){const a=document.createElement('a');a.href=i%2?'about:blank':'javascript:alert(1)';document.body.append(a)}const a=document.createElement('a');a.href='https://fixture.test/source';document.body.append(a);return 'ready'})()"))
+    (check! (= [{:text "about:blank" :value "about:blank"}
+                {:text "https://fixture.test/source" :value "https://fixture.test/source"}]
+               (await (pages/links! view))) "Link scan lost a later unique URL or retained duplicates")
+    (await (js! view "(()=>{document.body.innerHTML='<a href=\"about:blank\">Safe</a>';for(let i=0;i<1200;i++){const a=document.createElement('a');a.href='https://fixture.test/'+ 'x'.repeat(200)+'/'+i;document.body.append(a)}return 'ready'})()"))
+    (let [links (await (pages/links! view))]
+      (check! (and (seq links) (<= (count links) 1000)
+                   (<= (count (string/join "\n" (map :value links))) 16384))
+              "Link inventory exceeded its entry or text bound"))
     (check! (= :suspended (await (commands/run-task! (fn [] (pages/open-link-in-new-buffer))))) "Link prompt blocked events")
     (await (submit-prompt! "about:blank"))
     (check! (= id (buffer/selected-id)) "Background link stole selection")

@@ -37,7 +37,9 @@ The echo reports a search limit when the scan stops early.
 The query contains at most 256 characters and enters JavaScript as a quoted string.
 This mechanism does not search across nodes, inside frames, or inside shadow roots.
 
-The link command reads the first 100 anchors and offers their resolved URLs through completion.
+The link command inspects up to 4,096 anchors and offers unique, supported URLs through completion.
+It retains at most 1,000 entries and 16,384 UTF-16 code units of URL text and separators.
+The [compatibility follow-up](phase-2-compatibility-follow-up.md) records this correction and its native regressions.
 Each URL contains at most 2,048 characters.
 The accepted schemes are HTTP, HTTPS, file, and exactly `about:blank`.
 Executable schemes and URLs with whitespace are rejected.

@@ -18,8 +18,14 @@
       (when-not (predicate)
         (check! (< (System/currentTimeMillis) deadline) (str "Timed out: " message))
         (await (timeout 2)) (recur)))))
-(defn ^:async idle! [id]
-  (await (until! (fn [] (empty? (:jobs (get @repl/sessions id)))) "REPL completion")))
+(defn ^:async idle! [id stage]
+  (try
+    (await (until! (fn [] (empty? (:jobs (get @repl/sessions id)))) (str "REPL completion: " stage)))
+    (catch Exception error
+      (throw (ex-info (str "REPL completion: " stage)
+                     {:buffer id :jobs (:jobs (get @repl/sessions id))
+                      :transcript (repl/tail (:buffer/text (buffer/buffer id)) 512)
+                      :messages (repl/tail (diagnostics/text) 512)} error)))))
 
 (defn ^:async run! []
   (browser/install!)
@@ -36,17 +42,17 @@
     ;; A real UI submission only queues work and leaves ordered events available.
     (await (core/dispatch! {:event/type :ui/input-submitted :revision (:revision @ui/issued)
                             :ui/id input-id :text "(def internal-answer 41) (+ internal-answer 1)"}))
-    (await (idle! id))
+    (await (idle! id "initial result"))
     (check! (= 41 user/internal-answer) "The REPL did not share globals")
     (check! (string/includes? (:buffer/text (buffer/buffer id)) "42") "The REPL lost the result")
     (await (repl/submit! id "(bulwark.commands/defcommand internal-command \"An internal command.\" [] :before)"))
-    (await (idle! id))
+    (await (idle! id "command registration"))
     (check! (= :before (await (commands/invoke! 'user/internal-command))) "The REPL registered a command in another namespace")
     (await (repl/submit! id "(defn internal-command [] :after)"))
-    (await (idle! id))
+    (await (idle! id "command redefinition"))
     (check! (= :after (await (commands/invoke! 'user/internal-command))) "Internal redefinition retained an obsolete command")
     (await (repl/submit! id "(println \"REPL output\") (throw (ex-info \"REPL fixture error\" {}))"))
-    (await (idle! id))
+    (await (idle! id "error reporting"))
     (check! (string/includes? (:buffer/text (buffer/buffer id)) "REPL output") "Printed output was lost")
     (check! (string/includes? (diagnostics/text) "REPL fixture error") "REPL errors missed Messages")
     (await (repl/previous-input))
@@ -71,18 +77,18 @@
     (await (timeout 10))
     (let [other (await (repl/create!))]
       (await (repl/submit! other "(+ user/internal-answer 9)"))
-      (await (idle! other))
+      (await (idle! other "peer result"))
       (check! (string/includes? (:buffer/text (buffer/buffer other)) "50") "Another owner was blocked")
       (await (buffer/select! id))
       (await (commands/invoke! 'bulwark.repl/interrupt))
-      (await (idle! id))
+      (await (idle! id "parked interruption"))
       (check! (string/includes? (:buffer/text (buffer/buffer id)) "[Interrupted]") "Parked interrupt failed")
       (check! (nil? (ns-resolve 'user 'should-not-run)) "An interrupted evaluation continued")
       ;; Safepoints let a CPU-bound evaluation yield to its own interrupt command.
       (await (repl/submit! id "(loop [] (recur))"))
       (await (timeout 20))
       (repl/interrupt)
-      (await (idle! id))
+      (await (idle! id "busy interruption"))
       ;; Capacity includes queued and parked jobs. An interrupted queued job has no effects.
       (doseq [n (range 7)] (await (repl/submit! id "(await (clojure.core.async/timeout 60000))")))
       (await (repl/submit! id "(def queued-should-not-run true)"))
@@ -98,17 +104,18 @@
       ;; Namespace changes reach the next queued evaluation in the same buffer.
       (await (repl/submit! other "(ns user.internal-test) (def local-answer 7)"))
       (await (repl/submit! other "(+ local-answer 1)"))
-      (await (idle! other))
+      (await (idle! other "queued namespace change"))
       (check! (= "user.internal-test" (:namespace (get @repl/sessions other))) "REPL namespace was lost")
       (check! (string/includes? (:buffer/text (buffer/buffer other)) "8\n") "Queued namespace change was lost")
       (await (repl/submit! other "(ns user.parked-repl) (await (clojure.core.async/timeout 40)) (bulwark.commands/defcommand parked-command \"A parked command.\" [] :parked)"))
       (await (timeout 10))
       (check! (= caller-namespace (ns-name *ns*)) "A parked REPL changed its caller's namespace")
-      (await (idle! other))
+      (await (idle! other "parked namespace change"))
       (check! (= :parked (await (commands/invoke! 'user.parked-repl/parked-command))) "A resumed REPL expanded macros in another namespace")
       (check! (= caller-namespace (ns-name *ns*)) "A finished REPL changed its caller's namespace")
-      (await (repl/submit! other "(apply str (repeat 20000 \"x\"))"))
-      (await (idle! other))
+      ;; Exercise the output bound without realizing 20,000 lazy arguments on small hosts.
+      (await (repl/submit! other "(apply str (repeat 100 (apply str (repeat 200 \"x\"))))"))
+      (await (idle! other "bounded output"))
       (check! (<= (count (:buffer/text (buffer/buffer other))) repl/output-limit) "Transcript retention failed")
       (check! (string/includes? (:buffer/text (buffer/buffer other)) "[Output truncated]") "Output overflow was silent")
       (await (buffer/kill! other))))

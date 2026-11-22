@@ -90,12 +90,23 @@
 
 (defn ^:async links! [view]
   (let [text (browser/value! (await (native/eval-js view
-      "Array.from(document.querySelectorAll('a[href]')).slice(0,100).map(a=>a.href).filter(h=>h.length<=2048&&!/[\\r\\n]/.test(h)).join('\\n')")))]
+      "(()=>{
+         const anchors=document.querySelectorAll('a[href]'),seen=new Set(),links=[];
+         let characters=0;
+         for(let i=0;i<Math.min(anchors.length,4096)&&links.length<1000;i++){
+           const href=anchors[i].href;
+           if(href.length>2048||/\\s/.test(href)||! /^(https?:\\/\\/|file:\\/\\/\\/|about:blank$)/.test(href)||seen.has(href))continue;
+           seen.add(href);
+           if(characters+href.length+1>16384)continue;
+           characters+=href.length+1;links.push(href);
+         }
+         return links.join('\\n');
+       })()")))]
     (mapv (fn [url] {:text url :value url})
           (distinct (filter link-url? (string/split text #"\n"))))))
 
 (defcommand ^:async open-link-in-new-buffer
-  "Selects one of the first 100 page links and opens it in a retained background buffer."
+  "Selects among up to 1000 unique links in a bounded page scan and opens a retained background buffer."
   []
   (let [entries (await (links! (browser/current-view!)))
         reply (await (minibuffer/read! {:prompt "Link in new buffer: "

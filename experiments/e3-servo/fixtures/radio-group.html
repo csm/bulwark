@@ -1,0 +1,25 @@
+<!doctype html><meta charset="utf-8"><title>Radio group insertion reduction</title>
+<h1>Radio group insertion reduction</h1><p id="result">Waiting</p><div id="filler"></div><form id="radios"></form>
+<script>
+const parameters=new URLSearchParams(location.search);
+function count(name,fallback,maximum){
+  const value=parameters.has(name)?Number(parameters.get(name)):fallback;
+  return Number.isInteger(value)&&value>=0&&value<=maximum?value:fallback;
+}
+const nodes=count('nodes',10000,50000),radios=count('radios',40,80);
+const type=parameters.get('type')==='text'?'text':'radio';
+const tree=document.createDocumentFragment();
+for(let i=0;i<nodes;i++){const node=document.createElement('span');tree.appendChild(node)}
+document.querySelector('#filler').appendChild(tree);
+setTimeout(()=>{
+  console.warn('radio-insertion-start '+JSON.stringify({nodes,radios,type,observer:typeof IntersectionObserver}));
+  const start=performance.now(),form=document.querySelector('#radios');
+  for(let i=0;i<radios;i++){
+    const input=document.createElement('input');input.type=type;input.name='amount';input.value=String(i);
+    form.appendChild(input);
+  }
+  window.reduction={nodes,radios,type,milliseconds:performance.now()-start};
+  document.querySelector('#result').textContent=JSON.stringify(window.reduction);
+  console.warn('radio-insertion-end '+JSON.stringify(window.reduction));
+},3000);
+</script>

@@ -1,0 +1,77 @@
+<!doctype html><meta charset="utf-8"><title>Radio validity regressions</title>
+<h1>Radio validity regressions</h1><pre id="result">Running</pre><div id="cases"></div>
+<script>
+const checks=[];
+const host=document.querySelector('#cases');
+function check(name,actual,expected){checks.push({name,actual,expected,passed:actual===expected})}
+function input(parent,type,name,required=false,checked=false){
+  const node=document.createElement('input');node.type=type;
+  if(name!==null)node.name=name;
+  node.required=required;node.checked=checked;parent.appendChild(node);return node;
+}
+function form(id){const node=document.createElement('form');node.id=id;host.appendChild(node);return node}
+function reset(){host.replaceChildren()}
+const start=performance.now();
+for(let round=0;round<10;round++){
+  reset();
+  let a=input(host,'radio','amount',true),b=input(host,'radio','amount');
+  check('required member missing',a.validity.valueMissing,true);
+  check('optional peer shares requiredness',b.validity.valueMissing,true);
+  b.checked=true;
+  check('checked peer satisfies group',a.validity.valueMissing,false);
+  check('checked peer valid',b.validity.valueMissing,false);
+  b.checked=false;
+  check('unchecking restores missing',a.validity.valueMissing,true);
+  a.required=false;
+  check('optional group valid',a.validity.valueMissing,false);
+  reset();
+  a=input(host,'radio','one',true);b=input(host,'radio','two',false,true);
+  check('different names remain separate',a.validity.valueMissing,true);
+  reset();
+  const first=form('first'),second=form('second');
+  a=input(first,'radio','amount',true);b=input(second,'radio','amount',false,true);
+  check('different forms remain separate',a.validity.valueMissing,true);
+  const mate=input(first,'radio','amount',false,true);
+  check('same form peer satisfies group',a.validity.valueMissing,false);
+  check('other form stays valid',b.validity.valueMissing,false);
+  reset();
+  a=input(host,'radio','external',true);
+  const remote=input(host,'radio','external',false,true);
+  check('formless group shares checkedness',a.validity.valueMissing,false);
+  reset();
+  a=input(host,'radio',null,true);b=input(host,'radio',null,false,true);
+  check('unnamed radio is independent',a.validity.valueMissing,true);
+  reset();
+  a=input(host,'radio','',true);b=input(host,'radio','',false,true);
+  check('empty-name radio is independent',a.validity.valueMissing,true);
+  reset();
+  a=input(host,'radio','isolated',true);
+  const detached=document.createDocumentFragment();
+  b=input(detached,'radio','isolated',false,true);
+  check('detached tree stays separate',a.validity.valueMissing,true);
+  reset();
+  a=input(host,'radio','shadowed',true);
+  const wrapper=document.createElement('div');host.appendChild(wrapper);
+  const shadow=wrapper.attachShadow({mode:'open'});
+  b=input(shadow,'radio','shadowed',false,true);
+  check('shadow tree stays separate',a.validity.valueMissing,true);
+  reset();
+  const associated=form('associated');
+  a=input(associated,'radio','associated',true);
+  b=document.createElement('input');b.type='radio';b.name='associated';b.setAttribute('form','associated');b.checked=true;host.appendChild(b);
+  check('explicit form owner joins group',a.validity.valueMissing,false);
+  reset();
+  a=input(host,'checkbox','check',true);
+  check('required checkbox missing',a.validity.valueMissing,true);
+  a.checked=true;check('checked checkbox valid',a.validity.valueMissing,false);
+  a=input(host,'file','file',true);check('required empty file input missing',a.validity.valueMissing,true);
+  a=input(host,'text','text',true);check('required text missing',a.validity.valueMissing,true);
+  a.value='kept';check('nonempty text valid',a.validity.valueMissing,false);
+  // Exercise collection pressure between independent rounds of DOM mutations.
+  const allocation=Array.from({length:20000},(_,i)=>({index:i,text:'validation-'+i}));
+  check('allocation retained',allocation[19999].index,19999);
+}
+window.reduction={passed:checks.every(c=>c.passed),checks:checks.length,failures:checks.filter(c=>!c.passed),milliseconds:performance.now()-start};
+document.querySelector('#result').textContent=JSON.stringify(window.reduction,null,2);
+console.warn('radio-validity-result '+JSON.stringify(window.reduction));
+</script>

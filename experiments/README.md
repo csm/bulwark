@@ -237,6 +237,16 @@ E7's `spawn_pending` integration remains the separate-thread path for the app.
 
 ## E3: Servo window and input
 
+The [Wikipedia pause investigation](../docs/phase-2-wikipedia-investigation.md) adds repeated live comparisons and a local radio-validation reduction.
+The comparison runner can capture a macOS thread sample after a JavaScript reply gap.
+The report records the commands, timing limits, and distinction between this bottleneck and observer computation.
+
+The [engine evaluation](../docs/phase-2-engine-optimization.md) compares an isolated upstream radio-iterator backport in debug and release.
+`prepare_radio_optimization.py` creates separate harnesses without modifying the product pin or registry source.
+`evaluate_radio_optimization.py` compares insertion timing and preserves existing validity failures.
+`compare_radio_banner.py` compares the same named live fundraising banner through Wikimedia's documented preview parameter.
+The report records the measured gains, correctness limits, reproduction commands, and raw evidence locations.
+
 ```sh
 cargo build --locked -p bulwark-experiment-e3 --features servo
 cargo run --locked -p bulwark-experiment-e3 --features servo -- https://servo.org

@@ -2,34 +2,58 @@
 
 ## Current state
 
-P2.8 acceptance evidence is recorded in the [Phase 2 review](phase-2-acceptance.md), 2026-11-14.
-The source baseline is `d628a87`, after P2.7 at `9835f77`.
-The P2.8 code checkpoint is `689ba2d` on `codex/phase-2-acceptance`.
-That checkpoint added a native presentation diagnostic and a reproducible release startup runner.
-Phases 0 and 1 remain accepted. Phase 2 remains open.
+The 2026-11-21 [compatibility follow-up](phase-2-compatibility-follow-up.md) started from `1ef0723`, then equal to fetched `origin/main`.
+This checkpoint integrates the work from `codex/phase-2-compatibility` into `main`.
+Phases 0 and 1 retain owner acceptance. Phase 2 remains open. Phase 3 has not started.
 
-B2 does not pass under the agreed five-site scope.
-BBC News and a direct article URL produce a client-side exception page, including after reload.
-GitHub renders repository and source pages, but a normal source-link click did not navigate.
-Address entry loads the file. Its anchors fall outside the default selector's first 100 links.
-Wikipedia, Hacker News, and MDN passed their named tasks.
-No site substitution or scope exception is accepted by the report.
+The Linux REPL-completion failure reproduced in the output-truncation fixture.
+A chunked fixture produces the same 20,000-character result and passes with the original five-second deadline.
+The production scheduler and bounds did not change. Failures now include stage labels and bounded diagnostic context.
+The corrected REPL check passed in both Linux evaluator modes.
+Full portable runs on the small Linux host still failed separate browser-history, introspection, and embedded-shell deadlines.
+A passing current Linux CI run remains required.
 
-The [BBC investigation](phase-2-bbc-investigation.md) identified the missing Servo `webcrypto` build feature in Bulwark.
-The correction exposes `crypto.getRandomValues` and restores BBC page content in native diagnostic runs.
-The original BBC URLs also support programmatic scrolling after the correction.
-The physical follow-up at `833ad5f` still failed after user-approved consent: article click and reload produced a client-side exception.
-WebCrypto remained available. The subsequent controlled probe identified an unguarded IntersectionObserver constructor in BBC's advertising placeholder React effect.
-The default Servo preference reproduces the fatal article error. Enabling the preference preserves article content through navigation and reload.
-This is diagnostic evidence. The product preference remains disabled pending compatibility and performance evaluation.
-The [CI run at `833ad5f`](https://github.com/csm/bulwark/actions/runs/43680513338) failed Linux REPL completion.
-Its Servo, macOS runtime, and standalone AOT jobs passed.
+The IntersectionObserver comparison covers the five required sites and both upstream performance URLs.
+The [Wikipedia investigation](phase-2-wikipedia-investigation.md) reproduced a 34-second reply delay that later recovered.
+A thread sample locates the pause in timer-driven radio-input validation, alongside a fundraising banner.
+A local reduction reproduces the same expensive path with IntersectionObserver disabled and enabled.
+This separates the measured bottleneck from observer intersection computation. The product preference remains disabled.
+The [engine evaluation](phase-2-engine-optimization.md) measures an isolated adaptation of upstream Servo PR #49855.
+Median radio insertion improves by 55.6–56.1% in debug and 32.8–38.8% in release.
+Release insertion remains 91–94 ms; both engines retain the same 20 existing validity failures across 220 checks.
+Both release engines completed the same named fundraising-banner preview with all 44 heartbeats and three inspections.
+That single live pair does not establish a stable speedup or cover every banner variant.
+The product engine pin and preferences remain unchanged.
+The earlier [BBC investigation](phase-2-bbc-investigation.md) identifies the missing WebCrypto feature and the later fatal advertising-placeholder observer call.
+WebCrypto remains enabled. The consented BBC physical task still fails under the default observer preference.
 
+The [physical follow-up](phase-2-physical-follow-up.md) passed active-window GitHub source navigation, Back, Forward, and link completion.
+Initial clicks before keyboard activation still left the repository unchanged.
+The product retains actual GitHub loading placeholders after document completion.
+A controlled probe clears all 83 placeholders only after enabling adopted stylesheets and IntersectionObserver.
+Adopted stylesheets alone expose the next missing-IntersectionObserver exception. Product preferences remain unchanged.
+The link selector now inspects up to 4,096 anchors, deduplicates URLs, and bounds entries and output text.
+Its previous 100-anchor cutoff no longer excludes Cargo.toml solely because of its position.
+After unlocking the Mac, the owner requested physical checks.
+REPL truncation, history, interruption, page focus restoration, mixed panes, owned-job close, and native shutdown passed.
+
+Clojurust issues #500 and #501 are closed upstream. The product pin remains `540e4218` with both AOT workarounds.
 Rust owns native mechanisms and bounded transport. Clojure owns commands, state, bindings, and browser policy.
-The native policy review found no browser policy in the eleven Phase 2 native additions.
-The installed inventory contains 25 documented natives.
-Only one webview is visible per native window. Text and REPL panes support splits.
-Clojurust remains pinned to `540e4218`, with the two earlier AOT workarounds.
+The installed inventory retains 25 documented natives. Only one webview is visible per native window.
+Text and REPL panes support splits.
+
+## Current checks
+
+The portable macOS workspace passed all 58 tests. Native unit tests and the Servo contract passed.
+The final browsing fixture passed both evaluator modes, including the new link bounds.
+A fresh native GitHub query included Cargo.toml among 147 unique entries.
+Formatting, whitespace, portable Clippy, native Clippy, and Python compilation passed.
+Both full native process suites passed all 16 cases on the unlocked desktop, including minibuffer focus restoration.
+The observer diagnostic now retains repeated runs and optional thread samples. Its local reduction and controls passed the diagnostic checks.
+The isolated radio optimization passed the focused equivalence comparison, preparation checks, and final probe Clippy.
+The [engine report](phase-2-engine-optimization.md) records the release timings and live banner coverage.
+Current main CI remains unverified. A passing Linux CI run remains required.
+The [follow-up report](phase-2-compatibility-follow-up.md) retains the additional Linux failures and all limits.
 
 ## P2.8 evidence
 
@@ -65,16 +89,20 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Evaluate the IntersectionObserver preference against the required site tasks and known performance limitations.
-   Repeat physical BBC acceptance after a product correction and investigate the remaining GitHub navigation limits.
-   The BBC report records the reproduced advertising-placeholder exception, failed physical follow-up, and dependency constraint.
-   Diagnose the latest Linux `Timed out: REPL completion` CI failure.
-2. Repeat the required checks after compatibility corrections.
+1. Use the [engine evaluation](phase-2-engine-optimization.md) to choose the upstream engine correction path.
+   The tested iterator change reduces overhead but retains nested document scans and existing validity failures.
+   Evaluate product preferences and repeat physical BBC acceptance under the existing five-site scope.
+2. Repeat current Linux CI after the REPL fixture correction.
+   Keep the additional small-host deadline failures visible until their causes are resolved.
+3. Evaluate the GitHub correction with both adopted stylesheets and IntersectionObserver enabled.
+   The standalone probe clears all 83 placeholders, but broader compatibility remains required before a product change.
+   Keep initial window activation separate from the successful active-window source workflow.
+4. Repeat the required checks after compatibility corrections.
    Obtain owner acceptance only after the required criteria pass. Phase 3 has not started.
-3. Resolve the Option-as-Alt policy with the owner before changing key translation.
+5. Resolve the Option-as-Alt policy with the owner before changing key translation.
    `C-c x` remains the palette fallback.
-4. Track Clojurust issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
-   Remove the two AOT workarounds only after a fixed dependency pin passes their regressions.
+6. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
+   Remove the two AOT workarounds only after that pin passes their regressions.
 
 E5 remains deferred beyond Phase 2 under the accepted single-visible-webview scope.
 IME, clipboard, display-scale transitions, and interactive Linux behavior remain unverified.
