@@ -3,7 +3,8 @@
 Date: 2026-11-22. This change follows the owner's keyboard policy decision.
 macOS preserves native Option character input by default. Other platforms retain Alt as Meta.
 The small Linux investigation is deferred under the owner's desktop focus. Its failures remain unresolved.
-Phase 2 remains open. Phase 3 has not started.
+The owner accepted Phase 2 on 2026-11-22 after the keyboard checks and exit interview.
+The [acceptance review](phase-2-acceptance.md#owner-acceptance-2026-11-22) records the scope and retained limits. Phase 3 implementation has not started.
 
 ## Configuration
 

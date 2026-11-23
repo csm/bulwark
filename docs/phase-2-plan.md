@@ -1,7 +1,7 @@
 # Phase 2 implementation plan
 
-Status: in progress with owner-confirmed scope, 2026-11-11.
-Phase 0 and Phase 1 are complete and accepted by the owner.
+Status: complete and accepted by the owner, 2026-11-22. Scope confirmed on 2026-11-11.
+Phases 0, 1, and 2 are complete and accepted by the owner.
 This document expands Phase 2 of the [development plan](development-plan.md#phase-2-programmable-browser-shell).
 The [vision](bulwark.md) remains authoritative.
 
@@ -179,7 +179,7 @@ Exit evidence: complete native introspection, missing and broken init cases, rep
 ### P2.7: Complete default browsing and the internal REPL
 
 Implemented in the [P2.7 checkpoint](phase-2-browsing.md), with passing main CI at `9835f77`, 2026-11-14.
-The automated checkpoint is closed. P2.8 acceptance remains open.
+The automated checkpoint is closed. At that checkpoint, P2.8 acceptance remained open.
 
 1. Move default policy into `clj/bulwark/default/` through the same public APIs available to init files.
 2. Add new buffer, close buffer, switch buffer, back, forward, reload, and address commands.
@@ -215,7 +215,11 @@ The owner deferred the separate small-host deadline investigation to focus on de
 The [P2.8 CI run](https://github.com/csm/bulwark/actions/runs/43670796887) passed all four jobs at `689ba2d`.
 The [final keyboard CI](https://github.com/csm/bulwark/actions/runs/45107213807) passed all four jobs at `cf3e6be`.
 No required keyboard validation remains.
-The owner requested the exit interview after the final keyboard checks. Owner acceptance remains outstanding. Phase 2 is not complete.
+The owner completed the exit interview after the final keyboard checks and accepted Phase 2 on 2026-11-22.
+The [acceptance review](phase-2-acceptance.md#owner-acceptance-2026-11-22) records the decision, scope, deferrals, and input limits.
+Phase 2 is complete. Phase 3 planning is next.
+
+P2.8 used the following exit procedure:
 
 1. Run the acceptance matrix below from a clean profile.
 2. Record release startup measurements on the development laptop.

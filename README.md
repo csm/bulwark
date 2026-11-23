@@ -4,7 +4,7 @@ Bulwark is a programmable browser built with Rust, Servo, and Clojurust.
 Phase 0 is complete. The native host and runtime experiments now have an accepted architecture.
 Phase 1 acceptance is complete. The product has a bounded engine/runtime bridge, a native Servo window, and an egui echo area.
 The [acceptance review](docs/phase-1-acceptance.md) records passing CI and physical macOS checks.
-Phase 2 is in progress. The [mechanism checkpoint](docs/phase-2-mechanisms.md) adds retained webviews and a standalone AOT test path.
+Phase 2 is complete and accepted by the owner. The [mechanism checkpoint](docs/phase-2-mechanisms.md) adds retained webviews and standalone AOT tests.
 The [buffer checkpoint](docs/phase-2-buffers.md) adds the Clojure buffer registry, lifecycle hooks, and buffer commands.
 The [window checkpoint](docs/phase-2-windows.md) adds mixed panes, modelines, and bounded UI descriptions.
 The [mode checkpoint](docs/phase-2-modes.md) adds mode definitions and contextual keymaps.
@@ -13,7 +13,8 @@ The [introspection checkpoint](docs/phase-2-introspection.md) adds help buffers,
 The [browsing checkpoint](docs/phase-2-browsing.md) adds default configuration modules, find, zoom, popup support, and an internal REPL.
 The [P2.5/P2.6 validation report](docs/phase-2-shell-acceptance.md) records passing Linux CI and macOS physical checks.
 The [P2.8 acceptance review](docs/phase-2-acceptance.md) records physical browsing and REPL checks, release startup samples, and the native policy review.
-Phase 2 remains open for owner acceptance. The owner deferred small-host investigation to focus on desktop behavior.
+The owner accepted Phase 2 on 2026-11-22 with its documented scope and input limits.
+The small Linux investigation remains deferred. Phase 3 planning is next.
 The [Option setting](docs/phase-2-option-mode.md) preserves Mac character input by default and offers live switching to Meta.
 The [physical follow-up](docs/phase-2-physical-follow-up.md) records passing active-window GitHub navigation and the remaining compatibility limits.
 The [preference correction](docs/phase-2-preference-evaluation.md) passes the consented BBC article task and clears GitHub placeholders in the release comparison.

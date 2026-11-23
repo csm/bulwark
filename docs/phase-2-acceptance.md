@@ -1,10 +1,10 @@
 # Phase 2 acceptance review
 
-Initial review: 2026-11-14. Exit interview preparation: 2026-11-22. Phase 2 remains open for owner acceptance.
+Status: complete and accepted by the owner, 2026-11-22. Initial review: 2026-11-14.
 The latest named five-site tasks passed after the compatibility corrections.
 The original BBC failure and GitHub workaround remain historical evidence in this report.
 No site substitution or scope exception is accepted by this report.
-Owner acceptance remains outstanding.
+The owner accepted the current desktop scope, Linux deferral, and documented input limits.
 
 ## Current exit checkpoint
 
@@ -16,7 +16,7 @@ Local checks passed 61 portable tests, 20 native unit tests, the Servo contract,
 Both software Servo and native nREPL modes passed. Formatting and portable/native Clippy passed.
 The [final keyboard CI](https://github.com/csm/bulwark/actions/runs/45107213807) passed all four jobs at `cf3e6be`.
 Linux and macOS runtime checks passed. Linux Servo/native checks and standalone AOT also passed.
-No required keyboard validation remains before the owner interview.
+No required keyboard validation remained at the owner interview.
 
 The five-site physical repeat used product source `4d406d6` before the keyboard changes.
 The keyboard follow-up used local page, prompt, and REPL tasks. It did not repeat all five live-site workflows.
@@ -29,7 +29,21 @@ Long synthetic input bursts can reach the existing fatal event-overflow contract
 E5 remains deferred under the accepted single-visible-webview scope.
 The two Clojurust AOT workarounds remain until a fixed pin passes their regressions.
 
-The owner requested the exit interview. This checkpoint records evidence and accepted deferrals. Owner acceptance remains pending.
+## Owner acceptance, 2026-11-22
+
+During the exit interview, the owner reported:
+
+> There are no blockers according to my experience with the app
+
+The acceptance question retained the single-visible-webview scope, the Linux deferral, and the documented input limits.
+The owner then accepted Phase 2:
+
+> Yes, complete from my perspective
+
+Phase 2 is complete at product checkpoint `cf3e6be` with the evidence and limits recorded in this review.
+This acceptance does not claim simultaneous live web splits or support for the unverified input cases.
+The small Linux failures and two AOT workarounds remain follow-up work.
+Phase 3 implementation has not started. The next step is Phase 3 planning and the E4 DOM-channel evaluation.
 
 ## Earlier acceptance evidence
 
@@ -54,7 +68,7 @@ Linux passed runtime, Servo, and standalone AOT checks. The macOS runtime job al
 The later [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks, live configuration, introspection, and REPL checks.
 All local automated suites passed again. Startup had a 0.230-second median, with a 2.458-second first sample retained.
 The required five-site scope remains unchanged. The later keyboard follow-up resolved Option-as-Alt and Escape behavior.
-The owner deferred the small-host investigation. Owner acceptance remains open.
+The owner deferred the small-host investigation and accepted Phase 2 after the keyboard follow-up.
 The [small Linux follow-up](phase-2-small-linux-follow-up.md) restored connectivity and passed browser history and the corrected REPL regression in both modes.
 Embedded-shell startup and TreeWalk introspection still failed their existing deadlines. The complete small-host portable suite did not pass.
 
@@ -327,8 +341,8 @@ P2.8 now has physical macOS workflows, live-site results, release measurements, 
 At the original review, BBC failed and GitHub retained navigation limits. Those failures prevented closure under the agreed site scope.
 The later compatibility corrections and physical repeat passed all five required workflows without a site substitution.
 The keyboard follow-up resolved the owner's Option and Escape decisions.
-The owner deferred the separate small-host investigation and requested the exit interview.
-Owner acceptance follows the required passing criteria. This report does not supply that acceptance.
+The owner deferred the separate small-host investigation and completed the exit interview on 2026-11-22.
+The owner accepted Phase 2 with the documented scope and limits. Phase 2 is complete.
 
 E5 remains deferred beyond Phase 2 under the owner's single-visible-webview scope decision.
 It remains necessary before simultaneous live web splits can be claimed.

@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: active v0.19 (2026-11-11), Phases 0 and 1 complete and accepted. Phase 2 is in progress.
+Status: active v0.20 (2026-11-22). Phases 0, 1, and 2 are complete and accepted. Phase 3 implementation has not started.
 Phase 1 includes the foundation, Servo adapter, native window, and egui echo area.
 Clojure commands, keymaps, hooks, title history, product nREPL, and key interception are implemented.
 The [acceptance review](phase-1-acceptance.md) records passing physical checks, CI, and the Phase 1 exit disposition.
@@ -560,7 +560,8 @@ The [P2.7 checkpoint](phase-2-browsing.md) adds default configuration modules, p
 The [P2.8 acceptance review](phase-2-acceptance.md) records physical workflows, release startup samples, and the native policy review.
 The latest [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks after the compatibility corrections.
 The [keyboard follow-up](phase-2-option-mode.md) implements the owner's Option and Escape decisions.
-Phase 2 remains open for owner acceptance. The owner deferred the small-host investigation to focus on desktop behavior.
+The owner accepted Phase 2 on 2026-11-22 with the documented desktop scope and input limits.
+The small Linux investigation remains deferred. Phase 3 planning is next.
 The [mechanism checkpoint](phase-2-mechanisms.md) begins P2.1 with retained webviews and standalone AOT assertions.
 The [buffer checkpoint](phase-2-buffers.md) implements P2.2 with the buffer registry and explicit lifecycles.
 The [mode checkpoint](phase-2-modes.md) implements P2.4 with mode definitions and contextual keymaps.
@@ -608,6 +609,9 @@ Acceptance criteria:
   mode precedence runs in CI under the interpreter and under AOT.
 
 ### Phase 3: Deep web integration
+
+Phase 2 is complete and accepted. Phase 3 implementation has not started.
+Planning starts with the E4 DOM-channel evaluation and the contracts needed by the deliverables and criteria below.
 
 Goal: web content as programmable data; custom buffer types; security boundaries for scripts.
 
@@ -756,8 +760,11 @@ The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072)
 The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
 All Phase 1 acceptance criteria now pass.
 
-1. Complete the owner exit interview using the [acceptance review](phase-2-acceptance.md) and final keyboard evidence.
-2. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
+The owner accepted Phase 2 on 2026-11-22. The [acceptance review](phase-2-acceptance.md#owner-acceptance-2026-11-22) records the exit decision and limits.
+
+1. Prepare the Phase 3 implementation plan, starting with E4 and the DOM-channel lifecycle and capability contracts.
+2. Review the Phase 3 scope and acceptance criteria with the owner before implementation.
+3. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
    Its failures remain unresolved. No minimum hardware specification is established.
 
 E5 remains mandatory for simultaneous web content splits.

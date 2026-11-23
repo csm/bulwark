@@ -2,6 +2,12 @@
 
 ## Current state
 
+Phase 2 is complete and accepted by the owner as of 2026-11-22.
+The owner reported no app-experience blockers and accepted the documented desktop scope, Linux deferral, and input limits.
+The [acceptance review](phase-2-acceptance.md#owner-acceptance-2026-11-22) records the exit interview and acceptance at product checkpoint `cf3e6be`.
+The accepted work is on `codex/phase-2-option-mode`. Phase 3 implementation has not started.
+The next work is Phase 3 planning, beginning with E4 and the DOM-channel contracts.
+
 The [Option setting](phase-2-option-mode.md) implements the owner's keyboard policy.
 macOS defaults to native character input. Other platforms retain Alt as Meta.
 `bulwark.keymap/set-option-mode!` accepts `:characters`, `:meta`, and `:platform-default` and applies without restarting.
@@ -15,10 +21,10 @@ The adapter now preserves DOM focus when command prefixes temporarily disable na
 Pending prefixes still reset on focus changes. A burst during unfinished REPL activation crossed that existing reset; the settled-input repeat passed.
 Local portable, native, Servo, nREPL, Clippy, and pinned AOT checks passed.
 The [final keyboard CI](https://github.com/csm/bulwark/actions/runs/45107213807) passed all four jobs at `cf3e6be`.
-No required keyboard validation remains. The owner requested the Phase 2 exit interview.
+No required keyboard validation remains. The owner completed the Phase 2 exit interview and accepted the result.
 The [acceptance review](phase-2-acceptance.md) now consolidates the current evidence, policy review, and retained limits.
 The owner deferred the small Linux investigation to focus on desktop behavior. Its failures remain unresolved; no minimum specification is established.
-Phase 2 remains open. Phase 3 has not started.
+The accepted Phase 2 scope retains these limits and deferrals.
 
 The [small Linux follow-up](phase-2-small-linux-follow-up.md) reconnected after the owner enabled Tailscale.
 A clean isolated worktree at `e4dc233` passed formatting and Clippy, but workspace tests failed two of 55 attempted tests.
@@ -51,7 +57,7 @@ Linux passed runtime, Servo, and standalone AOT checks. The macOS runtime job al
 
 The 2026-11-21 [compatibility follow-up](phase-2-compatibility-follow-up.md) started from `1ef0723`, then equal to fetched `origin/main`.
 That checkpoint integrated the work from `codex/phase-2-compatibility` into `main`.
-Phases 0 and 1 retain owner acceptance. Phase 2 remains open. Phase 3 has not started.
+At that checkpoint, Phases 0 and 1 retained owner acceptance. Phase 2 remained open and Phase 3 had not started.
 
 The Linux REPL-completion failure reproduced in the output-truncation fixture.
 A chunked fixture produces the same 20,000-character result and passes with the original five-second deadline.
@@ -153,11 +159,14 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Complete the owner exit interview against the current acceptance review. Owner acceptance remains pending.
-   Keep inactive-window input and icon rendering limits distinct from the passing named site workflows.
-2. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
+1. Prepare the Phase 3 implementation plan from the accepted Phase 2 checkpoint.
+   Start with E4, navigation-scoped DOM handles, the query/mutation channel, and capability enforcement.
+   Reconcile the accepted branch with current `main` before Phase 3 implementation.
+2. Review the Phase 3 scope and acceptance criteria with the owner before implementation.
+   Preserve the accepted single-visible-webview scope until E5 supplies evidence for simultaneous live web splits.
+3. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
    Retain the failed baseline, passing current browser-history repeat, and earlier timing variation.
-3. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
+4. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
    Remove the two AOT workarounds only after that pin passes their regressions.
 
 E5 remains deferred beyond Phase 2 under the accepted single-visible-webview scope.
