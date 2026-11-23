@@ -9,6 +9,24 @@ use std::cell::Cell;
 use std::sync::Arc;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 
+/// Apply the published native interpretation before the next OS key event.
+pub fn apply_option_mode(window: &winit::window::Window, mode: bulwark_engine::keys::OptionMode) {
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::{OptionAsAlt, WindowExtMacOS};
+        let desired = if mode.uses_meta() {
+            OptionAsAlt::Both
+        } else {
+            OptionAsAlt::None
+        };
+        if window.option_as_alt() != desired {
+            window.set_option_as_alt(desired);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, mode);
+}
+
 /// The page's rectangle inside the window, in physical pixels from the top-left corner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PageRect {
@@ -33,6 +51,7 @@ pub struct Input {
     modifiers: Cell<servo::Modifiers>,
     pointer: PointerRoute,
     keys: KeyboardRoute,
+    composing: bool,
 }
 impl Default for Input {
     fn default() -> Self {
@@ -42,6 +61,7 @@ impl Default for Input {
             modifiers: Cell::new(servo::Modifiers::empty()),
             pointer: PointerRoute::default(),
             keys: KeyboardRoute::default(),
+            composing: false,
         }
     }
 }
@@ -50,16 +70,56 @@ impl Input {
         self.modifiers.set(servo::Modifiers::empty());
         self.pointer = PointerRoute::default();
         self.keys.reset();
+        self.composing = false;
     }
     /// Clear page ownership without forgetting physically held modifiers or cursor position.
     pub fn change_view(&mut self) {
         self.pointer.buttons.clear();
         self.keys.reset();
+        self.composing = false;
     }
     /// A focus change within the frame cancels keys but preserves an ongoing page drag.
     /// The page can receive the press before Clojure selects its window.
     pub fn change_focus(&mut self) {
         self.keys.reset();
+        self.composing = false;
+    }
+    pub fn has_prefix(&self) -> bool {
+        !self.keys.pending.is_empty()
+    }
+    fn forward_ime(&mut self, ime: winit::event::Ime, mut notify: impl FnMut(servo::ImeEvent)) {
+        let mut composition = |state, data| {
+            notify(servo::ImeEvent::Composition(servo::CompositionEvent {
+                state,
+                data,
+            }));
+        };
+        match ime {
+            winit::event::Ime::Preedit(text, _) => {
+                if !self.composing && !text.is_empty() {
+                    composition(servo::CompositionState::Start, String::new());
+                    self.composing = true;
+                }
+                if self.composing {
+                    composition(servo::CompositionState::Update, text);
+                }
+            }
+            winit::event::Ime::Commit(text) => {
+                if !self.composing {
+                    composition(servo::CompositionState::Start, String::new());
+                }
+                composition(servo::CompositionState::End, text);
+                self.composing = false;
+            }
+            winit::event::Ime::Disabled => {
+                if self.composing {
+                    composition(servo::CompositionState::End, String::new());
+                }
+                self.composing = false;
+                notify(servo::ImeEvent::Dismissed);
+            }
+            winit::event::Ime::Enabled => {}
+        }
     }
     pub fn update_modifiers(&self, keys: winit::keyboard::ModifiersState) {
         let mut flags = servo::Modifiers::empty();
@@ -73,6 +133,32 @@ impl Input {
     /// The caller emits an ordered reset event when this returns true.
     pub fn sync_routes(&mut self, routes: Arc<KeyRoutes>, view: Handle) -> bool {
         self.keys.sync(routes, view)
+    }
+    fn owned_key(&self, key: String, pressed: bool) -> KeyInput {
+        let flags = self.modifiers.get();
+        KeyInput {
+            key,
+            control: flags.contains(servo::Modifiers::CONTROL),
+            alt: flags.contains(servo::Modifiers::ALT)
+                && (self.keys.routes.option_mode.uses_meta()
+                    || flags.intersects(servo::Modifiers::CONTROL | servo::Modifiers::META)),
+            shift: flags.contains(servo::Modifiers::SHIFT),
+            meta: flags.contains(servo::Modifiers::META),
+            pressed,
+        }
+    }
+    fn page_key_modifiers(&self, key: &servo::Key) -> servo::Modifiers {
+        let mut flags = self.modifiers.get();
+        // Option has already selected this printable character in the OS layout.
+        // Servo otherwise treats Alt as a shortcut and suppresses text insertion.
+        // Retain Alt for navigation keys and combined Ctrl/Command shortcuts.
+        if !self.keys.routes.option_mode.uses_meta()
+            && matches!(key, servo::Key::Character(_))
+            && !flags.intersects(servo::Modifiers::CONTROL | servo::Modifiers::META)
+        {
+            flags.remove(servo::Modifiers::ALT);
+        }
+        flags
     }
     /// The pointer in physical window coordinates, when it is inside the window.
     pub fn position(&self) -> Option<(f64, f64)> {
@@ -163,6 +249,13 @@ impl Input {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.update_modifiers(modifiers.state());
             }
+            WindowEvent::Ime(ime) => {
+                if view.is_none() {
+                    self.composing = false;
+                    return Routed::default();
+                }
+                self.forward_ime(ime, |event| notify(InputEvent::Ime(event)));
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 let key = match event.logical_key.clone() {
                     winit::keyboard::Key::Character(text) => {
@@ -193,15 +286,8 @@ impl Input {
                     winit::keyboard::KeyLocation::Right => servo::Location::Right,
                     winit::keyboard::KeyLocation::Numpad => servo::Location::Numpad,
                 };
-                let flags = self.modifiers.get();
-                let owned = KeyInput {
-                    key: key.to_string(),
-                    control: flags.contains(servo::Modifiers::CONTROL),
-                    alt: flags.contains(servo::Modifiers::ALT),
-                    shift: flags.contains(servo::Modifiers::SHIFT),
-                    meta: flags.contains(servo::Modifiers::META),
-                    pressed: event.state == ElementState::Pressed,
-                };
+                let owned = self.owned_key(key.to_string(), event.state == ElementState::Pressed);
+                let modifiers = self.page_key_modifiers(&key);
                 let route = self.keys.route(event.physical_key, &owned, false);
                 if route.page {
                     notify(InputEvent::Keyboard(
@@ -210,7 +296,7 @@ impl Input {
                             key,
                             code,
                             location,
-                            self.modifiers.get(),
+                            modifiers,
                             event.repeat,
                             false,
                         ),
@@ -338,6 +424,97 @@ mod tests {
     }
     fn routes() -> Arc<KeyRoutes> {
         Arc::new(KeyRoutes::new(vec![vec!["x".into(), "f".into()]], vec!["Escape".into()]).unwrap())
+    }
+    #[test]
+    fn native_dead_key_commit_ends_one_composition_and_chrome_input_is_not_forwarded() {
+        use servo::CompositionState::{End, Start, Update};
+        use winit::event::Ime;
+        let mut input = Input::default();
+        let mut events = Vec::new();
+        input.forward_ime(Ime::Preedit("´".into(), Some((0, 2))), |e| events.push(e));
+        input.forward_ime(Ime::Preedit(String::new(), None), |e| events.push(e));
+        input.forward_ime(Ime::Commit("é".into()), |e| events.push(e));
+        let composition: Vec<_> = events
+            .into_iter()
+            .map(|e| match e {
+                servo::ImeEvent::Composition(e) => (e.state, e.data),
+                _ => panic!("Unexpected dismissal"),
+            })
+            .collect();
+        assert_eq!(
+            composition,
+            [
+                (Start, "".into()),
+                (Update, "´".into()),
+                (Update, "".into()),
+                (End, "é".into())
+            ]
+        );
+        assert!(!input.composing);
+        let routed = input.forward(
+            None,
+            WindowEvent::Ime(Ime::Preedit("´".into(), None)),
+            None,
+            false,
+        );
+        assert!(routed.key.is_none() && !routed.free && !input.composing);
+    }
+    #[test]
+    fn option_characters_do_not_become_meta_commands_and_other_modifiers_survive() {
+        use bulwark_engine::keys::OptionMode;
+        let mut input = Input::default();
+        let mut routes =
+            KeyRoutes::new(vec![vec!["M-é".into()], vec!["M-x".into()]], vec![]).unwrap();
+        routes.option_mode = OptionMode::Characters;
+        input.sync_routes(Arc::new(routes), Handle(1));
+        input.update_modifiers(winit::keyboard::ModifiersState::ALT);
+        let character = input.owned_key("é".into(), true);
+        assert!(!character.alt);
+        assert_eq!(character.key, "é");
+        assert!(
+            input
+                .keys
+                .route(PhysicalKey::Code(KeyCode::KeyE), &character, false)
+                .page
+        );
+        assert!(input.modifiers.get().contains(servo::Modifiers::ALT));
+        assert!(
+            !input
+                .page_key_modifiers(&servo::Key::Character("é".into()))
+                .contains(servo::Modifiers::ALT)
+        );
+        assert!(
+            input
+                .page_key_modifiers(&servo::Key::Named(servo::NamedKey::ArrowLeft))
+                .contains(servo::Modifiers::ALT)
+        );
+        input.update_modifiers(
+            winit::keyboard::ModifiersState::ALT | winit::keyboard::ModifiersState::CONTROL,
+        );
+        assert!(input.owned_key("x".into(), true).alt);
+        assert!(
+            input
+                .page_key_modifiers(&servo::Key::Character("x".into()))
+                .contains(servo::Modifiers::ALT)
+        );
+
+        let mut routes = KeyRoutes::new(vec![vec!["M-x".into()]], vec![]).unwrap();
+        routes.option_mode = OptionMode::Meta;
+        input.sync_routes(Arc::new(routes), Handle(1));
+        input.update_modifiers(winit::keyboard::ModifiersState::ALT);
+        let command = input.owned_key("x".into(), true);
+        assert!(command.alt);
+        assert!(
+            !input
+                .keys
+                .route(PhysicalKey::Code(KeyCode::KeyX), &command, false)
+                .page
+        );
+        input.update_modifiers(
+            winit::keyboard::ModifiersState::CONTROL | winit::keyboard::ModifiersState::SUPER,
+        );
+        let command = input.owned_key("x".into(), true);
+        assert!(command.control && command.meta && !command.alt);
     }
     #[test]
     fn view_changes_clear_page_ownership_but_preserve_physical_input_state() {

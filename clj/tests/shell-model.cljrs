@@ -29,16 +29,45 @@
 (keymap/unbind-key! "C-x b")
 (check! (nil? (get @keymap/bindings ["C-x" "b"])) "Unbinding failed")
 (let [published (atom [])]
-  (keymap/set-route-publisher! (fn [sequences cancel] (swap! published conj sequences)))
+  (keymap/set-route-publisher! (fn [sequences cancel option-mode] (swap! published conj sequences)))
   (keymap/bind-key! "C-x b" 'bulwark.tests.shell-model/sample)
   (check! (= [["C-x" "b"]] (last @published)) "The injected publisher did not receive reservations")
   (let [before @keymap/bindings]
-    (check! (try (keymap/set-route-publisher! (fn [sequences cancel] (throw (ex-info "Rejected snapshot" {}))))
+    (check! (try (keymap/set-route-publisher! (fn [sequences cancel option-mode] (throw (ex-info "Rejected snapshot" {}))))
                  false (catch Exception error true)) "A rejected publisher was installed")
     (check! (= before @keymap/bindings) "Publisher failure changed bindings"))
   (keymap/unbind-key! "C-x b")
   (check! (= [] (last @published)) "Failed publisher replacement discarded the old publisher")
   (keymap/set-route-publisher! nil))
+(let [before @keymap/option-mode
+      snapshots (atom [])
+      reject (atom false)]
+  (keymap/set-route-publisher!
+    (fn [sequences cancel mode]
+      (when @reject (throw (ex-info "Rejected input mode" {})))
+      (swap! snapshots conj {:sequences sequences :mode mode})))
+  (reset! keymap/pending {:webview 1 :keys ["C-x"]})
+  (keymap/set-option-mode! :characters)
+  (check! (and (= :characters @keymap/option-mode)
+               (= :characters (:mode (last @snapshots)))
+               (empty? (:keys @keymap/pending))) "Input mode did not publish and cancel the prefix")
+  (keymap/bind-key! "C-x b" 'bulwark.tests.shell-model/sample)
+  (check! (= :characters (:mode (last @snapshots))) "Binding update lost the input mode")
+  (keymap/set-option-mode! :meta)
+  (reset! keymap/pending {:webview 1 :keys ["C-x"]})
+  (reset! reject true)
+  (check! (try (keymap/set-option-mode! :characters) false (catch Exception error true))
+          "Refused input mode was accepted")
+  (check! (and (= :meta @keymap/option-mode) (= ["C-x"] (:keys @keymap/pending)))
+          "Refused input mode changed state")
+  (reset! reject false)
+  (let [count-before (count @snapshots)]
+    (check! (try (keymap/set-option-mode! :invalid) false (catch Exception error true))
+            "Unknown input mode was accepted")
+    (check! (= count-before (count @snapshots)) "Invalid input mode reached the publisher"))
+  (keymap/unbind-key! "C-x b")
+  (keymap/set-route-publisher! nil)
+  (keymap/set-option-mode! before))
 (let [before (count (get @hooks/registry :buffer/created))]
   (hooks/add-hook! :buffer/created :sample (fn [event] nil))
   (hooks/add-hook! :buffer/created :sample (fn [event] :replacement))
@@ -340,7 +369,7 @@
     (if (map? result) [(name (:command result)) (:keymap result)] result)))
 (defn row [strokes] (mapv found strokes))
 (keymap/set-route-publisher!
-  (fn [sequences cancel]
+  (fn [sequences cancel option-mode]
     (when @model-reject (throw (ex-info "Rejected snapshot" {})))
     (swap! model-published conj (set sequences))))
 (doseq [keys (conj letters "C-x x" "C-y" "C-z z")]

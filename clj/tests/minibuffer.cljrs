@@ -106,8 +106,8 @@
 (defn ^:async minibuffer! []
   (ui/set-host! recording-host)
   (keymap/set-route-publisher!
-    (fn [sequences cancel]
-      (native/set-key-routes! sequences cancel)
+    (fn [sequences cancel option-mode]
+      (native/set-key-routes! sequences cancel option-mode)
       (swap! routes conj (set sequences))))
   (browser/install!)
   (reset! buffer/last-web-buffer-policy nil)

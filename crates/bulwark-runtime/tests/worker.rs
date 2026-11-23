@@ -333,6 +333,55 @@ fn command_keymap_and_hooks_pass_in_interpreter_and_tiered_modes() {
 }
 
 #[test]
+fn option_mode_publication_is_synchronous_and_survives_legacy_updates() {
+    use bulwark_engine::{Command, Data, keys::OptionMode};
+    for mode in [
+        cljrs_runtime::ExecutionMode::TreeWalk,
+        cljrs_runtime::ExecutionMode::Tiered,
+    ] {
+        let (runtime, mut endpoint) = bridge::channel(Arc::new(|| {}));
+        let source = r#"
+          (defn ^:async option-probe! []
+            (bulwark.keymap/set-option-mode! :characters)
+            (await (bulwark.native/log "characters"))
+            (bulwark.native/set-key-routes! [["M-x"]] ["Escape"])
+            (await (bulwark.native/log "legacy"))
+            (when-not (try (bulwark.native/set-key-routes! [] [] :invalid) false
+                          (catch Exception error true))
+              (throw (ex-info "Invalid native input mode accepted" {})))
+            (await (bulwark.native/log "retained"))
+            (bulwark.keymap/set-option-mode! :meta)
+            (await (bulwark.native/log "meta"))
+            :option-modes-passed)
+          (option-probe!)"#;
+        let mut worker = Worker::spawn_with_mode(runtime, source.into(), mode).unwrap();
+        let mut stages = Vec::new();
+        let control = endpoint.control.clone();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !worker.finished() && Instant::now() < deadline {
+            endpoint.admit(|request| {
+                let Command::Log(stage) = &request.command else {
+                    panic!("Unexpected request")
+                };
+                let expected = if stage == "meta" {
+                    OptionMode::Meta
+                } else {
+                    OptionMode::Characters
+                };
+                assert_eq!(control.key_routes().option_mode, expected);
+                stages.push(stage.clone());
+                request.complete(Ok(Data::Nil));
+            });
+            thread::sleep(Duration::from_millis(1));
+        }
+        endpoint.stop_admission();
+        worker.stop();
+        assert_eq!(wait(&mut worker).unwrap(), ":option-modes-passed");
+        assert_eq!(stages, ["characters", "legacy", "retained", "meta"]);
+    }
+}
+
+#[test]
 fn clojure_browser_commands_and_history_use_the_product_bridge() {
     for mode in [
         cljrs_runtime::ExecutionMode::TreeWalk,

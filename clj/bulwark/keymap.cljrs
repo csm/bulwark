@@ -6,6 +6,9 @@
 (def pending (atom {:webview nil :keys []}))
 (def cancel-strokes #{"C-g" "Escape"})
 (def route-publisher (atom nil))
+;; Use set-option-mode! to publish changes. The platform default preserves native
+;; character input on macOS and uses Meta elsewhere.
+(def option-mode (atom :platform-default))
 
 ;; `bindings` is the global keymap. `keymaps` holds named keymaps, such as one per mode.
 ;; `active` names the keymaps of the current input context. Precedence, highest first:
@@ -67,17 +70,31 @@
 
 (defn publish!
   "Sends a map's sequences to the host's route publisher, when one is installed."
-  [merged]
-  (when-let [publish @route-publisher]
-    (publish (vec (keys merged)) (vec cancel-strokes)))
-  nil)
+  ([merged] (publish! merged @option-mode))
+  ([merged mode]
+   (when-let [publish @route-publisher]
+     (publish (vec (keys merged)) (vec cancel-strokes) mode))
+   nil))
+
+(defn set-option-mode!
+  "Changes Option interpretation without restarting. :characters preserves native
+  character input; :meta uses Option for M- bindings. :platform-default chooses
+  character input on macOS and Meta elsewhere. A refused publication changes nothing."
+  [mode]
+  (when-not (contains? #{:platform-default :characters :meta} mode)
+    (throw (ex-info "Unknown Option mode" {:option-mode mode})))
+  (publish! @effective mode)
+  (reset! option-mode mode)
+  (reset-prefix!)
+  mode)
 
 (defn set-route-publisher!
-  "Installs the host's route publisher. A nil publisher keeps the keymap portable."
+  "Installs a publisher of [sequences cancel-strokes option-mode].
+  A nil publisher keeps the keymap portable."
   [publish]
   (when-not (or (nil? publish) (ifn? publish))
     (throw (ex-info "Route publisher must be callable or nil" {})))
-  (when publish (publish (vec (keys @effective)) (vec cancel-strokes)))
+  (when publish (publish (vec (keys @effective)) (vec cancel-strokes) @option-mode))
   (reset! route-publisher publish)
   nil)
 

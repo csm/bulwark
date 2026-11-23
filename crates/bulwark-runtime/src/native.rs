@@ -312,8 +312,25 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
     // returns, including when a caller immediately starts a synchronous loop.
     let native = NativeFn::with_closure(
         "bulwark.native/set-key-routes!",
-        Arity::Fixed(2),
+        Arity::Variadic { min: 2 },
         move |args| {
+            use bulwark_engine::keys::OptionMode;
+            if args.len() > 3 {
+                return Err(ValueError::Other(
+                    "Expected two or three key routing arguments".into(),
+                ));
+            }
+            let option_mode = match args.get(2) {
+                None => control.key_routes().option_mode,
+                Some(value) if *value == keyword("platform-default") => OptionMode::PlatformDefault,
+                Some(value) if *value == keyword("characters") => OptionMode::Characters,
+                Some(value) if *value == keyword("meta") => OptionMode::Meta,
+                _ => {
+                    return Err(ValueError::Other(
+                        "Option mode must be :platform-default, :characters, or :meta".into(),
+                    ));
+                }
+            };
             let vector = |value: &Value, max: usize| match value {
                 Value::Vector(v) if v.get().count() <= max => {
                     Ok(v.get().iter().cloned().collect::<Vec<_>>())
@@ -345,8 +362,9 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let cancel = cancel.iter().map(stroke).collect::<Result<Vec<_>, _>>()?;
-            let routes = bulwark_engine::keys::KeyRoutes::new(sequences, cancel)
+            let mut routes = bulwark_engine::keys::KeyRoutes::new(sequences, cancel)
                 .map_err(|e| ValueError::Other(e.to_string()))?;
+            routes.option_mode = option_mode;
             control
                 .set_key_routes(routes)
                 .map_err(|e| ValueError::Other(e.to_string()))?;
@@ -563,8 +581,8 @@ fn install_metadata(globals: &GlobalEnv) {
         ),
         (
             "set-key-routes!",
-            "[sequences cancel-strokes]",
-            "Synchronously replaces bounded native key reservations. Returns nil. Refusal throws and retains the previous snapshot.",
+            "[sequences cancel-strokes] [sequences cancel-strokes option-mode]",
+            "Synchronously replaces bounded native key reservations and optional Option mode (:platform-default, :characters, :meta). Two arguments retain the current mode. Returns nil. Refusal retains the previous snapshot.",
             &["input"],
         ),
         (

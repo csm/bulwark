@@ -13,7 +13,8 @@ The [introspection checkpoint](docs/phase-2-introspection.md) adds help buffers,
 The [browsing checkpoint](docs/phase-2-browsing.md) adds default configuration modules, find, zoom, popup support, and an internal REPL.
 The [P2.5/P2.6 validation report](docs/phase-2-shell-acceptance.md) records passing Linux CI and macOS physical checks.
 The [P2.8 acceptance review](docs/phase-2-acceptance.md) records physical browsing and REPL checks, release startup samples, and the native policy review.
-Phase 2 remains open for the Option-as-Alt decision, the small-host deadline investigation, and owner acceptance.
+Phase 2 remains open for Escape behavior in prompts and owner acceptance. The owner deferred small-host investigation to focus on desktop behavior.
+The [Option setting](docs/phase-2-option-mode.md) preserves Mac character input by default and offers live switching to Meta.
 The [physical follow-up](docs/phase-2-physical-follow-up.md) records passing active-window GitHub navigation and the remaining compatibility limits.
 The [preference correction](docs/phase-2-preference-evaluation.md) passes the consented BBC article task and clears GitHub placeholders in the release comparison.
 Its [CI run](https://github.com/csm/bulwark/actions/runs/44986893459) passed all Linux jobs and the macOS runtime job.
@@ -85,6 +86,11 @@ The Cargo workspace pins Servo and Clojurust in [docs/upstream.md](docs/upstream
    `M-x reload-init` reloads the file. Errors appear in `M-x show-messages`.
    `M-x describe-command`, `describe-key`, `describe-variable`, and `apropos` open read-only help buffers.
    [examples/init.cljrs](examples/init.cljrs) supplies a buffer binding and a Wikipedia reader mode.
+
+   On macOS, Option preserves native character input by default. Other platforms retain Alt as Meta.
+   Set `(bulwark.keymap/set-option-mode! :meta)` in your init file or REPL to use Option for `M-` bindings.
+   Use `:characters` for native character input or `:platform-default` to restore the platform default.
+   Changes apply without restarting. `C-c x` opens the command palette in either mode.
 
    `C-s` finds page text. `C-c s` selects the next match.
    `C-c +`, `C-c -`, and `C-c 0` change or reset page zoom.

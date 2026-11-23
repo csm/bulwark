@@ -5,10 +5,29 @@ pub const MAX_SEQUENCES: usize = 256;
 pub const MAX_STROKES: usize = 16;
 pub const MAX_STROKE_BYTES: usize = 128;
 
+/// Native interpretation of the Option/Alt modifier, published with reservations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OptionMode {
+    #[default]
+    PlatformDefault,
+    Characters,
+    Meta,
+}
+impl OptionMode {
+    pub fn uses_meta(self) -> bool {
+        match self {
+            Self::PlatformDefault => !cfg!(target_os = "macos"),
+            Self::Characters => false,
+            Self::Meta => true,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct KeyRoutes {
     sequences: Vec<Vec<String>>,
     cancel: Vec<String>,
+    pub option_mode: OptionMode,
 }
 impl KeyRoutes {
     pub fn new(sequences: Vec<Vec<String>>, cancel: Vec<String>) -> Result<Self, Fault> {
@@ -25,7 +44,11 @@ impl KeyRoutes {
         {
             return Err(Fault::PayloadTooLarge);
         }
-        Ok(Self { sequences, cancel })
+        Ok(Self {
+            sequences,
+            cancel,
+            option_mode: OptionMode::default(),
+        })
     }
 
     /// Advances only on a new non-modifier press. An invalid continuation is
@@ -80,6 +103,15 @@ impl KeyInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn option_modes_preserve_the_macos_character_default() {
+        assert_eq!(
+            OptionMode::default().uses_meta(),
+            !cfg!(target_os = "macos")
+        );
+        assert!(!OptionMode::Characters.uses_meta());
+        assert!(OptionMode::Meta.uses_meta());
+    }
     fn key(text: &str) -> KeyInput {
         KeyInput {
             key: text.into(),

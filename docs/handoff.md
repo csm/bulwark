@@ -2,6 +2,16 @@
 
 ## Current state
 
+The [Option setting](phase-2-option-mode.md) implements the owner's keyboard policy.
+macOS defaults to native character input. Other platforms retain Alt as Meta.
+`bulwark.keymap/set-option-mode!` accepts `:characters`, `:meta`, and `:platform-default` and applies without restarting.
+Physical Mac checks passed Option symbols and acute-accent composition in a page, URL prompt, and internal REPL.
+Meta mode opened the palette. Switching back restored native text in the same open prompt.
+Escape still cancels prompts and prefixes. Ask the owner about Escape behavior inside prompts before implementing a Meta prefix.
+Local portable, native, Servo, nREPL, Clippy, and pinned AOT checks passed.
+The owner deferred the small Linux investigation to focus on desktop behavior. Its failures remain unresolved; no minimum specification is established.
+Phase 2 remains open. Phase 3 has not started.
+
 The [small Linux follow-up](phase-2-small-linux-follow-up.md) reconnected after the owner enabled Tailscale.
 A clean isolated worktree at `e4dc233` passed formatting and Clippy, but workspace tests failed two of 55 attempted tests.
 Browser history and the corrected REPL regression passed both evaluator modes.
@@ -17,7 +27,7 @@ All sixteen local repeat commands passed, including both native suites, four nRE
 Startup had a 0.230-second median across seven samples, including a 2.458-second first sample.
 During that physical repeat, the two-core Linux host was unreachable after two bounded SSH attempts.
 The subsequent small-host follow-up records the restored connection and current test failures.
-Option-as-Alt remains unchanged for the owner discussion. Phase 2 remains open. Phase 3 has not started.
+That repeat retained the earlier Option-as-Alt behavior. The later Option setting supersedes that keyboard policy.
 
 The 2026-11-21 [preference decision](phase-2-preference-evaluation.md) starts from `c8a3bdc`, equal to fetched `origin/main`.
 The product now enables IntersectionObserver and adopted stylesheets on the unchanged Servo `0.7.0` pin.
@@ -72,6 +82,11 @@ The installed inventory retains 25 documented natives. Only one webview is visib
 Text and REPL panes support splits.
 
 ## Current checks
+
+The Option setting passed 60 portable tests, 19 native unit tests, and the Servo contract locally.
+Both 16-case native process suites, both software Servo modes, both native nREPL modes, and standalone pinned AOT passed.
+Portable and native Clippy passed with warnings denied.
+The [Option report](phase-2-option-mode.md) records the physical checks and their limits.
 
 The latest repeat passed all 58 portable tests, all 17 native unit tests, and the Servo contract.
 Both 16-case native process suites, both Servo fixture modes, all four nREPL runs, and standalone pinned AOT passed again.
@@ -129,14 +144,15 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Resolve the Option-as-Alt policy with the owner before changing key translation.
+1. Ask the owner whether Escape inside prompts should cancel immediately or begin a Meta sequence.
+   Implement the chosen behavior and verify prefix cancellation, prompt cancellation, and text ownership.
    `C-c x` remains the palette fallback.
-2. Measure embedded startup stages and isolate introspection retention costs on the connected small Linux host.
-   Retain the failed baseline, passing current browser-history repeat, and earlier timing variation.
-3. Review the exit evidence and obtain owner acceptance only after the required criteria pass.
+2. Review the exit evidence and obtain owner acceptance only after the required criteria pass.
    Keep inactive-window input and icon rendering limits distinct from the passing named site workflows.
+3. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
+   Retain the failed baseline, passing current browser-history repeat, and earlier timing variation.
 4. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
    Remove the two AOT workarounds only after that pin passes their regressions.
 
 E5 remains deferred beyond Phase 2 under the accepted single-visible-webview scope.
-IME, clipboard, display-scale transitions, and interactive Linux behavior remain unverified.
+Basic Mac Option composition passed. Broader IME, clipboard, display-scale transitions, and interactive Linux behavior remain unverified.

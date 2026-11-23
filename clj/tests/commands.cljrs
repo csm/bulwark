@@ -50,7 +50,8 @@
     (doseq [args [[nil []] [[[]] []] [[["x"]] [""]]
                   [[[(apply str (repeat 129 "x"))]] []]
                   [[(vec (repeat 17 "x"))] []]
-                  [(vec (repeat 257 ["x"])) []]]]
+                  [(vec (repeat 257 ["x"])) []]
+                  [[] [] :invalid] [[] [] nil] [[] [] "meta"] [[] [] :meta :extra]]]
       (check! (fails? (fn [] (apply native/set-key-routes! args))) "Invalid native routes accepted"))
     (check! (= before @keymap/bindings) "Invalid publication mutated bindings")
     (check! (fails? (fn [] (keymap/bind-key! (apply str (interpose " " (repeat 17 "q"))) 'sample)))

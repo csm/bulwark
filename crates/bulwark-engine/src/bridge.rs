@@ -40,8 +40,13 @@ impl Control {
         if self.is_stopped() {
             return Err(Fault::ShuttingDown);
         }
+        let mode = routes.option_mode;
         let old = std::mem::replace(&mut *self.0.key_routes.lock().unwrap(), Arc::new(routes));
+        let changed = old.option_mode != mode;
         drop(old);
+        if changed {
+            (self.0.wake)();
+        }
         Ok(())
     }
     pub fn key_routes(&self) -> Arc<crate::keys::KeyRoutes> {

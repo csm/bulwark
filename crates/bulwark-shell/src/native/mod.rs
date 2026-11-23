@@ -48,6 +48,13 @@ struct Surface {
     echo_presented: String,
 }
 impl Surface {
+    fn sync_ime(&self) {
+        self.window.set_ime_allowed(
+            self.focused
+                && (self.page_has_focus() || self.input_has_focus())
+                && !self.input.has_prefix(),
+        );
+    }
     /// Whether the page owns the keyboard: always without a description, else by its focus.
     fn page_has_focus(&self) -> bool {
         self.engine
@@ -159,6 +166,7 @@ impl Surface {
         self.chrome
             .egui_winit
             .handle_platform_output(&self.window, output.platform_output);
+        self.sync_ime();
         let primitives = self
             .chrome
             .egui_ctx
@@ -389,6 +397,7 @@ impl App {
             return;
         };
         let control = endpoint.control.clone();
+        input::apply_option_mode(&surface.window, control.key_routes().option_mode);
         let mut quit = false;
         // The key owner is the visible page and the described focus.
         let owner = |surface: &Surface| {
@@ -417,8 +426,10 @@ impl App {
             _ => surface.engine.handle(request),
         });
         surface.engine.tick();
+        input::apply_option_mode(&surface.window, control.key_routes().option_mode);
         let current_owner = owner(surface);
         if previous_owner != current_owner {
+            surface.window.set_ime_allowed(false);
             if previous_owner.0 != current_owner.0 {
                 surface.input.change_view();
             } else {
@@ -435,6 +446,7 @@ impl App {
         if previous_owner != current_owner || previous_ui != surface.engine.ui_generation() {
             surface.layout();
         }
+        surface.sync_ime();
         if surface.engine.needs_repaint() {
             surface.window.request_redraw();
         }
@@ -536,15 +548,17 @@ impl ApplicationHandler<Wake> for App {
                         }
                     );
                     // Only the focused page receives keys. Any visible page receives the pointer.
+                    let text_input = keyboard || matches!(event, WindowEvent::Ime(_));
                     let target = view
                         .as_ref()
-                        .filter(|_| !keyboard || surface.page_has_focus())
+                        .filter(|_| !text_input || surface.page_has_focus())
                         .map(|(_, view)| view);
                     let covered = surface.chrome_covers_pointer(response.consumed);
                     let routed =
                         surface
                             .input
                             .forward(target, event.clone(), surface.page_rect, covered);
+                    surface.sync_ime();
                     if keyboard
                         && routed.free
                         && surface.input_has_focus()
