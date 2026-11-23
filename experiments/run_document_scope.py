@@ -16,6 +16,8 @@ EXPECTED_MARKERS = {
     "queued-reset-race-and-pipeline-collision", "serialization-reset",
     "delayed-host-delivery", "host-cancellation", "reload", "history", "redirect",
     "failed-load", "cross-view", "subframe-isolation", "close", "injected-crash",
+    "script-created-initial-document", "javascript-url-replacement",
+    "script-thread-failure-and-callback-cleanup",
     "document-scope prototype",
 }
 
@@ -61,8 +63,9 @@ def main():
             "experiments/e4-dom-channel/phase3-agent.js",
             "experiments/prepare_document_scope.py", "experiments/run_document_scope.py",
         )},
-        "scope": ("Experimental engine and host allocation gate. Actual process failure, "
-                  "cancellation of engine work, and replacement audits remain open."),
+        "scope": ("Experimental engine scope, host allocation gate, script-thread unwind, "
+                  "and callback cleanup. Process failure, cancellation of engine work, "
+                  "and remaining replacement audits remain open."),
         "cases": [],
     }
     cases = [(f"document-scope-{i + 1}", ["--document-scope"])

@@ -1,0 +1,235 @@
+{
+  "started_utc": "2026-11-23T07:22:13.558607+00:00",
+  "binary_sha256": "439d5ac2bc3d0d0c2c49ffe2a37319e80632a976c577c1c76455eaac5d9c36ff",
+  "preparation": {
+    "servo": "0.7.0",
+    "patch_sha256": "65e2ab21118b9589918519b085d68e10794089a9aaa2b7c862b1ac23ae27ee03",
+    "source_hashes": {
+      "servo/javascript_evaluator.rs": "61fbbb07f18804b02350f412bd627f782347fcdfcf03e6ade64b75a1d8c9986a",
+      "servo/servo.rs": "4d221039ebb370ce254e2987342bcd3b5535b3e51716386e499041d6d687a073",
+      "servo/webview.rs": "ab37f1503585706e5275d78ddd1f11b76a6c5bed0a1a3b11c03507fa1f117a8a",
+      "servo/webview_delegate.rs": "2347f86f6466b249f31c35787aae8e4976b68da869c4c684383ebe2d1d573a62",
+      "servo-constellation/constellation.rs": "179ba65976d941f83670411bd92dbab603ac7180ffaacd1d81d13ed41e4efb43",
+      "servo-constellation/embedder.rs": "b0cfe993db3ea601adcea19bfca09ccb5ae6ce1c3c4d7b3541751ccefb0d7614",
+      "servo-constellation/tracing.rs": "08ebd810c0ba38496ec30552de7bafdeb41df7c8b9aee32afee434db86a00145",
+      "servo-constellation-traits/from_script_message.rs": "e003e99fa57a3e8fa9dba17bae12c3189ffad30cbbabd51cee960af73dcaf31e",
+      "servo-constellation-traits/lib.rs": "ef2f0a0728c95d747b6dcba47888691b709107a9fd4be83604df55a1d0b8fafa",
+      "servo-embedder-traits/lib.rs": "23cd7e914fad955519cd88cd3ae3c99f055f669ef3db377c21d9c5273ae2dc61",
+      "servo-script/dom/document/document.rs": "01f12b46c59a4a5be54a42a12f9fd35bd68a33efc42dcb619cb672064203ca05",
+      "servo-script/event_loop/script_thread.rs": "ee6a861fd8416f174e425a0ae3d0d049074015fe4cbdb7fd581fc400bf51f162",
+      "servo-script/messaging.rs": "123e066ae57d783c5a83ee61ef6ef52a19cf622514c3a15459dcf9db626dcda8",
+      "servo-script-traits/lib.rs": "8138a73b6e544c3f7113ae0b0563a8c88053d33950885ca6d950212683e01f91"
+    },
+    "product_hashes": {
+      "Cargo.toml": "7b5b598976d830e481ff8fbb7a2695face27633fabb49d5bb41bf4caaf52cf41",
+      "Cargo.lock": "54362b7600ddb3da94785a826689746d72528d76b15e752569486d48aa55f31c"
+    },
+    "candidate": "/Users/csm/.codex-workspaces/worktrees/ios-7c397f80-a2aa-40ae-9bd4-7471f9ac77a6/bulwark/target/phase3-document-lifecycle/candidate",
+    "probe_hashes": {
+      "experiments/e4-dom-channel/Cargo.toml": "a80855e4bc392819ff15eaeb544f0a23579c7346a3a3c4714ab8e08c4224bb65",
+      "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+      "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+      "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+      "experiments/e4-dom-channel/src/document_scope.rs": "02c926e3b3758ef315a84b8bde2f5ffaf3d8981a8da1fbba8bc910587bac81fc",
+      "experiments/e4-dom-channel/src/main.rs": "111ccbcb8159f3217c899dbcddeb197ed311603485f2abdb988eac38b8045951"
+    }
+  },
+  "platform": {
+    "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64"
+  },
+  "source_hashes": {
+    "experiments/e4-dom-channel/Cargo.toml": "a80855e4bc392819ff15eaeb544f0a23579c7346a3a3c4714ab8e08c4224bb65",
+    "experiments/e4-dom-channel/src/document_scope.rs": "02c926e3b3758ef315a84b8bde2f5ffaf3d8981a8da1fbba8bc910587bac81fc",
+    "experiments/e4-dom-channel/src/main.rs": "111ccbcb8159f3217c899dbcddeb197ed311603485f2abdb988eac38b8045951",
+    "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+    "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+    "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+    "experiments/prepare_document_scope.py": "38b340f5fce74f474078db4c02d06d422ba8725ecd683019162b3727136923a2",
+    "experiments/run_document_scope.py": "fd64d56ea7d895044b0bcabcd5428815df8575735c43f4902de5a769edc05ea5"
+  },
+  "scope": "Experimental engine scope, host allocation gate, script-thread unwind, and callback cleanup. Process failure, cancellation of engine work, and remaining replacement audits remain open.",
+  "cases": [
+    {
+      "name": "document-scope-1",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-7c397f80-a2aa-40ae-9bd4-7471f9ac77a6/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 5.34584387531504,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 lifecycle-readiness-and-current-delivery: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 script-created-initial-document: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (revoked before allocation)",
+        "S1 host-cancellation: PASS",
+        "S1 javascript-url-replacement: PASS",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=false)",
+        "S1 redirect: PASS",
+        "S1 failed-load: PASS (error document replaces departed document)",
+        "S1 cross-view: PASS",
+        "S1 subframe-isolation: PASS",
+        "S1 close: PASS",
+        "S1 injected-crash: PASS (constellation panic handler)",
+        "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+        "S1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)"
+      ],
+      "log_sha256": "c732aefc7df03ed1849cdeb36e21cb662d8737135c61fd3290d3962a015961ad",
+      "log": "[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 initial-blank-and-tagged-result: PASS\nS1 lifecycle-readiness-and-current-delivery: PASS\nUNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nS1 same-document-navigation: PASS\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-created-initial-document: PASS\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 held-A-after-B-and-unscoped-control: PASS\nS1 queued-reset-race-and-pipeline-collision: PASS\nS1 serialization-reset: PASS\nS1 delayed-host-delivery: PASS (revoked before allocation)\nS1 host-cancellation: PASS\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 javascript-url-replacement: PASS\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 reload: PASS\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 history: PASS (retained_identity=false)\nLoopback received /redirect\nLoopback received /redirect-final\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 redirect: PASS\n[2026-11-23T07:22:16Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:16Z WARN  script::event_loop::script_thread] Network error: Unsupported scheme\n[2026-11-23T07:22:16Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:22:16Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 failed-load: PASS (error document replaces departed document)\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:16Z WARN  servo_constellation::browsingcontext] BrowsingContext (6,2) iterated after closure.\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:16Z WARN  script::event_loop::script_thread] SetThrottled sent to nonexistent pipeline\n[2026-11-23T07:22:16Z WARN  script::event_loop::script_thread] change of activity sent to nonexistent pipeline\nS1 cross-view: PASS\nS1 subframe-isolation: PASS\nS1 close: PASS\nS1 injected-crash: PASS (constellation panic handler)\n[2026-11-23T07:22:16Z WARN  servo_constellation::constellation] creating replacement pipeline for crash page\n[2026-11-23T07:22:16Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:16Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:22:16Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:16Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:16Z WARN  servo_constellation::constellation] Pipeline(1,10): Set accessibility active after closure\n[2026-11-23T07:22:16Z ERROR bulwark_experiment_e4::document_scope] S1 probe actual script-thread panic\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] creating replacement pipeline for crash page\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] Pipeline(1,13): Set accessibility active after closure\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)\nS1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,3))\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,3))\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,3): Closing twice\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,2): Closing twice\n[2026-11-23T07:22:19Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:19Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:19Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:19Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:19Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:19Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:19Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n"
+    },
+    {
+      "name": "document-scope-2",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-7c397f80-a2aa-40ae-9bd4-7471f9ac77a6/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 2.681157291866839,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 lifecycle-readiness-and-current-delivery: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 script-created-initial-document: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (revoked before allocation)",
+        "S1 host-cancellation: PASS",
+        "S1 javascript-url-replacement: PASS",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=false)",
+        "S1 redirect: PASS",
+        "S1 failed-load: PASS (error document replaces departed document)",
+        "S1 cross-view: PASS",
+        "S1 subframe-isolation: PASS",
+        "S1 close: PASS",
+        "S1 injected-crash: PASS (constellation panic handler)",
+        "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+        "S1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)"
+      ],
+      "log_sha256": "3774a5e448a58ecb0b48eefc7eb57bb6818c400fdec28e035451ec589836ce69",
+      "log": "[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 initial-blank-and-tagged-result: PASS\nS1 lifecycle-readiness-and-current-delivery: PASS\nUNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nS1 same-document-navigation: PASS\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-created-initial-document: PASS\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 held-A-after-B-and-unscoped-control: PASS\nS1 queued-reset-race-and-pipeline-collision: PASS\nS1 serialization-reset: PASS\nS1 delayed-host-delivery: PASS (revoked before allocation)\nS1 host-cancellation: PASS\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 javascript-url-replacement: PASS\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 reload: PASS\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 history: PASS (retained_identity=false)\nLoopback received /redirect\nLoopback received /redirect-final\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 redirect: PASS\n[2026-11-23T07:22:19Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:19Z WARN  script::event_loop::script_thread] Network error: Unsupported scheme\n[2026-11-23T07:22:19Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:22:19Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 failed-load: PASS (error document replaces departed document)\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:19Z WARN  servo_constellation::browsingcontext] BrowsingContext (6,2) iterated after closure.\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:19Z WARN  script::event_loop::script_thread] SetThrottled sent to nonexistent pipeline\n[2026-11-23T07:22:19Z WARN  script::event_loop::script_thread] change of activity sent to nonexistent pipeline\nS1 cross-view: PASS\nS1 subframe-isolation: PASS\nS1 close: PASS\nS1 injected-crash: PASS (constellation panic handler)\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] creating replacement pipeline for crash page\n[2026-11-23T07:22:19Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:19Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:22:19Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:19Z WARN  servo_constellation::constellation] Pipeline(1,10): Set accessibility active after closure\n[2026-11-23T07:22:19Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:19Z ERROR bulwark_experiment_e4::document_scope] S1 probe actual script-thread panic\n[2026-11-23T07:22:21Z WARN  servo_constellation::constellation] creating replacement pipeline for crash page\n[2026-11-23T07:22:21Z WARN  servo_constellation::pipeline] Sending script exit message failed (Disconnected).\n[2026-11-23T07:22:21Z ERROR servo_constellation::event_loop] Did not successfully request EventLoop exit: Disconnected\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:21Z WARN  servo_constellation::constellation] Pipeline(1,13): Set accessibility active after closure\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)\nS1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)\n[2026-11-23T07:22:21Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,3))\n[2026-11-23T07:22:21Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,3))\n[2026-11-23T07:22:21Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,3): Closing twice\n[2026-11-23T07:22:21Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:22:21Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:22:21Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,2): Closing twice\n[2026-11-23T07:22:21Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:21Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:21Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:21Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:21Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:21Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:21Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n"
+    },
+    {
+      "name": "document-scope-3",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-7c397f80-a2aa-40ae-9bd4-7471f9ac77a6/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 2.8513302919454873,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 lifecycle-readiness-and-current-delivery: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 script-created-initial-document: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (revoked before allocation)",
+        "S1 host-cancellation: PASS",
+        "S1 javascript-url-replacement: PASS",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=false)",
+        "S1 redirect: PASS",
+        "S1 failed-load: PASS (error document replaces departed document)",
+        "S1 cross-view: PASS",
+        "S1 subframe-isolation: PASS",
+        "S1 close: PASS",
+        "S1 injected-crash: PASS (constellation panic handler)",
+        "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+        "S1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)"
+      ],
+      "log_sha256": "331b85a00ab0a58766fc9d3cccb089dedf5913212e3c13771bf1db3649202474",
+      "log": "[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 initial-blank-and-tagged-result: PASS\nS1 lifecycle-readiness-and-current-delivery: PASS\nUNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nS1 same-document-navigation: PASS\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-created-initial-document: PASS\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 held-A-after-B-and-unscoped-control: PASS\nS1 queued-reset-race-and-pipeline-collision: PASS\nS1 serialization-reset: PASS\nS1 delayed-host-delivery: PASS (revoked before allocation)\nS1 host-cancellation: PASS\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 javascript-url-replacement: PASS\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 reload: PASS\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 history: PASS (retained_identity=false)\nLoopback received /redirect\nLoopback received /redirect-final\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 redirect: PASS\n[2026-11-23T07:22:21Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:21Z WARN  script::event_loop::script_thread] Network error: Unsupported scheme\n[2026-11-23T07:22:21Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:22:21Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 failed-load: PASS (error document replaces departed document)\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:21Z WARN  servo_constellation::browsingcontext] BrowsingContext (6,2) iterated after closure.\n[2026-11-23T07:22:21Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:21Z WARN  script::event_loop::script_thread] SetThrottled sent to nonexistent pipeline\n[2026-11-23T07:22:21Z WARN  script::event_loop::script_thread] change of activity sent to nonexistent pipeline\nS1 cross-view: PASS\nS1 subframe-isolation: PASS\nS1 close: PASS\nS1 injected-crash: PASS (constellation panic handler)\n[2026-11-23T07:22:22Z WARN  servo_constellation::constellation] creating replacement pipeline for crash page\n[2026-11-23T07:22:22Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:22Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:22:22Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:22:22Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:22Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:22Z WARN  servo_constellation::constellation] Pipeline(1,10): Set accessibility active after closure\n[2026-11-23T07:22:22Z ERROR bulwark_experiment_e4::document_scope] S1 probe actual script-thread panic\n[2026-11-23T07:22:24Z WARN  servo_constellation::constellation] creating replacement pipeline for crash page\n[2026-11-23T07:22:24Z WARN  servo_constellation::pipeline] Sending script exit message failed (Disconnected).\n[2026-11-23T07:22:24Z ERROR servo_constellation::event_loop] Did not successfully request EventLoop exit: Disconnected\n[2026-11-23T07:22:24Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:22:24Z WARN  servo_constellation::constellation] Pipeline(1,13): Set accessibility active after closure\n[2026-11-23T07:22:24Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)\nS1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)\n[2026-11-23T07:22:24Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,3))\n[2026-11-23T07:22:24Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,3))\n[2026-11-23T07:22:24Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,3): Closing twice\n[2026-11-23T07:22:24Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:22:24Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:22:24Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,2): Closing twice\n[2026-11-23T07:22:24Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:24Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:24Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:24Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:24Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:24Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:22:24Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n"
+    },
+    {
+      "name": "servo-contracts",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-7c397f80-a2aa-40ae-9bd4-7471f9ac77a6/bulwark/target/debug/bulwark-experiment-e4",
+        "--phase3"
+      ],
+      "status": 0,
+      "elapsed_seconds": 0.41252462519332767,
+      "assertions_complete": true,
+      "markers": [],
+      "log_sha256": "028b6fdc560c9549f7cb8e11a468f39f34b26b08b6e29e0c2a62e1ca98263c6f",
+      "log": "UNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nP3.1 Servo: deferred navigation allow/deny passed; page timers progressed\nP3.1 Servo: deferred resource response/cancel passed\nP3.1 Servo gap: top-document and iframe fetch metadata are identical\nP3.1 Servo candidate: custom protocol identifies top, same-origin, remote, and sandboxed sources: [ProtocolSource { pipeline: \"Some((1,2))\", view: \"Some(WebViewId(PainterId(1), (0,1)))\", origin: \"Some(Origin(Tuple(\\\"https\\\", Domain(\\\"bulwark.invalid\\\"), 443)))\", nested: Some(false) }, ProtocolSource { pipeline: \"Some((2,7))\", view: \"Some(WebViewId(PainterId(1), (0,1)))\", origin: \"Some(Origin(Tuple(\\\"https\\\", Domain(\\\"bulwark.invalid\\\"), 443)))\", nested: Some(true) }, ProtocolSource { pipeline: \"Some((2,10))\", view: \"Some(WebViewId(PainterId(1), (0,1)))\", origin: \"Some(Origin(Tuple(\\\"https\\\", Domain(\\\"remote.bulwark.invalid\\\"), 443)))\", nested: Some(true) }, ProtocolSource { pipeline: \"Some((2,13))\", view: \"Some(WebViewId(PainterId(1), (0,1)))\", origin: \"Some(Origin(Opaque(OpaqueOrigin { id: 49fab207-badb-45e2-be4f-93f5dd780610, is_for_data_worker_from_secure_context: false, is_file_origin: false })))\", nested: Some(true) }]\nP3.1 Servo: bounded observer drain passed; shared-world agent forgery reproduced\nP3.1 Servo: bulwark:// HTML and retained-view switching passed; origin=null; no Servo internals privilege\nP3.1 Servo contracts passed; document identity and bridge authority remain unproven\n"
+    },
+    {
+      "name": "e4-baseline",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-7c397f80-a2aa-40ae-9bd4-7471f9ac77a6/bulwark/target/debug/bulwark-experiment-e4"
+      ],
+      "status": 0,
+      "elapsed_seconds": 2.4530368326231837,
+      "assertions_complete": true,
+      "markers": [],
+      "log_sha256": "f08a04535ea747e86f9982d92bcf9d9ed33dc319762e9d29ae1e4b13bb1d8bc3",
+      "log": "UNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nE4 trivial: samples=100, p50=39.167\u00b5s, p95=61.25\u00b5s, max=94.834\u00b5s\nE4 subtree_5000: samples=30, p50=25.505833ms, p95=28.350208ms, max=28.624333ms\nE4: subtree_bytes=232781, intercepted_messages=1, reply=ack\n"
+    }
+  ],
+  "diagnostics": {
+    "redirect_socket_failure": {
+      "status": 1,
+      "description": "A preliminary socket read returned Resource temporarily unavailable before the panic case. The final fixture explicitly disables nonblocking mode on accepted sockets. Complete binary provenance is not retained for this diagnostic.",
+      "log_sha256": "c37492cbad7ff467ce11f2b3f243fba7946868171551bc3fc867d5391e8bb487",
+      "log": "[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 initial-blank-and-tagged-result: PASS\nS1 lifecycle-readiness-and-current-delivery: PASS\nUNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nS1 same-document-navigation: PASS\n[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-created-initial-document: PASS\n[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 held-A-after-B-and-unscoped-control: PASS\nS1 queued-reset-race-and-pipeline-collision: PASS\nS1 serialization-reset: PASS\nS1 delayed-host-delivery: PASS (revoked before allocation)\nS1 host-cancellation: PASS\n[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 javascript-url-replacement: PASS\n[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 reload: PASS\n[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 history: PASS (retained_identity=false)\n[2026-11-23T07:19:44Z WARN  net::http_loader] network error: hyper_util::client::legacy::Error(SendRequest, hyper::Error(IncompleteMessage))\n[2026-11-23T07:19:44Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:19:44Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:19:44Z WARN  script::event_loop::script_thread] Network error: HTTP failure: client error (SendRequest)\n[2026-11-23T07:19:44Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:19:44Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:19:44Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:19:44Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,2): Closing twice\n[2026-11-23T07:19:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:19:44Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:19:44Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:19:44Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:19:44Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:19:44Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:19:44Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:19:44Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:19:44Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\nError: Resource temporarily unavailable (os error 35)\n"
+    },
+    "blocking_socket_repeat": {
+      "status": 0,
+      "description": "One successful nineteen-case diagnostic before the final fresh preparation. The final close case adds an unscoped callback and a sibling-view control. Complete binary provenance is not retained for this diagnostic.",
+      "log_sha256": "8b8e3edc5cd0ef1c033ae655b8ae2f1218cc7937ca61ca9dee7677998ddfa0c9",
+      "log": "[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  webrender::device::gl] Cropping texture upload Box2D((0, 0), (0, 1)) to None\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 initial-blank-and-tagged-result: PASS\nS1 lifecycle-readiness-and-current-delivery: PASS\nUNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nS1 same-document-navigation: PASS\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-created-initial-document: PASS\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 held-A-after-B-and-unscoped-control: PASS\nS1 queued-reset-race-and-pipeline-collision: PASS\nS1 serialization-reset: PASS\nS1 delayed-host-delivery: PASS (revoked before allocation)\nS1 host-cancellation: PASS\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 javascript-url-replacement: PASS\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 reload: PASS\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 history: PASS (retained_identity=false)\nLoopback received /redirect\nLoopback received /redirect-final\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 redirect: PASS\n[2026-11-23T07:20:44Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:20:44Z WARN  script::event_loop::script_thread] Network error: Unsupported scheme\n[2026-11-23T07:20:44Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:20:44Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 failed-load: PASS (error document replaces departed document)\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:20:44Z WARN  servo_constellation::browsingcontext] BrowsingContext (6,2) iterated after closure.\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:20:44Z WARN  script::event_loop::script_thread] SetThrottled sent to nonexistent pipeline\n[2026-11-23T07:20:44Z WARN  script::event_loop::script_thread] change of activity sent to nonexistent pipeline\nS1 cross-view: PASS\nS1 subframe-isolation: PASS\nS1 close: PASS\nS1 injected-crash: PASS (constellation panic handler)\n[2026-11-23T07:20:44Z WARN  servo_constellation::constellation] creating replacement pipeline for crash page\n[2026-11-23T07:20:44Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:20:44Z WARN  net::devtools] No metadata available, skipping devtools security info.\n[2026-11-23T07:20:44Z WARN  net::devtools] No metadata available, skipping devtools response.\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:20:44Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:20:44Z WARN  servo_constellation::constellation] Pipeline(1,10): Set accessibility active after closure\n[2026-11-23T07:20:44Z ERROR bulwark_experiment_e4::document_scope] S1 probe actual script-thread panic\n[2026-11-23T07:20:46Z WARN  servo_constellation::constellation] creating replacement pipeline for crash page\n[2026-11-23T07:20:46Z WARN  script::event_loop::timers] Resuming an already resumed timer.\n[2026-11-23T07:20:46Z WARN  servo_constellation::constellation] Pipeline(1,13): Set accessibility active after closure\n[2026-11-23T07:20:46Z WARN  script::event_loop::timers] Resuming an already resumed timer.\nS1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)\nS1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)\n[2026-11-23T07:20:46Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,3))\n[2026-11-23T07:20:46Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,3))\n[2026-11-23T07:20:46Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,3): Closing twice\n[2026-11-23T07:20:46Z WARN  servo_constellation::constellation] Couldnot find WebView for closing browsing context id: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:20:46Z WARN  servo_constellation::constellation] Closing BrowsingContext in unknown WebView: WebViewId(PainterId(1), (0,2))\n[2026-11-23T07:20:46Z WARN  servo_constellation::constellation] fn handle_close_top_level_browsing_context BrowsingContext(0,2): Closing twice\n[2026-11-23T07:20:46Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:20:46Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:20:46Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:20:46Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:20:46Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:20:46Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n[2026-11-23T07:20:46Z WARN  profile_traits::mem] Error communicating with the memory profiler thread: Disconnected\n"
+    }
+  },
+  "validation": {
+    "portable_clippy": {
+      "command": "CARGO_INCREMENTAL=0 cargo clippy --offline --locked --workspace --all-targets --no-default-features -- -D warnings",
+      "status": 0,
+      "log_sha256": "e83264adc7c57d3a1d23266adc0325b3581f82ad63d8e5b4cd3da0a06e36a743"
+    },
+    "probe_clippy": {
+      "command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=\"$PWD/target\" cargo clippy --offline --locked --manifest-path target/phase3-document-lifecycle/candidate/Cargo.toml -p bulwark-experiment-e4 --features document-scope -- -D warnings",
+      "status": 0,
+      "log_sha256": "e73d85e3274f088cbf8c625d786fcc5342faf29b6ac94d15f93c19e6d3c2209a"
+    },
+    "formatting": {
+      "command": "cargo fmt --all -- --check",
+      "status": 0
+    },
+    "python_syntax": {
+      "command": "python3 -m py_compile experiments/prepare_document_scope.py experiments/run_document_scope.py",
+      "status": 0
+    },
+    "runner_guards": {
+      "stale_preparation_rejected": true,
+      "old_sixteen_case_markers_rejected": true
+    },
+    "portable_tests": {
+      "command": "CARGO_INCREMENTAL=0 cargo test --offline --locked --workspace --no-default-features",
+      "status": 0,
+      "passed": 61,
+      "log_sha256": "291975a6b7c9875ca28412d1d3fd55abef4cfbb4608ba991dcdaaea33130dd42"
+    }
+  },
+  "recovery_configuration": {
+    "hard_fail": false,
+    "reporting": "Servo::setup_logging plus a panic hook using log::error; public pinned Servo crash-test pattern",
+    "product_configuration_changed": false
+  },
+  "published_reference_hashes": {
+    "servo-0.7.0/tests/crash.rs": "e9366e8d50e9f04fd919f9d43c250fd6c98ef825cc1afc58d80f430fa3428763",
+    "servo-constellation-0.7.0/logging.rs": "bbf766456cf09de1e349d409f4c9b410364e98f4e6a3f340f8baa1864cb15d40",
+    "servo-config-0.7.0/opts.rs": "d3737729db4b96908a7fc8572a3e7645c8eeba418e83d0e86317d9995688630d"
+  }
+}

@@ -7,7 +7,7 @@ publish.workspace = true
 [features]
 servo = ["dep:servo"]
 # Only build against the isolated P3.1 engine patch, never the product pin.
-document-scope = ["servo"]
+document-scope = ["servo", "dep:log"]
 
 [[bin]]
 name = "bulwark-experiment-e4"
@@ -20,3 +20,4 @@ servo = { workspace = true, optional = true }
 url.workspace = true
 rustls.workspace = true
 serde_json = "1"
+log = { version = "0.4", optional = true }

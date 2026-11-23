@@ -770,6 +770,7 @@ name = "bulwark-experiment-e4"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "log",
  "rustls",
  "serde_json",
  "servo",

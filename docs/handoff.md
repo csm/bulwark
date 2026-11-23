@@ -10,11 +10,12 @@ P3.1 passed deferred navigation, deferred resource responses, bounded observer d
 The final release DOM prototype used two requests, with p50 values of 0.095333 ms in Tiered and 0.090500 ms in TreeWalk.
 These measurements exclude the future node registry and JSON schema conversion. C6 remains pending.
 
-The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications and a host allocation check.
+The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its sixteen cases cover tagged readiness, nested frames, redirects, failed loads, close, host cancellation, and injected crash recovery.
-Actual process failure, cancellation of engine work, and replacement-path audits remain open.
+Its nineteen cases also cover JavaScript URLs, script-created initial documents, and an actual script-thread unwind.
+The unwind fixture releases eight pending callbacks and accepts new work after recovery.
+Actual process failure, cancellation of engine work, shutdown cleanup, and remaining replacement paths stay open.
 The product pins and installed natives remain unchanged.
 
 P3.1 remains open on these requirements:
@@ -31,12 +32,17 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) retains the current S1 runs and both existing engine controls.
+The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.json) records the current S1 runs and both existing engine controls.
+The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The sixteen lifecycle cases passed in three final runs, with both existing Servo controls.
+The nineteen lifecycle cases passed in three final runs, with both existing Servo controls.
+The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
+The product keeps its existing engine configuration and dependency versions.
 One preliminary repeat timed out at the redirect. The final fixture waits for explicit history-traversal completion and exposes HTTP worker errors.
 Five diagnostic repeats passed after that change. The earlier timeout's exact cause remains unproven.
+The current audit also exposed a nonblocking read error on an accepted loopback socket.
+The fixture now explicitly selects blocking reads with a timeout. This change does not prove the earlier timeout's cause.
 
 All 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
@@ -60,8 +66,9 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Continue the S1 lifecycle audit with actual script-thread/process failure, pending callback cleanup, and cancellation of engine work.
-   Cover JavaScript URLs and script-created initial documents. Review the proposed history reactivation policy before product integration.
+   Continue the S1 lifecycle audit with actual process failure and cancellation of engine work.
+   Cover callback cleanup on final-handle release and shutdown, plus remaining replacement paths such as `srcdoc` and parser-time resets.
+   Review the proposed history reactivation policy before product integration.
    The current host counter still needs a production registry and handle revocation.
    Protocol-source binding, redirect/rewrite, and evaluator authority mechanisms also remain open.
 2. Review the remaining Phase 3 scope decisions and acceptance criteria with the owner before dependent implementation.

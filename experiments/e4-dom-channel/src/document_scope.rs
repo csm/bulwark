@@ -2,8 +2,8 @@
 use super::{ORIGIN, Waker, drive_until, evaluate};
 use anyhow::{Result, ensure};
 use servo::{
-    DocumentIdentity, DocumentJavaScriptResult, DocumentLifecycle, JSValue,
-    JavaScriptEvaluationError, LoadStatus, RenderingContext, Servo, ServoBuilder,
+    CreateNewWebViewRequest, DocumentIdentity, DocumentJavaScriptResult, DocumentLifecycle,
+    JSValue, JavaScriptEvaluationError, LoadStatus, Opts, RenderingContext, Servo, ServoBuilder,
     SoftwareRenderingContext, TraversalId, WebResourceLoad, WebResourceResponse, WebView,
     WebViewBuilder, WebViewDelegate,
 };
@@ -30,6 +30,8 @@ struct Delegate {
     closed: Cell<bool>,
     traversals: RefCell<Vec<TraversalId>>,
     crashed: Cell<bool>,
+    crash_reasons: RefCell<Vec<String>>,
+    popups: RefCell<Vec<CreateNewWebViewRequest>>,
 }
 
 #[derive(Clone, Copy)]
@@ -81,6 +83,9 @@ impl Delegate {
     }
 }
 impl WebViewDelegate for Delegate {
+    fn request_create_new(&self, _: WebView, request: CreateNewWebViewRequest) {
+        self.popups.borrow_mut().push(request);
+    }
     fn notify_document_lifecycle(&self, _: WebView, event: DocumentLifecycle) {
         if let DocumentLifecycle::Active(document) = event
             && self.active.replace(document) != document
@@ -96,7 +101,8 @@ impl WebViewDelegate for Delegate {
     fn notify_closed(&self, _: WebView) {
         self.closed.set(true);
     }
-    fn notify_crashed(&self, _: WebView, _: String, _: Option<String>) {
+    fn notify_crashed(&self, _: WebView, reason: String, _: Option<String>) {
+        self.crash_reasons.borrow_mut().push(reason);
         self.crashed.set(true);
     }
     fn notify_load_status_changed(&self, _: WebView, status: LoadStatus) {
@@ -248,6 +254,8 @@ fn redirect_fixture() -> Result<(u16, thread::JoinHandle<Result<()>>)> {
                     Err(error) => return Err(error.into()),
                 }
             };
+            // Accepted sockets can inherit the listener's nonblocking mode on macOS.
+            stream.set_nonblocking(false)?;
             stream.set_read_timeout(Some(Duration::from_secs(2)))?;
             stream.set_write_timeout(Some(Duration::from_secs(2)))?;
             let mut request = Vec::new();
@@ -290,8 +298,23 @@ pub(super) fn run() -> Result<()> {
         .make_current()
         .map_err(|error| anyhow::anyhow!("GL context: {error:?}"))?;
     let servo = ServoBuilder::default()
+        .opts(Opts {
+            hard_fail: false,
+            ..Opts::default()
+        })
         .event_loop_waker(Box::new(Waker(thread::current())))
         .build();
+    // Servo's own crash tests use this public logging path to report thread panics.
+    servo.setup_logging();
+    std::panic::set_hook(Box::new(|info| {
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic");
+        log::error!("{message}");
+    }));
     let delegate = Rc::new(Delegate::default());
     let view = WebViewBuilder::new(&servo, context.clone())
         .url(url::Url::parse("about:blank")?)
@@ -325,6 +348,18 @@ pub(super) fn run() -> Result<()> {
         delegate.deliver(ticket, scoped(&servo, &view, deadline, a, "'current'")?),
         "Current reply rejected"
     );
+    let (sender, reentrant) = mpsc::channel();
+    let callback_view = view.clone();
+    view.evaluate_javascript_in_document(a, "'first'", move |first| {
+        if first.is_err() {
+            let _ = sender.send(first);
+            return;
+        }
+        callback_view.evaluate_javascript_in_document(a, "'reentrant'", move |result| {
+            let _ = sender.send(result);
+        });
+    });
+    text(receive(&servo, deadline, reentrant)?, a, "reentrant")?;
     println!("S1 initial-blank-and-tagged-result: PASS");
     println!("S1 lifecycle-readiness-and-current-delivery: PASS");
 
@@ -354,6 +389,53 @@ pub(super) fn run() -> Result<()> {
         "Same-document navigation revoked activation"
     );
     println!("S1 same-document-navigation: PASS");
+
+    // A script-created top-level initial document must have its own authenticated scope.
+    let popup_open = queue(&view, a, "window.open('about:blank');'opened'");
+    drive_until(&servo, deadline, || !delegate.popups.borrow().is_empty())?;
+    let popup_delegate = Rc::new(Delegate::default());
+    let popup = delegate
+        .popups
+        .borrow_mut()
+        .pop()
+        .unwrap()
+        .builder(context.clone())
+        .delegate(popup_delegate.clone())
+        .build();
+    text(receive(&servo, deadline, popup_open)?, a, "opened")?;
+    let popup_blank = identity(&servo, &popup, deadline)?;
+    ensure!(
+        popup_blank != a,
+        "Script-created initial document reused the opener scope"
+    );
+    ensure!(
+        popup_delegate.active.get() == Some(popup_blank),
+        "Initial popup activation missing"
+    );
+    let popup_ticket = popup_delegate.ticket(popup_blank)?;
+    let popup_reply = scoped(&servo, &popup, deadline, popup_blank, "'initial'")?;
+    ensure!(popup_reply.is_ok(), "Initial popup control failed");
+    stale(scoped(
+        &servo,
+        &popup,
+        deadline,
+        popup_blank,
+        "document.open();document.write('<h1>Script-created</h1>');document.close();'reset'",
+    )?)?;
+    let popup_reset = identity(&servo, &popup, deadline)?;
+    ensure!(
+        popup_reset != popup_blank,
+        "Script-created reset preserved the initial scope"
+    );
+    popup_delegate.reject(popup_ticket, popup_reply)?;
+    stale(scoped(&servo, &popup, deadline, popup_blank, "'obsolete'")?)?;
+    ensure!(
+        identity(&servo, &view, deadline)? == a,
+        "Popup reset changed opener scope"
+    );
+    popup.close_for_document_scope_probe();
+    drive_until(&servo, deadline, || popup_delegate.closed.get())?;
+    println!("S1 script-created-initial-document: PASS");
 
     // Model a native command admitted for A but held in the host queue until B is active.
     let held_document = a;
@@ -461,7 +543,55 @@ pub(super) fn run() -> Result<()> {
     delegate.reject(cancelled, cancelled_reply)?;
     println!("S1 host-cancellation: PASS");
 
-    let before_reload = after_delivery;
+    // A non-string JavaScript URL preserves the document. A string result replaces it.
+    evaluate(
+        &servo,
+        &view,
+        deadline,
+        "location.href=\"javascript:window.marker='js-preserved';void 0\";'scheduled'",
+    )?;
+    wait_marker(&servo, &view, deadline, "js-preserved")?;
+    ensure!(
+        identity(&servo, &view, deadline)? == after_delivery,
+        "Non-string JavaScript URL replaced the scope"
+    );
+    let js_ticket = delegate.ticket(after_delivery)?;
+    let js_reply = scoped(&servo, &view, deadline, after_delivery, "'before-js-url'")?;
+    ensure!(js_reply.is_ok(), "JavaScript URL control failed");
+    evaluate(
+        &servo,
+        &view,
+        deadline,
+        "location.href=\"javascript:'<h1>JS replacement</h1><script>window.marker=\\\"js-replaced\\\"</script>'\";'scheduled'",
+    )?;
+    wait_marker(&servo, &view, deadline, "js-replaced")?;
+    let after_js = identity(&servo, &view, deadline)?;
+    ensure!(
+        after_js != after_delivery,
+        "JavaScript URL replacement preserved the scope"
+    );
+    delegate.reject(js_ticket, js_reply)?;
+    stale(scoped(
+        &servo,
+        &view,
+        deadline,
+        after_delivery,
+        "document.querySelector('h1').textContent='WRONG';'mutated'",
+    )?)?;
+    text(
+        scoped(
+            &servo,
+            &view,
+            deadline,
+            after_js,
+            "document.querySelector('h1').textContent",
+        )?,
+        after_js,
+        "JS replacement",
+    )?;
+    println!("S1 javascript-url-replacement: PASS");
+
+    let before_reload = after_js;
     view.reload();
     loop {
         ensure!(
@@ -651,12 +781,35 @@ pub(super) fn run() -> Result<()> {
     let close_reply = scoped(&servo, &other, deadline, other_document, "'before-close'")?;
     ensure!(close_reply.is_ok(), "Expected a retained successful reply");
     other.close_for_document_scope_probe();
+    let close_pending = queue(&other, other_document, "'must-not-deliver'");
+    let (sender, close_unscoped) = mpsc::channel();
+    other.evaluate_javascript("'must-not-deliver'", move |result| {
+        let _ = sender.send(result);
+    });
+    let survivor = queue(&view, error_document, "'survived-close'");
     drive_until(&servo, deadline, || other_delegate.closed.get())?;
     ensure!(
         other_delegate.active.get().is_none(),
         "Close did not revoke identity"
     );
     other_delegate.reject(close_ticket, close_reply)?;
+    ensure!(
+        receive(&servo, deadline, close_pending)?.is_err(),
+        "Close delivered a pending success"
+    );
+    ensure!(
+        receive(&servo, deadline, close_unscoped)?.is_err(),
+        "Close delivered an unscoped pending success"
+    );
+    text(
+        receive(&servo, deadline, survivor)?,
+        error_document,
+        "survived-close",
+    )?;
+    ensure!(
+        other.pending_evaluations_for_document_scope_probe() == 0,
+        "Close retained pending callbacks"
+    );
     println!("S1 close: PASS");
 
     let crash_ticket = delegate.ticket(error_document)?;
@@ -670,6 +823,115 @@ pub(super) fn run() -> Result<()> {
     );
     delegate.reject(crash_ticket, crash_reply)?;
     println!("S1 injected-crash: PASS (constellation panic handler)");
-    println!("S1 document-scope prototype: PASS (16 cases; experimental lifecycle and host gate)");
+
+    // Use an independent view for a real script-thread unwind. Never show a second view.
+    let failure_delegate = Rc::new(Delegate::default());
+    let failure = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/thread-failure"))?)
+        .delegate(failure_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || failure_delegate.loads.get() > 0)?;
+    let failure_id = identity(&servo, &failure, deadline)?;
+    let failure_ticket = failure_delegate.ticket(failure_id)?;
+    let failure_reply = scoped(&servo, &failure, deadline, failure_id, "'before-unwind'")?;
+    ensure!(failure_reply.is_ok(), "Thread failure control failed");
+    failure.crash_script_thread_for_document_scope_probe();
+    let capture = Rc::new(());
+    let released = Rc::downgrade(&capture);
+    let calls = Rc::new(Cell::new(0));
+    let (sender, pending) = mpsc::channel();
+    for _ in 0..8 {
+        let capture = capture.clone();
+        let calls = calls.clone();
+        let sender = sender.clone();
+        let delegate = failure_delegate.clone();
+        failure.evaluate_javascript_in_document(failure_id, "'must-not-execute'", move |result| {
+            drop(capture);
+            calls.set(calls.get() + 1);
+            let _ = sender.send((delegate.active.get(), result));
+        });
+    }
+    drop(capture);
+    drop(sender);
+    ensure!(
+        failure.pending_evaluations_for_document_scope_probe() == 8,
+        "Failure fixture did not retain eight callbacks"
+    );
+    drive_until(&servo, deadline, || failure_delegate.crashed.get())?;
+    ensure!(
+        failure_delegate
+            .crash_reasons
+            .borrow()
+            .iter()
+            .any(|reason| reason == "S1 probe actual script-thread panic"),
+        "Thread failure did not reach the unwind notification path"
+    );
+    ensure!(
+        failure_delegate.active.get() != Some(failure_id),
+        "Thread unwind preserved the scope"
+    );
+    for _ in 0..8 {
+        let (active_at_callback, result) = pending.recv_timeout(Duration::from_secs(1))?;
+        ensure!(
+            result.is_err(),
+            "Unwound script thread returned a successful result"
+        );
+        if matches!(result, Err(JavaScriptEvaluationError::StaleDocument)) {
+            ensure!(
+                active_at_callback != Some(failure_id),
+                "Callback preceded host revocation"
+            );
+        }
+    }
+    ensure!(
+        calls.get() == 8 && pending.try_recv().is_err(),
+        "Callback completed more than once"
+    );
+    ensure!(
+        released.upgrade().is_none(),
+        "Thread failure retained callback captures"
+    );
+    ensure!(
+        failure.pending_evaluations_for_document_scope_probe() == 0,
+        "Thread failure retained pending callbacks"
+    );
+    failure_delegate.reject(failure_ticket, failure_reply)?;
+    // Recovery must accept new work after revocation and drain any late replies safely.
+    drive_until(&servo, deadline, || {
+        failure_delegate
+            .active
+            .get()
+            .is_some_and(|id| id != failure_id)
+    })?;
+    let crash_document = identity(&servo, &failure, deadline)?;
+    text(
+        scoped(
+            &servo,
+            &failure,
+            deadline,
+            crash_document,
+            "'crash-document'",
+        )?,
+        crash_document,
+        "crash-document",
+    )?;
+    load(&servo, &failure, deadline, "/after-thread-failure")?;
+    let recovered = identity(&servo, &failure, deadline)?;
+    ensure!(recovered != failure_id, "Recovery revived the failed scope");
+    stale(scoped(
+        &servo,
+        &failure,
+        deadline,
+        failure_id,
+        "'obsolete'",
+    )?)?;
+    text(
+        scoped(&servo, &failure, deadline, recovered, "'recovered'")?,
+        recovered,
+        "recovered",
+    )?;
+    ensure!(calls.get() == 8, "Recovery delivered a duplicate callback");
+    println!("S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)");
+    println!("S1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)");
     Ok(())
 }
