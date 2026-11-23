@@ -14,7 +14,7 @@ The [browsing checkpoint](docs/phase-2-browsing.md) adds default configuration m
 The [P2.5/P2.6 validation report](docs/phase-2-shell-acceptance.md) records passing Linux CI and macOS physical checks.
 The [P2.8 acceptance review](docs/phase-2-acceptance.md) records physical browsing and REPL checks, release startup samples, and the native policy review.
 The owner accepted Phase 2 on 2026-11-22 with its documented scope and input limits.
-The small Linux investigation remains deferred. Phase 3 planning is next.
+The small Linux investigation remains deferred. [P3.1 mechanism work](docs/phase-3-mechanisms.md) has started under the [Phase 3 draft plan](docs/phase-3-plan.md).
 The [Option setting](docs/phase-2-option-mode.md) preserves Mac character input by default and offers live switching to Meta.
 The [physical follow-up](docs/phase-2-physical-follow-up.md) records passing active-window GitHub navigation and the remaining compatibility limits.
 The [preference correction](docs/phase-2-preference-evaluation.md) passes the consented BBC article task and clears GitHub placeholders in the release comparison.

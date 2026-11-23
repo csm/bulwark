@@ -5,8 +5,23 @@
 Phase 2 is complete and accepted by the owner as of 2026-11-22.
 The owner reported no app-experience blockers and accepted the documented desktop scope, Linux deferral, and input limits.
 The [acceptance review](phase-2-acceptance.md#owner-acceptance-2026-11-22) records the exit interview and acceptance at product checkpoint `cf3e6be`.
-The accepted Phase 2 work is integrated into `main`. Phase 3 implementation has not started.
-The next work is Phase 3 planning, beginning with E4 and the DOM-channel contracts.
+The accepted Phase 2 work is integrated into `main` at `b9b0ded`.
+The owner authorized P3.1. The [mechanism report](phase-3-mechanisms.md) records the initial probes and unresolved prerequisites.
+The [Phase 3 draft plan](phase-3-plan.md) proposes the remaining milestones and acceptance evidence.
+Owner review remains pending, including the D6/E5 prerequisite, extension format, reader-site tasks, and decision timeout policy.
+
+P3.1 passed deferred navigation, deferred resource responses, bounded observer drains, and local `bulwark://` rendering under one visible view.
+The final release two-request DOM prototype recorded p50 values of 0.095333 ms in Tiered and 0.090500 ms in TreeWalk.
+Those measurements exclude the future node registry and JSON schema conversion. C6 remains pending.
+Both evaluator modes reproduced the current namespace-only authority leaks. No restricted extension loader is exposed.
+Source inspection and adversarial fixtures identify required engine document identity and redirect/rewrite mechanisms.
+Custom-protocol metadata distinguishes four frame contexts, but its binding to the current privileged document remains unproven.
+P3.1 remains open on those requirements, evaluator authority, production subscription scheduling, and registry memory measurements.
+The [contract draft](phase-3-contracts.md) and two proposed ADRs record the intended boundaries without changing product behavior or pins.
+All six final probe cases, 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
+The [retained evidence](../experiments/phase3/evidence-2026-11-22.json) includes timing samples, source hashes, and final probe results.
+Use `python3 experiments/run_phase3.py` to reproduce the six cases after the builds documented in the mechanism report.
+The namespace-only counterexamples demonstrate missing restriction. They do not establish capability enforcement or authorize restricted extension loading.
 
 The [Option setting](phase-2-option-mode.md) implements the owner's keyboard policy.
 macOS defaults to native character input. Other platforms retain Alt as Meta.
@@ -159,9 +174,9 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Prepare the Phase 3 implementation plan from the accepted Phase 2 checkpoint.
-   Start with E4, navigation-scoped DOM handles, the query/mutation channel, and capability enforcement.
-2. Review the Phase 3 scope and acceptance criteria with the owner before implementation.
+1. Continue P3.1 from the [mechanism report](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
+   Prepare document identity, protocol-source binding, redirect/rewrite, and evaluator authority mechanisms with their required regressions.
+2. Review the remaining Phase 3 scope decisions and acceptance criteria with the owner before dependent implementation.
    Preserve the accepted single-visible-webview scope until E5 supplies evidence for simultaneous live web splits.
 3. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
    Retain the failed baseline, passing current browser-history repeat, and earlier timing variation.

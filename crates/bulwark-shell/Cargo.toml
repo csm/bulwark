@@ -21,3 +21,6 @@ winit = { workspace = true, optional = true }
 euclid = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 egui_glow = { workspace = true, optional = true }
+
+[[example]]
+name = "phase3"

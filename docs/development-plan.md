@@ -1,6 +1,6 @@
 # Bulwark Development Plan
 
-Status: active v0.20 (2026-11-22). Phases 0, 1, and 2 are complete and accepted. Phase 3 implementation has not started.
+Status: active v0.21 (2026-11-22). Phases 0, 1, and 2 are complete and accepted. P3.1 mechanism work has started.
 Phase 1 includes the foundation, Servo adapter, native window, and egui echo area.
 Clojure commands, keymaps, hooks, title history, product nREPL, and key interception are implemented.
 The [acceptance review](phase-1-acceptance.md) records passing physical checks, CI, and the Phase 1 exit disposition.
@@ -502,7 +502,7 @@ The [command checkpoint](phase-1-commands.md) implements deliverable 4 and a tit
 Its command and browser tests run in both interpreter and tiered modes.
 The [product nREPL checkpoint](phase-1-nrepl.md) implements deliverable 5 with bounded admission and profile discovery.
 The [key interception checkpoint](phase-1-keys.md) adds native command reservations.
-The [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation) passed the product Servo contract tests and software smoke.
+The [Linux CI continuation](handoff-2026-11-14.md#phase-1-linux-ci-continuation) passed the product Servo contract tests and software smoke.
 The acceptance continuation adds default native startup and interpreter execution for every product host.
 The [acceptance review](phase-1-acceptance.md) records passing automated and physical checks for A1–A8.
 Phase 1 acceptance is complete on the acceptance branch as of 2026-11-11.
@@ -610,8 +610,11 @@ Acceptance criteria:
 
 ### Phase 3: Deep web integration
 
-Phase 2 is complete and accepted. Phase 3 implementation has not started.
+Phase 2 is complete and accepted. The owner authorized P3.1 mechanism work.
 Planning starts with the E4 DOM-channel evaluation and the contracts needed by the deliverables and criteria below.
+The [Phase 3 draft plan](phase-3-plan.md) proposes ordered milestones, lifecycle contracts, and acceptance evidence.
+The [P3.1 report](phase-3-mechanisms.md) records initial probes and required upstream contracts.
+Broader owner decisions and dependent implementation remain pending. Accepted scope and pins remain unchanged.
 
 Goal: web content as programmable data; custom buffer types; security boundaries for scripts.
 
@@ -762,7 +765,7 @@ All Phase 1 acceptance criteria now pass.
 
 The owner accepted Phase 2 on 2026-11-22. The [acceptance review](phase-2-acceptance.md#owner-acceptance-2026-11-22) records the exit decision and limits.
 
-1. Prepare the Phase 3 implementation plan, starting with E4 and the DOM-channel lifecycle and capability contracts.
+1. Continue P3.1 from its [mechanism report](phase-3-mechanisms.md), including the required engine and evaluator contracts.
 2. Review the Phase 3 scope and acceptance criteria with the owner before implementation.
 3. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
    Its failures remain unresolved. No minimum hardware specification is established.

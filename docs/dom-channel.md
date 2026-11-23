@@ -1,7 +1,7 @@
 # DOM channel experiment
 
 Status: E4 passed on macOS arm64, 2026-11-06.
-The product crates still contain the Phase 0 bootstrap.
+The [P3.1 mechanism report](phase-3-mechanisms.md) extends this evidence through the product bridge and records the remaining security contracts.
 
 ## Channel choice
 

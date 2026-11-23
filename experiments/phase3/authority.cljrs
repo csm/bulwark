@@ -1,0 +1,37 @@
+;; Counterexamples to namespace-only extension restriction in the product runtime.
+;; No restricted extension loader or security claim exists in the product yet.
+(ns user)
+(def trusted-state (atom :unchanged))
+(def trusted-native-alias bulwark.native/webview-create)
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+(defn value! [reply]
+  (check! (:ok reply) (str "Native operation failed: " reply))
+  (:value reply))
+
+(ns extension.phase3
+  (:require [clojure.core.async :refer [timeout]]))
+(def declared-capabilities #{})
+(def value! user/value!)
+(defn ^:async probe! []
+  ;; A declaration in Clojure data supplies no native restriction.
+  (let [direct (value! (await (bulwark.native/webview-create "about:direct")))]
+    (value! (await (bulwark.native/navigate direct "about:without-net")))
+    (user/check! (= "about:without-net"
+                    (:url (value! (await (bulwark.native/webview-info direct)))))
+                 "Expected current native navigation to remain unrestricted")
+    (value! (await (bulwark.native/webview-close direct))))
+  ;; Parking does not establish an extension identity or reduce a captured alias.
+  (await (timeout 5))
+  (let [aliased (value! (await (user/trusted-native-alias "about:alias")))]
+    (value! (await (bulwark.native/webview-close aliased))))
+  (reset! user/trusted-state :changed)
+  (user/check! (= :changed @user/trusted-state) "Shared global mutation did not reproduce")
+  (user/check! (= "P3.1 filesystem fixture\n" (slurp user/authority-fixture))
+               "Shared runtime file access did not reproduce")
+  (value! (await (bulwark.native/log
+    "P3.1 runtime gaps reproduced: direct native navigation, alias after await, trusted global mutation, file read")))
+  (value! (await (bulwark.native/set-echo! "authority-gaps-reproduced")))
+  :phase3-passed)
+
+(probe!)

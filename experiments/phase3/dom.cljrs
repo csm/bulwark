@@ -1,0 +1,63 @@
+;; P3.1 measures two sequential DOM requests through the existing product APIs.
+;; The page-local slot is a prototype, not a native node handle or security token.
+(ns user (:require [bulwark.native :as native]
+                   [clojure.core.async :refer [timeout]]))
+(defn check! [condition message]
+  (when-not condition (throw (ex-info message {}))))
+(defn value! [reply]
+  (check! (:ok reply) (str "Native operation failed: " reply))
+  (:value reply))
+(defn ^:async script! [view source]
+  (value! (await (native/eval-js view source))))
+(defn ^:async loaded! [view]
+  (loop []
+    (when-not (= :complete (:load-status (value! (await (native/webview-info view)))))
+      (await (timeout 5))
+      (recur))))
+(defn ^:async query-text! [view]
+  (check! (= "node-1" (await (script! view
+    "window.phase3Node=document.querySelector('h1');'node-1'"))) "Query result mismatch")
+  (check! (= "P3.1 product bridge" (await (script! view "phase3Node.textContent")))
+          "Text result mismatch"))
+(defn ^:async probe! []
+  (let [view (value! (await (native/webview-create phase3-fixture)))]
+    (await (loaded! view))
+    (dotimes [_ 20] (await (query-text! view)))
+    (let [samples (loop [n 0 result []]
+                    (if (= n 200)
+                      result
+                      (let [start (System/nanoTime)]
+                        (await (query-text! view))
+                        (recur (inc n) (conj result (- (System/nanoTime) start))))))]
+      ;; Retained custom-style content and ordinary web content share one visible view.
+      (await (script! view "document.querySelector('input').value='retained';'set'"))
+      (let [other (value! (await (native/webview-create phase3-fixture)))]
+        (await (loaded! other))
+        (value! (await (native/webview-select other)))
+        (await (script! other "document.body.innerHTML='<h1>Generated dashboard</h1>';'set'"))
+        (check! (= "Generated dashboard" (await (script! other "document.querySelector('h1').textContent")))
+                "Generated HTML view failed")
+        (value! (await (native/webview-select view)))
+        (check! (= "retained" (await (script! view "document.querySelector('input').value")))
+                "Switch lost the retained document")
+        (value! (await (native/webview-close other))))
+      ;; Full replacement clears page-local slots. The native webview id stays live.
+      (let [target (str phase3-fixture "?replacement")]
+        (value! (await (native/navigate view target)))
+        ;; load() admission can leave the previous Complete status visible.
+        ;; This fixture marker is only a diagnostic barrier, not authenticated identity.
+        (loop []
+          (when-not (= target (await (script! view "String(window.phase3DocumentLocation)")))
+            (await (timeout 5))
+            (recur))))
+      (await (loaded! view))
+      (check! (= "undefined" (await (script! view "typeof window.phase3Node")))
+              "Replacement unexpectedly retained the old page slot")
+      (check! (= :engine-error (:error (await (native/eval-js view "phase3Node.textContent"))))
+              "Old page-local slot did not fail")
+      (value! (await (native/webview-close view)))
+      (value! (await (native/log
+        "P3.1 DOM: retained HTML switching passed; replacement clears page slots but lacks native document identity")))
+      (value! (await (native/set-echo! (str samples))))))
+  :phase3-passed)
+(probe!)

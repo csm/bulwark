@@ -322,6 +322,23 @@ The [DOM channel report](../docs/dom-channel.md) records a second run, measureme
 E4 passed its initial channel criterion. D5 selects JavaScript evaluation callbacks for DOM request results.
 E5 remains necessary before multiple web pages can appear side by side.
 
+### P3.1: Product channel and authority contracts
+
+```sh
+cargo build --locked -p bulwark-experiment-e4 --features servo
+cargo build --locked -p bulwark-shell --no-default-features --features servo --example phase3
+python3 experiments/run_phase3.py
+```
+
+The [P3.1 report](../docs/phase-3-mechanisms.md) records product-channel timings, deferred decisions, bounded observer data, and custom-protocol rendering.
+Its counterexamples reproduce namespace authority leaks, identical source-frame metadata, and replacement of the shared-world agent.
+The six-case runner retains logs and enforces independent process deadlines.
+These diagnostic results do not establish a restricted extension loader or a privileged page bridge.
+
+For runtime-only checks without graphics, build the example without the Servo feature and use `--runtime-only` on the Python runner.
+For release product timings, build the example with `--release` and pass `--binary target/release/examples/phase3` to that runner.
+The E4 binary remains a separate debug measurement unless its path explicitly selects another build.
+
 ## E7: Pure async user code and a separate engine thread
 
 ```sh

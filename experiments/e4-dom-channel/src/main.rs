@@ -1,4 +1,5 @@
 //! E4 measures Servo's public script and resource interception channels.
+mod contracts;
 use anyhow::{Result, bail, ensure};
 use servo::{
     EventLoopWaker, JSValue, LoadStatus, RenderingContext, Servo, ServoBuilder,
@@ -140,6 +141,9 @@ fn report(label: &str, samples: &[Duration]) {
 }
 
 fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--phase3") {
+        return contracts::run();
+    }
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let deadline = Instant::now() + Duration::from_secs(30);
     let context = Rc::new(
