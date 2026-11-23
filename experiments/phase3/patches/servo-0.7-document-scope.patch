@@ -3,7 +3,7 @@
 @@ -2,7 +2,9 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
- 
+
 -use embedder_traits::{JSValue, JavaScriptEvaluationError, JavaScriptEvaluationId};
 +use embedder_traits::{
 +    DocumentIdentity, DocumentJavaScriptResult, JavaScriptEvaluationError, JavaScriptEvaluationId,
@@ -13,12 +13,12 @@
  use servo_constellation_traits::EmbedderToConstellationMessage;
 @@ -10,7 +12,7 @@
  use crate::proxies::ConstellationProxy;
- 
+
  struct PendingEvaluation {
 -    callback: Box<dyn FnOnce(Result<JSValue, JavaScriptEvaluationError>)>,
 +    callback: Box<dyn FnOnce(Result<DocumentJavaScriptResult, JavaScriptEvaluationError>)>,
  }
- 
+
  pub(crate) struct JavaScriptEvaluator {
 @@ -36,14 +38,16 @@
      pub(crate) fn evaluate(
@@ -47,6 +47,20 @@
      ) {
          (self
              .pending_evaluations
+--- a/servo/servo.rs
++++ b/servo/servo.rs
+@@ -811,6 +811,11 @@
+                     webview.request_create_new(response_sender);
+                 }
+             },
++            ConstellationToEmbedderMsg::DocumentLifecycle(webview_id, event) => {
++                if let Some(webview) = self.get_webview_handle(webview_id) {
++                    webview.delegate().notify_document_lifecycle(webview, event);
++                }
++            }
+             ConstellationToEmbedderMsg::WebViewClosed(webview_id) => {
+                 if let Some(webview) = self.get_webview_handle(webview_id) {
+                     webview.delegate().notify_closed(webview);
 --- a/servo/webview.rs
 +++ b/servo/webview.rs
 @@ -12,10 +12,11 @@
@@ -65,7 +79,7 @@
  };
  use euclid::{Scale, Size2D};
  use image::RgbaImage;
-@@ -735,6 +736,39 @@
+@@ -735,6 +736,56 @@
      ) {
          self.servo().javascript_evaluator_mut().evaluate(
              self.id(),
@@ -75,8 +89,25 @@
 +        );
 +    }
 +
++    /// Experimental instrumentation: exercise the real close path while retaining the handle.
++    #[doc(hidden)]
++    pub fn close_for_document_scope_probe(&self) {
++        self.servo()
++            .constellation_proxy()
++            .send(EmbedderToConstellationMessage::CloseWebView(self.id()));
++    }
++
++    /// Experimental instrumentation: enter the constellation's existing panic recovery path.
++    /// This does not crash a script thread or prove process-failure detection.
++    #[doc(hidden)]
++    pub fn crash_for_document_scope_probe(&self) {
++        self.servo().constellation_proxy().send(
++            EmbedderToConstellationMessage::CrashForDocumentScopeProbe(self.id()),
++        );
++    }
++
 +    /// Snapshot the active top document's engine identity without reading page-controlled data.
-+    /// This prototype uses an empty script; it does not install lifecycle notifications.
++    /// This prototype uses an empty script. Lifecycle snapshots arrive through the delegate.
 +    pub fn request_document_identity(
 +        &self,
 +        callback: impl FnOnce(Result<DocumentIdentity, JavaScriptEvaluationError>) + 'static,
@@ -91,8 +122,8 @@
 +
 +    /// Evaluate only if the expected document is still active immediately before execution.
 +    /// A successful reply identifies the document that executed the script. Mutations already
-+    /// performed cannot be undone. Lifecycle revocation and embedder delivery checks are still
-+    /// required before this prototype can serve a privileged DOM API.
++    /// performed cannot be undone. The embedder must check its activation generation at
++    /// admission and delivery, including replies retained after the callback.
 +    pub fn evaluate_javascript_in_document<T: ToString>(
 +        &self,
 +        expected_document: DocumentIdentity,
@@ -105,29 +136,82 @@
              script.to_string(),
              Box::new(callback),
          );
+--- a/servo/webview_delegate.rs
++++ b/servo/webview_delegate.rs
+@@ -8,11 +8,12 @@
+ use embedder_traits::{
+     AlertResponse, AllowOrDeny, AuthenticationResponse, BluetoothDeviceDescription,
+     ConfirmResponse, ConsoleLogLevel, ContextMenuAction, ContextMenuElementInformation,
+-    ContextMenuItem, Cursor, EmbedderControlId, EmbedderControlResponse, FilePickerRequest,
+-    FilterPattern, InputEventId, InputEventResult, InputMethodType, LoadStatus, MediaSessionEvent,
+-    NewWebViewDetails, Notification, PermissionFeature, PromptResponse, RgbColor, ScreenGeometry,
+-    SelectElementOptionOrOptgroup, SelectElementRequest, SimpleDialogRequest, TraversalId,
+-    WebResourceRequest, WebResourceResponse, WebResourceResponseMsg,
++    ContextMenuItem, Cursor, DocumentLifecycle, EmbedderControlId, EmbedderControlResponse,
++    FilePickerRequest, FilterPattern, InputEventId, InputEventResult, InputMethodType, LoadStatus,
++    MediaSessionEvent, NewWebViewDetails, Notification, PermissionFeature, PromptResponse,
++    RgbColor, ScreenGeometry, SelectElementOptionOrOptgroup, SelectElementRequest,
++    SimpleDialogRequest, TraversalId, WebResourceRequest, WebResourceResponse,
++    WebResourceResponseMsg,
+ };
+ use paint_api::rendering_context::RenderingContext;
+ use servo_base::generic_channel::{GenericCallback, GenericSender, SendError};
+@@ -916,6 +917,10 @@
+ /// instance. A [`WebView`]'s delegate needs to be set at the time of creation using
+ /// [`WebViewBuilder::delegate`].
+ pub trait WebViewDelegate {
++    /// Engine-authenticated top-document lifecycle, ordered with evaluation replies.
++    /// Revocation must invalidate retained replies before allocating host handles.
++    fn notify_document_lifecycle(&self, _webview: WebView, _event: DocumentLifecycle) {}
++
+     /// Get the [`ScreenGeometry`] for this [`WebView`]. If this is unimplemented or returns `None`
+     /// the screen will have the size of the [`WebView`]'s `RenderingContext` and `WebView` will be
+     /// considered to be positioned at the screen's origin.
 --- a/servo-constellation/constellation.rs
 +++ b/servo-constellation/constellation.rs
-@@ -108,12 +108,13 @@
+@@ -108,8 +108,9 @@
  use embedder_traits::resources::{self, Resource};
  use embedder_traits::user_contents::{UserContentManagerId, UserContents};
  use embedder_traits::{
 -    AnimationState, EmbedderControlId, EmbedderControlResponse, EmbedderProxy, FocusSequenceNumber,
 -    GenericEmbedderProxy, InputEvent, InputEventAndId, InputEventOutcome, JSValue,
--    JavaScriptEvaluationError, JavaScriptEvaluationId, KeyboardEvent, MediaSessionActionType,
--    MediaSessionEvent, MediaSessionPlaybackState, MouseButtonAction, MouseButtonEvent,
--    NewWebViewDetails, PaintHitTestResult, Theme, ViewportDetails, WakeLockDelegate, WakeLockType,
--    WebDriverCommandMsg, WebDriverLoadStatus, WebDriverScriptCommand,
-+    AnimationState, DocumentIdentity, DocumentJavaScriptResult, EmbedderControlId,
-+    EmbedderControlResponse, EmbedderProxy, FocusSequenceNumber, GenericEmbedderProxy, InputEvent,
-+    InputEventAndId, InputEventOutcome, JavaScriptEvaluationError, JavaScriptEvaluationId,
-+    KeyboardEvent, MediaSessionActionType, MediaSessionEvent, MediaSessionPlaybackState,
-+    MouseButtonAction, MouseButtonEvent, NewWebViewDetails, PaintHitTestResult, Theme,
-+    ViewportDetails, WakeLockDelegate, WakeLockType, WebDriverCommandMsg, WebDriverLoadStatus,
-+    WebDriverScriptCommand,
- };
- use euclid::default::Size2D as UntypedSize2D;
- use fonts::SystemFontServiceProxy;
-@@ -1408,10 +1409,16 @@
++    AnimationState, DocumentIdentity, DocumentJavaScriptResult, DocumentLifecycle,
++    EmbedderControlId, EmbedderControlResponse, EmbedderProxy, FocusSequenceNumber,
++    GenericEmbedderProxy, InputEvent, InputEventAndId, InputEventOutcome,
+     JavaScriptEvaluationError, JavaScriptEvaluationId, KeyboardEvent, MediaSessionActionType,
+     MediaSessionEvent, MediaSessionPlaybackState, MouseButtonAction, MouseButtonEvent,
+     NewWebViewDetails, PaintHitTestResult, Theme, ViewportDetails, WakeLockDelegate, WakeLockType,
+@@ -346,6 +347,7 @@
+
+     /// Bookkeeping data for all webviews in the constellation.
+     webviews: FxHashMap<WebViewId, ConstellationWebView>,
++    document_identities: FxHashMap<PipelineId, DocumentIdentity>,
+
+     /// Channels for the constellation to send messages to the public
+     /// resource-related threads. There are two groups of resource threads: one
+@@ -679,6 +681,7 @@
+                     constellation_to_embedder_proxy: state.constellation_to_embedder_proxy,
+                     paint_proxy: state.paint_proxy,
+                     webviews: Default::default(),
++                    document_identities: Default::default(),
+                     devtools_sender: state.devtools_sender,
+                     script_to_devtools_callback: Default::default(),
+                     #[cfg(feature = "bluetooth")]
+@@ -1342,6 +1345,13 @@
+                 self.handle_new_top_level_browsing_context(url, new_webview_details);
+             },
+             // Close a top level browsing context.
++            EmbedderToConstellationMessage::CrashForDocumentScopeProbe(webview_id) => {
++                self.handle_panic_in_webview(
++                    webview_id,
++                    &"S1 probe injected crash".to_owned(),
++                    &None,
++                );
++            }
+             EmbedderToConstellationMessage::CloseWebView(webview_id) => {
+                 self.handle_close_top_level_browsing_context(webview_id);
+             },
+@@ -1408,10 +1418,16 @@
              EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
@@ -146,7 +230,7 @@
              EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
                  self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
              },
-@@ -1576,6 +1583,7 @@
+@@ -1576,6 +1592,7 @@
          &mut self,
          webview_id: WebViewId,
          evaluation_id: JavaScriptEvaluationId,
@@ -154,10 +238,10 @@
          script: String,
      ) {
          let browsing_context_id = BrowsingContextId::from(webview_id);
-@@ -1591,12 +1599,21 @@
+@@ -1591,12 +1608,21 @@
              return;
          };
- 
+
 +        if expected_document.is_some_and(|expected| expected.pipeline_id() != pipeline.id) {
 +            self.handle_finish_javascript_evaluation(
 +                evaluation_id,
@@ -176,7 +260,46 @@
                  script,
              ))
              .is_err()
-@@ -2025,6 +2042,18 @@
+@@ -1795,8 +1821,37 @@
+                 self.handle_joint_session_history_length(webview_id, response_sender);
+             },
+             // Notification that the new document is ready to become active
+-            ScriptToConstellationMessage::ActivateDocument => {
++            ScriptToConstellationMessage::ActivateDocument(document) => {
++                if !self.pipelines.contains_key(&source_pipeline_id)
++                    || !self.webviews.contains_key(&webview_id)
++                {
++                    return;
++                }
++                self.document_identities
++                    .insert(source_pipeline_id, document);
+                 self.handle_activate_document_msg(webview_id, source_pipeline_id);
++            }
++            ScriptToConstellationMessage::DocumentLifecycle(event) => {
++                // Ignore shutdown/crashed pipelines; only construction registers an identity.
++                if self.document_identities.contains_key(&source_pipeline_id) {
++                    if let DocumentLifecycle::Active(Some(document)) = event {
++                        self.document_identities
++                            .insert(source_pipeline_id, document);
++                    }
++                    if self
++                        .active_document(webview_id)
++                        .is_some_and(|document| match event {
++                            DocumentLifecycle::Active(Some(id))
++                            | DocumentLifecycle::DomReady(id)
++                            | DocumentLifecycle::LoadComplete(id) => id == document,
++                            DocumentLifecycle::Active(None) => false,
++                        })
++                    {
++                        self.constellation_to_embedder_proxy.send(
++                            ConstellationToEmbedderMsg::DocumentLifecycle(webview_id, event),
++                        );
++                    }
++                }
+             },
+             // Update pipeline url after redirections
+             ScriptToConstellationMessage::SetFinalUrl(final_url) => {
+@@ -2025,6 +2080,20 @@
                      .send(mem::ProfilerMsg::Report(sender));
              },
              ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
@@ -186,7 +309,9 @@
 +                    .get(&BrowsingContextId::from(webview_id))
 +                    .map(|context| context.pipeline_id);
 +                let result = result.and_then(|result| {
-+                    if active == Some(result.document.pipeline_id()) {
++                    if active == Some(result.document.pipeline_id())
++                        && self.active_document(webview_id) == Some(result.document)
++                    {
 +                        Ok(result)
 +                    } else {
 +                        Err(JavaScriptEvaluationError::StaleDocument)
@@ -195,7 +320,58 @@
                  self.handle_finish_javascript_evaluation(evaluation_id, result)
              },
              ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
-@@ -3471,7 +3500,7 @@
+@@ -2968,10 +3037,20 @@
+     fn handle_pipeline_exited(&mut self, pipeline_id: PipelineId, exit_source: PipelineExitSource) {
+         debug!("{}: Exited", pipeline_id);
+         self.remove_worker_animation_frame_providers_for_pipeline(pipeline_id);
++        self.document_identities.remove(&pipeline_id);
+
+         let Some(pipeline) = self.pipelines.remove(&pipeline_id) else {
+             return;
+         };
++
++        if pipeline.browsing_context_id == BrowsingContextId::from(pipeline.webview_id) {
++            self.constellation_to_embedder_proxy.send(
++                ConstellationToEmbedderMsg::DocumentLifecycle(
++                    pipeline.webview_id,
++                    DocumentLifecycle::Active(self.active_document(pipeline.webview_id)),
++                ),
++            );
++        }
+
+         // Clean up any registered interests for this pipeline.
+         self.pipeline_interests.retain(|_, set| {
+@@ -3058,6 +3137,17 @@
+         reason: &String,
+         backtrace: &Option<String>,
+     ) {
++        if let Some(context) = self
++            .browsing_contexts
++            .get(&BrowsingContextId::from(webview_id))
++        {
++            self.document_identities.remove(&context.pipeline_id);
++        }
++        self.constellation_to_embedder_proxy
++            .send(ConstellationToEmbedderMsg::DocumentLifecycle(
++                webview_id,
++                DocumentLifecycle::Active(None),
++            ));
+         self.constellation_to_embedder_proxy
+             .send(ConstellationToEmbedderMsg::Panic(
+                 webview_id,
+@@ -3402,6 +3492,11 @@
+     /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
+     fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
+         debug!("{webview_id}: Closing");
++        self.constellation_to_embedder_proxy
++            .send(ConstellationToEmbedderMsg::DocumentLifecycle(
++                webview_id,
++                DocumentLifecycle::Active(None),
++            ));
+         let browsing_context_id = BrowsingContextId::from(webview_id);
+         // Step 5. Remove traversable from the user agent's top-level traversable set.
+         let browsing_context =
+@@ -3471,7 +3566,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -204,38 +380,105 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
+@@ -5840,10 +5935,27 @@
+         }
+     }
+
++    fn active_document(&self, webview_id: WebViewId) -> Option<DocumentIdentity> {
++        let context = self
++            .browsing_contexts
++            .get(&BrowsingContextId::from(webview_id))?;
++        self.document_identities.get(&context.pipeline_id).copied()
++    }
++
+     /// Update the current activity of a pipeline.
+     #[servo_tracing::instrument(skip_all)]
+     fn update_activity(&self, pipeline_id: PipelineId) {
+         self.set_activity(pipeline_id, self.get_activity(pipeline_id));
++        if let Some(pipeline) = self.pipelines.get(&pipeline_id) {
++            if pipeline.browsing_context_id == BrowsingContextId::from(pipeline.webview_id) {
++                self.constellation_to_embedder_proxy.send(
++                    ConstellationToEmbedderMsg::DocumentLifecycle(
++                        pipeline.webview_id,
++                        DocumentLifecycle::Active(self.active_document(pipeline.webview_id)),
++                    ),
++                );
++            }
++        }
+     }
+
+     /// Handle updating the size of a browsing context.
 --- a/servo-constellation/embedder.rs
 +++ b/servo-constellation/embedder.rs
-@@ -3,7 +3,7 @@
+@@ -3,8 +3,8 @@
   * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
- 
+
  use embedder_traits::{
 -    InputEventOutcome, JSValue, JavaScriptEvaluationError, JavaScriptEvaluationId,
-+    DocumentJavaScriptResult, InputEventOutcome, JavaScriptEvaluationError, JavaScriptEvaluationId,
-     MediaSessionEvent, NewWebViewDetails, TraversalId,
+-    MediaSessionEvent, NewWebViewDetails, TraversalId,
++    DocumentJavaScriptResult, DocumentLifecycle, InputEventOutcome, JavaScriptEvaluationError,
++    JavaScriptEvaluationId, MediaSessionEvent, NewWebViewDetails, TraversalId,
  };
  use servo_base::generic_channel::GenericSender;
-@@ -32,7 +32,7 @@
+ use servo_base::id::{PipelineId, WebViewId};
+@@ -32,8 +32,10 @@
      /// finished with the given result.
      FinishJavaScriptEvaluation(
          JavaScriptEvaluationId,
 -        Result<JSValue, JavaScriptEvaluationError>,
 +        Result<DocumentJavaScriptResult, JavaScriptEvaluationError>,
      ),
++    /// Top-document identity and readiness events, ordered with evaluation replies.
++    DocumentLifecycle(WebViewId, DocumentLifecycle),
      /// Whether or not to allow script to open a new tab/browser
      AllowOpeningWebView(WebViewId, GenericSender<Option<NewWebViewDetails>>),
+     /// Whether or not to allow a pipeline to load a url.
+--- a/servo-constellation/tracing.rs
++++ b/servo-constellation/tracing.rs
+@@ -61,6 +61,7 @@
+                 Self::LogEntry(..) => target!("LogEntry"),
+                 Self::NewWebView(..) => target!("NewWebView"),
+                 Self::CloseWebView(..) => target!("CloseWebView"),
++                Self::CrashForDocumentScopeProbe(..) => target!("CrashForDocumentScopeProbe"),
+                 Self::SetWebViewHasSystemFocus(..) => target!("SetWebViewHasSystemFocus"),
+                 Self::ForwardInputEvent(_webview_id, event, ..) => event.log_target(),
+                 Self::RefreshCursor(..) => target!("RefreshCursor"),
+@@ -181,7 +182,8 @@
+                 Self::ScriptLoadedURLInIFrame(..) => target!("ScriptLoadedURLInIFrame"),
+                 Self::ScriptNewIFrame(..) => target!("ScriptNewIFrame"),
+                 Self::CreateAuxiliaryWebView(..) => target!("ScriptNewAuxiliary"),
+-                Self::ActivateDocument => target!("ActivateDocument"),
++                Self::ActivateDocument(..) => target!("ActivateDocument"),
++                Self::DocumentLifecycle(..) => target!("DocumentLifecycle"),
+                 Self::SetFinalUrl(..) => target!("SetFinalUrl"),
+                 Self::LogEntry(..) => target!("LogEntry"),
+                 Self::DiscardDocument => target!("DiscardDocument"),
 --- a/servo-constellation-traits/from_script_message.rs
 +++ b/servo-constellation-traits/from_script_message.rs
-@@ -10,7 +10,7 @@
+@@ -10,8 +10,9 @@
  use devtools_traits::{DevtoolScriptControlMsg, ScriptToDevtoolsControlMsg, WorkerId};
  use embedder_traits::user_contents::UserContentManagerId;
  use embedder_traits::{
 -    AnimationState, FocusSequenceNumber, JSValue, JavaScriptEvaluationError,
-+    AnimationState, DocumentJavaScriptResult, FocusSequenceNumber, JavaScriptEvaluationError,
-     JavaScriptEvaluationId, MediaSessionEvent, ScriptToEmbedderChan, ViewportDetails, WakeLockType,
+-    JavaScriptEvaluationId, MediaSessionEvent, ScriptToEmbedderChan, ViewportDetails, WakeLockType,
++    AnimationState, DocumentIdentity, DocumentJavaScriptResult, DocumentLifecycle,
++    FocusSequenceNumber, JavaScriptEvaluationError, JavaScriptEvaluationId, MediaSessionEvent,
++    ScriptToEmbedderChan, ViewportDetails, WakeLockType,
  };
  use encoding_rs::Encoding;
-@@ -810,7 +810,7 @@
+ use euclid::default::Size2D as UntypedSize2D;
+@@ -774,7 +775,9 @@
+     /// Script has opened a new auxiliary browsing context.
+     CreateAuxiliaryWebView(AuxiliaryWebViewCreationRequest),
+     /// Mark a new document as active
+-    ActivateDocument,
++    ActivateDocument(DocumentIdentity),
++    /// A script-driven reset or identity-tagged readiness event.
++    DocumentLifecycle(DocumentLifecycle),
+     /// Update the pipeline Url, which can change after redirections.
+     SetFinalUrl(ServoUrl),
+     /// A log entry, with the top-level browsing context id and thread name
+@@ -810,7 +813,7 @@
      /// Return the result of the evaluated JavaScript with the given [`JavaScriptEvaluationId`].
      FinishJavaScriptEvaluation(
          JavaScriptEvaluationId,
@@ -259,7 +502,16 @@
  };
  pub use from_script_message::*;
  use malloc_size_of_derive::MallocSizeOf;
-@@ -97,7 +97,12 @@
+@@ -72,6 +72,8 @@
+     NewWebView(ServoUrl, NewWebViewDetails),
+     /// Close a top level browsing context.
+     CloseWebView(WebViewId),
++    /// Experimental failure injection into the existing constellation panic handler.
++    CrashForDocumentScopeProbe(WebViewId),
+     /// Set whether a WebView has system focus. This corresponds to the [HTML
+     /// specification's] concept of "system focus" and is distinct from the browsing
+     /// context or element that has focus within the WebView.
+@@ -97,7 +99,12 @@
      PaintMetric(PipelineId, PaintMetricEvent),
      /// Evaluate a JavaScript string in the context of a `WebView`. When execution is complete or an
      /// error is encountered, a correpsonding message will be sent to the embedding layer.
@@ -275,13 +527,13 @@
      /// Sends the generated image key to the image cache associated with this pipeline.
 --- a/servo-embedder-traits/lib.rs
 +++ b/servo-embedder-traits/lib.rs
-@@ -1033,6 +1033,39 @@
+@@ -1033,6 +1033,49 @@
  #[derive(Clone, Copy, Deserialize, Eq, Hash, PartialEq, Serialize)]
  pub struct JavaScriptEvaluationId(pub usize);
- 
+
 +/// Engine identity for one document incarnation. This is scope, not an authority grant.
 +/// Same-document URL changes preserve it. Document replacement and successful
-+/// document.open() reset it. Lifecycle delivery is outside this prototype.
++/// document.open() and top-document reactivation reset it. Lifecycle snapshots revoke host generations.
 +#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 +pub struct DocumentIdentity {
 +    pipeline_id: PipelineId,
@@ -305,6 +557,16 @@
 +    }
 +}
 +
++/// Ordered top-document lifecycle snapshots. `Active(None)` revokes the current document.
++/// A different Active identity revokes its predecessor. History reactivation receives a
++/// fresh incarnation before script resumes. Embedders must not revive old handles.
++#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
++pub enum DocumentLifecycle {
++    Active(Option<DocumentIdentity>),
++    DomReady(DocumentIdentity),
++    LoadComplete(DocumentIdentity),
++}
++
 +/// Result tagged with the identity checked immediately before execution.
 +#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 +pub struct DocumentJavaScriptResult {
@@ -315,7 +577,7 @@
  /// A JavaScript value produced by evaluation of a script.
  #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
  pub enum JSValue {
-@@ -1081,6 +1114,8 @@
+@@ -1081,6 +1124,8 @@
  /// An error that happens when trying to evaluate JavaScript on a `WebView`.
  #[derive(Clone, Debug, Deserialize, EnumMessage, PartialEq, Serialize)]
  pub enum JavaScriptEvaluationError {
@@ -333,22 +595,22 @@
 +use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
  use std::sync::{Arc as StdArc, LazyLock};
  use std::time::Duration;
- 
+
 @@ -24,8 +25,8 @@
  use devtools_traits::ScriptToDevtoolsControlMsg;
  use dom_struct::dom_struct;
  use embedder_traits::{
 -    AllowOrDeny, AnimationState, CustomHandlersAutomationMode, EmbedderMsg, Image, LoadStatus,
 -    Theme,
-+    AllowOrDeny, AnimationState, CustomHandlersAutomationMode, DocumentIdentity, EmbedderMsg,
-+    Image, LoadStatus, Theme,
++    AllowOrDeny, AnimationState, CustomHandlersAutomationMode, DocumentIdentity, DocumentLifecycle,
++    EmbedderMsg, Image, LoadStatus, Theme,
  };
  use encoding_rs::{Encoding, UTF_8};
  use html5ever::{LocalName, QualName, local_name, ns};
 @@ -400,6 +401,16 @@
      pub(crate) top_level_dom_complete: Cell<Option<CrossProcessInstant>>,
  }
- 
+
 +// The pipeline disambiguates processes. Checked allocation never reuses an incarnation.
 +static EVALUATION_INCARNATIONS: AtomicU64 = AtomicU64::new(1);
 +fn next_evaluation_incarnation() -> u64 {
@@ -371,10 +633,10 @@
      /// <https://html.spec.whatwg.org/multipage/#concept-document-about-base-url>
      #[no_trace]
      about_base_url: DomRefCell<Option<ServoUrl>>,
-@@ -1050,6 +1063,14 @@
+@@ -1050,6 +1063,21 @@
          self.content_type.matches(APPLICATION, "xhtml+xml")
      }
- 
+
 +    /// Identity for embedder evaluation scope, independent of page-controlled state.
 +    pub(crate) fn evaluation_identity(&self) -> DocumentIdentity {
 +        DocumentIdentity::new(
@@ -383,28 +645,70 @@
 +        )
 +    }
 +
++    fn notify_document_lifecycle(&self, event: DocumentLifecycle) {
++        if self.window().is_top_level() {
++            self.window()
++                .send_to_constellation(ScriptToConstellationMessage::DocumentLifecycle(event));
++        }
++    }
++
      /// <https://html.spec.whatwg.org/multipage/#fully-active>
      pub(crate) fn is_fully_active(&self) -> bool {
          // > A Document d is said to be fully active when d is the active document of a
-@@ -4051,6 +4072,7 @@
- 
+@@ -1091,6 +1119,15 @@
+
+         // Set the document's activity level, reflow if necessary, and suspend or resume timers.
+         self.activity.set(activity);
++        // A retained history document receives a fresh execution scope before resuming.
++        // Old queued requests must not regain validity when this pipeline becomes active again.
++        if activity == DocumentActivity::FullyActive && self.window().is_top_level() {
++            self.evaluation_incarnation
++                .set(next_evaluation_incarnation());
++            self.notify_document_lifecycle(DocumentLifecycle::Active(Some(
++                self.evaluation_identity(),
++            )));
++        }
+         let media = ServoMedia::get();
+         let pipeline_id = self.window().pipeline_id();
+         let client_context_id =
+@@ -1515,6 +1552,9 @@
+
+     pub(crate) fn notify_embedder_of_load_completion(&self) {
+         if self.window().is_top_level() {
++            self.notify_document_lifecycle(DocumentLifecycle::LoadComplete(
++                self.evaluation_identity(),
++            ));
+             self.send_to_embedder(EmbedderMsg::NotifyLoadStatusChanged(
+                 self.webview_id(),
+                 LoadStatus::Complete,
+@@ -2749,6 +2789,7 @@
+                 let document = document.root();
+                 update_with_current_instant(&document.navigation_timing.dom_content_loaded_event_start);
+                 // Step 6.2. Fire an event named DOMContentLoaded at the Document object, with its bubbles attribute initialized to true.
++                document.notify_document_lifecycle(DocumentLifecycle::DomReady(document.evaluation_identity()));
+                 document.upcast::<EventTarget>().fire_bubbling_event(cx, atom!("DOMContentLoaded"));
+                 // Step 6.3. Set the Document's load timing info's DOM content loaded event end time to
+                 // the current high resolution time given the Document's relevant global object.
+@@ -4051,6 +4092,7 @@
+
          Document {
              node: Node::new_document_node(),
 +            evaluation_incarnation: Cell::new(next_evaluation_incarnation()),
              document_or_shadow_root: DocumentOrShadowRoot::new(window),
              window: Dom::from_ref(window),
              has_browsing_context,
-@@ -6873,6 +6895,10 @@
+@@ -6873,6 +6915,11 @@
              self.window.upcast::<EventTarget>().remove_all_listeners(cx);
          }
- 
+
 +        // Invalidate references before clearing the DOM, including reentrant callbacks.
 +        self.evaluation_incarnation
 +            .set(next_evaluation_incarnation());
++        self.notify_document_lifecycle(DocumentLifecycle::Active(Some(self.evaluation_identity())));
 +
          // Step 11. Replace all with null within document.
          Node::replace_all(cx, None, self.upcast::<Node>());
- 
+
 --- a/servo-script/event_loop/script_thread.rs
 +++ b/servo-script/event_loop/script_thread.rs
 @@ -44,9 +44,9 @@
@@ -441,6 +745,15 @@
              ScriptThreadMessage::SendImageKeysBatch(pipeline_id, image_keys) => {
                  if let Some(window) = self.documents.borrow().find_window(pipeline_id) {
                      window
+@@ -3766,7 +3774,7 @@
+             .send((
+                 webview_id,
+                 incomplete.pipeline_id,
+-                ScriptToConstellationMessage::ActivateDocument,
++                ScriptToConstellationMessage::ActivateDocument(document.evaluation_identity()),
+             ))
+             .unwrap();
+
 @@ -4522,6 +4530,7 @@
          webview_id: WebViewId,
          pipeline_id: PipelineId,
@@ -469,12 +782,12 @@
 +            ));
 +            return;
 +        }
- 
+
          let global_scope = window.as_global_scope();
          let mut realm = enter_auto_realm(cx, global_scope);
 @@ -4558,6 +4583,16 @@
          };
- 
+
          let result = jsval_to_webdriver(cx, global_scope, return_value.handle());
 +        // Serialization can invoke getters; check the document again after it finishes.
 +        let result =

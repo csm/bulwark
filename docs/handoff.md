@@ -10,11 +10,11 @@ P3.1 passed deferred navigation, deferred resource responses, bounded observer d
 The final release DOM prototype used two requests, with p50 values of 0.095333 ms in Tiered and 0.090500 ms in TreeWalk.
 These measurements exclude the future node registry and JSON schema conversion. C6 remains pending.
 
-The next [S1 document scope prototype](phase-3-document-scope.md) now passes nine local cases in three runs.
-An isolated Servo patch checks document incarnations before execution and tags successful results.
-The regressions include queued resets, serialization getters, reload, history, and different views.
-They also prove that a successful reply can become obsolete before host consumption.
-Lifecycle revocation and host delivery checks remain necessary before product integration.
+The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications and a host allocation check.
+The isolated engine patch assigns fresh scope identities on reset and history reactivation.
+The probe rejects obsolete replies before its allocation counter changes.
+Its sixteen cases cover tagged readiness, nested frames, redirects, failed loads, close, host cancellation, and injected crash recovery.
+Actual process failure, cancellation of engine work, and replacement-path audits remain open.
 The product pins and installed natives remain unchanged.
 
 P3.1 remains open on these requirements:
@@ -31,11 +31,15 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [document scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) retains the three S1 runs and both existing engine controls.
+The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) retains the current S1 runs and both existing engine controls.
+The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
+The sixteen lifecycle cases passed in three final runs, with both existing Servo controls.
+One preliminary repeat timed out at the redirect. The final fixture waits for explicit history-traversal completion and exposes HTTP worker errors.
+Five diagnostic repeats passed after that change. The earlier timeout's exact cause remains unproven.
 
-All six final probe cases, 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
-The [retained evidence](../experiments/phase3/evidence-2026-11-22.json) includes timing samples, source hashes, and final probe results.
+All 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
+The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
 ## Accepted baseline and prior work
@@ -56,8 +60,9 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Extend the S1 prototype with activation/revocation notifications and host rejection of obsolete replies before node allocation.
-   Cover redirects, failed loads, close, crash, and cancellation.
+   Continue the S1 lifecycle audit with actual script-thread/process failure, pending callback cleanup, and cancellation of engine work.
+   Cover JavaScript URLs and script-created initial documents. Review the proposed history reactivation policy before product integration.
+   The current host counter still needs a production registry and handle revocation.
    Protocol-source binding, redirect/rewrite, and evaluator authority mechanisms also remain open.
 2. Review the remaining Phase 3 scope decisions and acceptance criteria with the owner before dependent implementation.
    Preserve the accepted single-visible-webview scope until E5 supplies evidence for simultaneous live web splits.

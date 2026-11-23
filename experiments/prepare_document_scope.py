@@ -96,6 +96,9 @@ def main():
         "source_hashes": source_hashes,
         "product_hashes": {name: sha256(ROOT / name) for name in ("Cargo.toml", "Cargo.lock")},
         "candidate": str(candidate),
+        "probe_hashes": {str(path.relative_to(candidate)): sha256(path)
+                         for path in sorted((candidate / "experiments/e4-dom-channel").rglob("*"))
+                         if path.is_file()},
     }
     (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     print(json.dumps({"candidate": str(candidate), "sources": str(sources)}))

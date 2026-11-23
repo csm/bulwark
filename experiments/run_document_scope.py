@@ -10,6 +10,14 @@ import time
 
 
 ROOT = Path(__file__).resolve().parent.parent
+EXPECTED_MARKERS = {
+    "initial-blank-and-tagged-result", "lifecycle-readiness-and-current-delivery",
+    "same-document-navigation", "held-A-after-B-and-unscoped-control",
+    "queued-reset-race-and-pipeline-collision", "serialization-reset",
+    "delayed-host-delivery", "host-cancellation", "reload", "history", "redirect",
+    "failed-load", "cross-view", "subframe-isolation", "close", "injected-crash",
+    "document-scope prototype",
+}
 
 
 def sha256(path):
@@ -30,6 +38,15 @@ def main():
     patch = ROOT / "experiments/phase3/patches/servo-0.7-document-scope.patch"
     if provenance["patch_sha256"] != sha256(patch):
         parser.error("The preparation does not match the current patch")
+    for name, expected in provenance["product_hashes"].items():
+        if sha256(ROOT / name) != expected:
+            parser.error(f"The preparation does not match the product manifest: {name}")
+    if not provenance.get("probe_hashes"):
+        parser.error("Recreate the preparation to record candidate probe hashes")
+    for name, expected in provenance["probe_hashes"].items():
+        candidate_path = Path(provenance["candidate"]) / name
+        if sha256(ROOT / name) != expected or sha256(candidate_path) != expected:
+            parser.error(f"The preparation does not match the current probe: {name}")
     args.output.mkdir(parents=True, exist_ok=False)
     report = {
         "started_utc": datetime.now(timezone.utc).isoformat(),
@@ -44,7 +61,8 @@ def main():
             "experiments/e4-dom-channel/phase3-agent.js",
             "experiments/prepare_document_scope.py", "experiments/run_document_scope.py",
         )},
-        "scope": "Experimental engine only. S1 lifecycle and host delivery remain open.",
+        "scope": ("Experimental engine and host allocation gate. Actual process failure, "
+                  "cancellation of engine work, and replacement audits remain open."),
         "cases": [],
     }
     cases = [(f"document-scope-{i + 1}", ["--document-scope"])
@@ -64,7 +82,11 @@ def main():
         markers = [line for line in log.splitlines() if line.startswith("S1 ")]
         # An unpatched E4 binary must not pass by silently running its baseline path.
         assertions_complete = flags != ["--document-scope"] or (
-            len(markers) == 10 and markers[-1].startswith("S1 document-scope prototype: PASS"))
+            len(markers) == len(EXPECTED_MARKERS)
+            and {line.removeprefix("S1 ").split(": PASS", 1)[0] for line in markers}
+            == EXPECTED_MARKERS
+            and all(": PASS" in line for line in markers)
+            and markers[-1].startswith("S1 document-scope prototype: PASS"))
         report["cases"].append({
             "name": name, "command": command, "status": status,
             "elapsed_seconds": time.monotonic() - started,
