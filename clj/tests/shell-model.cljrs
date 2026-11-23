@@ -29,11 +29,11 @@
 (keymap/unbind-key! "C-x b")
 (check! (nil? (get @keymap/bindings ["C-x" "b"])) "Unbinding failed")
 (let [published (atom [])]
-  (keymap/set-route-publisher! (fn [sequences cancel option-mode] (swap! published conj sequences)))
+  (keymap/set-route-publisher! (fn [sequences cancel option-mode escape-meta] (swap! published conj sequences)))
   (keymap/bind-key! "C-x b" 'bulwark.tests.shell-model/sample)
   (check! (= [["C-x" "b"]] (last @published)) "The injected publisher did not receive reservations")
   (let [before @keymap/bindings]
-    (check! (try (keymap/set-route-publisher! (fn [sequences cancel option-mode] (throw (ex-info "Rejected snapshot" {}))))
+    (check! (try (keymap/set-route-publisher! (fn [sequences cancel option-mode escape-meta] (throw (ex-info "Rejected snapshot" {}))))
                  false (catch Exception error true)) "A rejected publisher was installed")
     (check! (= before @keymap/bindings) "Publisher failure changed bindings"))
   (keymap/unbind-key! "C-x b")
@@ -43,7 +43,7 @@
       snapshots (atom [])
       reject (atom false)]
   (keymap/set-route-publisher!
-    (fn [sequences cancel mode]
+    (fn [sequences cancel mode escape-meta]
       (when @reject (throw (ex-info "Rejected input mode" {})))
       (swap! snapshots conj {:sequences sequences :mode mode})))
   (reset! keymap/pending {:webview 1 :keys ["C-x"]})
@@ -68,6 +68,24 @@
   (keymap/unbind-key! "C-x b")
   (keymap/set-route-publisher! nil)
   (keymap/set-option-mode! before))
+;; Context publication uses the candidate context and fails before committing it.
+(let [snapshots (atom []) reject (atom false)]
+  (keymap/set-route-publisher!
+    (fn [sequences cancel mode escape-meta]
+      (when @reject (throw (ex-info "Rejected Escape policy" {})))
+      (swap! snapshots conj escape-meta)))
+  (check! (true? (last @snapshots)) "Default context did not publish Escape Meta")
+  (keymap/set-context! :test-prompt)
+  (check! (false? (last @snapshots)) "Prompt published the previous context's Escape policy")
+  (reset! reject true)
+  (check! (try (keymap/set-context! nil) false (catch Exception error true))
+          "Rejected Escape policy changed context")
+  (check! (and (= :test-prompt (:context @keymap/active)) (false? (last @snapshots)))
+          "Failed context publication changed the Escape policy")
+  (reset! reject false)
+  (keymap/set-context! nil)
+  (check! (true? (last @snapshots)) "Cleared prompt did not restore Escape Meta")
+  (keymap/set-route-publisher! nil))
 (let [before (count (get @hooks/registry :buffer/created))]
   (hooks/add-hook! :buffer/created :sample (fn [event] nil))
   (hooks/add-hook! :buffer/created :sample (fn [event] :replacement))
@@ -369,7 +387,7 @@
     (if (map? result) [(name (:command result)) (:keymap result)] result)))
 (defn row [strokes] (mapv found strokes))
 (keymap/set-route-publisher!
-  (fn [sequences cancel option-mode]
+  (fn [sequences cancel option-mode escape-meta]
     (when @model-reject (throw (ex-info "Rejected snapshot" {})))
     (swap! model-published conj (set sequences))))
 (doseq [keys (conj letters "C-x x" "C-y" "C-z z")]

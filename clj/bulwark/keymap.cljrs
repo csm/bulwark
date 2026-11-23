@@ -70,10 +70,11 @@
 
 (defn publish!
   "Sends a map's sequences to the host's route publisher, when one is installed."
-  ([merged] (publish! merged @option-mode))
-  ([merged mode]
+  ([merged] (publish! merged @option-mode @active))
+  ([merged mode] (publish! merged mode @active))
+  ([merged mode context]
    (when-let [publish @route-publisher]
-     (publish (vec (keys merged)) (vec cancel-strokes) mode))
+     (publish (vec (keys merged)) (vec cancel-strokes) mode (nil? (:context context))))
    nil))
 
 (defn set-option-mode!
@@ -89,12 +90,13 @@
   mode)
 
 (defn set-route-publisher!
-  "Installs a publisher of [sequences cancel-strokes option-mode].
+  "Installs a publisher of [sequences cancel-strokes option-mode escape-meta?].
   A nil publisher keeps the keymap portable."
   [publish]
   (when-not (or (nil? publish) (ifn? publish))
     (throw (ex-info "Route publisher must be callable or nil" {})))
-  (when publish (publish (vec (keys @effective)) (vec cancel-strokes) @option-mode))
+  (when publish (publish (vec (keys @effective)) (vec cancel-strokes) @option-mode
+                         (nil? (:context @active))))
   (reset! route-publisher publish)
   nil)
 
@@ -104,7 +106,7 @@
   is published again only when forced, as for a change of input context."
   [global named context force]
   (let [merged (effective-map global named context)]
-    (when (or force (not= merged @effective)) (publish! merged))
+    (when (or force (not= merged @effective)) (publish! merged @option-mode context))
     (reset! bindings global)
     (reset! keymaps named)
     (reset! active context)
@@ -251,18 +253,29 @@
 
 (defn ^:async dispatch-key!
   "Runs a command of the effective keymap as a task, retains a prefix, or returns
-  :unbound. A cancel stroke returns :cancelled for a pending prefix, else :quit.
+  :unbound. Outside input contexts, Escape prefixes a Meta stroke; Escape Escape
+  cancels that prefix. Inside an input context, Escape immediately returns :quit.
+  Other cancel strokes return :cancelled for a pending prefix, else :quit.
   A command that suspends, as for a prompt, also returns :command. Releases are ignored."
   [event]
   (if (or (not (:pressed event))
           (contains? #{"Control" "Alt" "Shift" "Meta" "Super"} (:key event)))
     :ignored
-    (let [stroke (canonical-stroke (:key event) (:control event) (:alt event)
-                                   (:shift event) (:meta event))
+    (let [raw (canonical-stroke (:key event) (:control event) (:alt event)
+                                (:shift event) (:meta event))
           old (if (= (:webview event) (:webview @pending)) (:keys @pending) [])
-          sequence (conj old stroke)]
+          escaped (= "Escape" (last old))
+          stroke (if escaped
+                   (canonical-stroke (:key event) (:control event) true (:shift event) (:meta event))
+                   raw)
+          sequence (conj (if escaped (pop old) old) stroke)]
       (cond
-        (contains? cancel-strokes stroke) (do (reset-prefix!) (if (seq old) :cancelled :quit))
+        (= raw "Escape")
+        (cond
+          (:context @active) (do (reset-prefix!) :quit)
+          escaped (do (reset-prefix!) :cancelled)
+          :else (do (reset! pending {:webview (:webview event) :keys (conj old "Escape")}) :prefix))
+        (contains? cancel-strokes raw) (do (reset-prefix!) (if (seq old) :cancelled :quit))
         (get @effective sequence)
         (let [command (get @effective sequence)]
           (reset-prefix!)

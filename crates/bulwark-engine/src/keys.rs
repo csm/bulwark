@@ -28,6 +28,7 @@ pub struct KeyRoutes {
     sequences: Vec<Vec<String>>,
     cancel: Vec<String>,
     pub option_mode: OptionMode,
+    pub escape_meta: bool,
 }
 impl KeyRoutes {
     pub fn new(sequences: Vec<Vec<String>>, cancel: Vec<String>) -> Result<Self, Fault> {
@@ -48,6 +49,7 @@ impl KeyRoutes {
             sequences,
             cancel,
             option_mode: OptionMode::default(),
+            escape_meta: false,
         })
     }
 
@@ -62,12 +64,26 @@ impl KeyRoutes {
         {
             return false;
         }
-        let stroke = key.stroke();
+        let mut stroke = key.stroke();
+        if stroke == "Escape" && self.escape_meta {
+            if pending.last().is_some_and(|s| s == "Escape") {
+                pending.clear();
+            } else {
+                pending.push(stroke);
+            }
+            return true;
+        }
         if self.cancel.contains(&stroke) {
             pending.clear();
             return true;
         }
         let continuing = !pending.is_empty();
+        if pending.last().is_some_and(|s| s == "Escape") {
+            pending.pop();
+            let mut modified = key.clone();
+            modified.alt = true;
+            stroke = modified.stroke();
+        }
         pending.push(stroke);
         let complete = self.sequences.iter().any(|s| s == pending);
         let prefix = self
@@ -139,6 +155,44 @@ mod tests {
         assert!(routes.capture(&mut pending, &key("x")));
         assert!(routes.capture(&mut pending, &key("Escape")));
         assert!(pending.is_empty());
+    }
+    #[test]
+    fn escape_meta_reserves_tails_modifiers_cancellation_and_prompt_policy() {
+        let mut routes = KeyRoutes::new(
+            vec![vec!["M-x".into()], vec!["C-x".into(), "C-M-f".into()]],
+            vec!["Escape".into(), "C-g".into()],
+        )
+        .unwrap();
+        routes.escape_meta = true;
+        let mut pending = Vec::new();
+        assert!(routes.capture(&mut pending, &key("Escape")));
+        assert!(!routes.capture(&mut pending, &key("Shift")));
+        let mut release = key("Escape");
+        release.pressed = false;
+        assert!(!routes.capture(&mut pending, &release));
+        assert!(routes.capture(&mut pending, &key("x")));
+        assert!(pending.is_empty());
+        let mut control = key("x");
+        control.control = true;
+        assert!(routes.capture(&mut pending, &control));
+        assert!(routes.capture(&mut pending, &key("Escape")));
+        control.key = "f".into();
+        assert!(routes.capture(&mut pending, &control));
+        assert!(pending.is_empty());
+        for tail in [key("Escape"), key("z"), {
+            let mut cancel = key("g");
+            cancel.control = true;
+            cancel
+        }] {
+            assert!(routes.capture(&mut pending, &key("Escape")));
+            assert!(routes.capture(&mut pending, &tail));
+            assert!(pending.is_empty());
+            assert!(!routes.capture(&mut pending, &key("x")));
+        }
+        routes.escape_meta = false;
+        assert!(routes.capture(&mut pending, &key("Escape")));
+        assert!(pending.is_empty());
+        assert!(!routes.capture(&mut pending, &key("x")));
     }
     #[test]
     fn spelling_preserves_shifted_letters_punctuation_and_modifier_order() {

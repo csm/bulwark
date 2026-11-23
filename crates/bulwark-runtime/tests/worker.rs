@@ -352,6 +352,12 @@ fn option_mode_publication_is_synchronous_and_survives_legacy_updates() {
             (await (bulwark.native/log "retained"))
             (bulwark.keymap/set-option-mode! :meta)
             (await (bulwark.native/log "meta"))
+            (bulwark.keymap/set-context! :test-prompt)
+            (await (bulwark.native/log "prompt"))
+            (bulwark.native/set-key-routes! [["M-x"]] ["Escape"] :meta)
+            (await (bulwark.native/log "legacy-prompt"))
+            (bulwark.keymap/set-context! nil)
+            (await (bulwark.native/log "restored"))
             :option-modes-passed)
           (option-probe!)"#;
         let mut worker = Worker::spawn_with_mode(runtime, source.into(), mode).unwrap();
@@ -363,12 +369,15 @@ fn option_mode_publication_is_synchronous_and_survives_legacy_updates() {
                 let Command::Log(stage) = &request.command else {
                     panic!("Unexpected request")
                 };
-                let expected = if stage == "meta" {
-                    OptionMode::Meta
-                } else {
-                    OptionMode::Characters
+                let expected = match stage.as_str() {
+                    "characters" | "legacy" | "retained" => OptionMode::Characters,
+                    _ => OptionMode::Meta,
                 };
                 assert_eq!(control.key_routes().option_mode, expected);
+                assert_eq!(
+                    control.key_routes().escape_meta,
+                    !matches!(stage.as_str(), "prompt" | "legacy-prompt")
+                );
                 stages.push(stage.clone());
                 request.complete(Ok(Data::Nil));
             });
@@ -377,7 +386,18 @@ fn option_mode_publication_is_synchronous_and_survives_legacy_updates() {
         endpoint.stop_admission();
         worker.stop();
         assert_eq!(wait(&mut worker).unwrap(), ":option-modes-passed");
-        assert_eq!(stages, ["characters", "legacy", "retained", "meta"]);
+        assert_eq!(
+            stages,
+            [
+                "characters",
+                "legacy",
+                "retained",
+                "meta",
+                "prompt",
+                "legacy-prompt",
+                "restored"
+            ]
+        );
     }
 }
 

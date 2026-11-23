@@ -15,6 +15,8 @@
   (try (f) false (catch Exception error true)))
 
 (def calls (atom []))
+(def meta-calls (atom 0))
+(defcommand meta-sample "Records a Meta invocation." [] (swap! meta-calls inc))
 (defcommand sample "Records an invocation." [] (swap! calls conj :original))
 (defcommand ^:async parked "Awaits a browser reply and a timer." []
   (await (timeout 1))
@@ -27,7 +29,45 @@
 (defn ^:async key! [key control]
   (await (core/dispatch! (key-event key control))))
 
+(defn ^:async stroke! [key modifiers]
+  (await (keymap/dispatch-key! (merge (key-event key false) modifiers))))
+
+(defn ^:async escape-checks! []
+  (doseq [keys ["M-x" "C-x C-M-f" "M-S-x" "M-<"]]
+    (keymap/bind-key! keys 'meta-sample))
+  (check! (= :prefix (await (stroke! "Escape" {}))) "Escape did not start Meta")
+  (check! (= :ignored (await (stroke! "Escape" {:pressed false}))) "Escape release advanced Meta")
+  (check! (= :ignored (await (stroke! "Shift" {}))) "A modifier advanced Meta")
+  (check! (= :command (await (stroke! "x" {}))) "Escape x did not invoke M-x")
+  (check! (= :command (await (stroke! "x" {:alt true}))) "Physical Meta stopped working")
+  (await (stroke! "x" {:control true}))
+  (await (stroke! "Escape" {}))
+  (check! (= :command (await (stroke! "f" {:control true}))) "Escape lost an existing prefix or Control")
+  (await (stroke! "Escape" {}))
+  (check! (= :command (await (stroke! "X" {}))) "Escape lost a shifted letter")
+  (await (stroke! "Escape" {}))
+  (check! (= :command (await (stroke! "<" {:shift true}))) "Escape lost shifted punctuation")
+  (check! (= 5 @meta-calls) "Meta translation invoked the wrong number of commands")
+  (doseq [tail [["Escape" {}] ["g" {:control true}] ["z" {}]]]
+    (await (stroke! "Escape" {}))
+    (check! (= (if (= "z" (first tail)) :unbound :cancelled)
+               (await (stroke! (first tail) (second tail)))) "Escape cancellation or invalid tail failed")
+    (check! (empty? (:keys @keymap/pending)) "Escape left a prefix after cancellation"))
+  (await (stroke! "Escape" {}))
+  (check! (= :unbound (await (stroke! "x" {:webview 2}))) "Escape crossed webviews")
+  (await (stroke! "Escape" {}))
+  (await (core/dispatch! {:event/type :input/reset :webview 1}))
+  (check! (= :unbound (await (stroke! "x" {}))) "Escape survived input reset")
+  (keymap/set-context! :test-prompt)
+  (await (stroke! "x" {:control true}))
+  (check! (= :quit (await (stroke! "Escape" {}))) "Prompt Escape did not quit during a prefix")
+  (check! (empty? (:keys @keymap/pending)) "Prompt Escape retained a Meta prefix")
+  (check! (= :unbound (await (stroke! "x" {}))) "Prompt Escape changed the next character")
+  (keymap/set-context! nil)
+  (doseq [keys ["M-x" "C-x C-M-f" "M-S-x" "M-<"]] (keymap/unbind-key! keys)))
+
 (defn ^:async commands! []
+  (await (escape-checks!))
   (check! (= "Records an invocation." (:doc (commands/command-info 'sample))) "Missing command doc")
   (check! (= 'bulwark.tests.commands/sample (:name (commands/command-info 'sample))) "Wrong command namespace")
   (check! (fails? (fn [] (commands/command-info 'missing))) "Unknown command accepted")
@@ -51,7 +91,8 @@
                   [[[(apply str (repeat 129 "x"))]] []]
                   [[(vec (repeat 17 "x"))] []]
                   [(vec (repeat 257 ["x"])) []]
-                  [[] [] :invalid] [[] [] nil] [[] [] "meta"] [[] [] :meta :extra]]]
+                  [[] [] :invalid] [[] [] nil] [[] [] "meta"] [[] [] :meta :extra]
+                  [[] [] :meta nil] [[] [] :meta true :extra]]]
       (check! (fails? (fn [] (apply native/set-key-routes! args))) "Invalid native routes accepted"))
     (check! (= before @keymap/bindings) "Invalid publication mutated bindings")
     (check! (fails? (fn [] (keymap/bind-key! (apply str (interpose " " (repeat 17 "q"))) 'sample)))

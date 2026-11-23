@@ -106,8 +106,8 @@
 (defn ^:async minibuffer! []
   (ui/set-host! recording-host)
   (keymap/set-route-publisher!
-    (fn [sequences cancel option-mode]
-      (native/set-key-routes! sequences cancel option-mode)
+    (fn [sequences cancel option-mode escape-meta]
+      (native/set-key-routes! sequences cancel option-mode escape-meta)
       (swap! routes conj (set sequences))))
   (browser/install!)
   (reset! buffer/last-web-buffer-policy nil)
@@ -186,8 +186,15 @@
     ;; A cancel stroke closes the prompt. Cancellation is a normal result.
     (await (press! "x" {:alt true}))
     (check! (minibuffer/active?) "M-x did not open a second prompt")
+    (await (press! "c" {:control true}))
     (check! (= :quit (await (press! "Escape" {}))) "Escape did not quit")
     (check! (closed?) "Cancellation left the prompt, its keys, or its focus")
+    (check! (empty? (:keys @keymap/pending)) "Prompt cancellation retained a prefix")
+    (check! (= :prefix (await (press! "Escape" {}))) "Closed prompt did not restore Escape Meta")
+    (check! (= :command (await (press! "x" {}))) "Escape x did not reopen the palette")
+    (check! (minibuffer/active?) "Escape x opened no prompt")
+    (check! (= :quit (await (press! "Escape" {}))) "Reopened prompt did not cancel immediately")
+    (check! (closed?) "Reopened prompt retained its context")
     (reset! calls [])
     (await (commands/run-task! (fn [] (commands/invoke! 'bulwark.tests.minibuffer/ask-twice))))
     (check! (= "First: " (:label (input-element))) "A text prompt did not open")

@@ -315,9 +315,9 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
         Arity::Variadic { min: 2 },
         move |args| {
             use bulwark_engine::keys::OptionMode;
-            if args.len() > 3 {
+            if args.len() > 4 {
                 return Err(ValueError::Other(
-                    "Expected two or three key routing arguments".into(),
+                    "Expected two to four key routing arguments".into(),
                 ));
             }
             let option_mode = match args.get(2) {
@@ -330,6 +330,11 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
                         "Option mode must be :platform-default, :characters, or :meta".into(),
                     ));
                 }
+            };
+            let escape_meta = match args.get(3) {
+                None => control.key_routes().escape_meta,
+                Some(Value::Bool(enabled)) => *enabled,
+                _ => return Err(ValueError::Other("Escape Meta flag must be boolean".into())),
             };
             let vector = |value: &Value, max: usize| match value {
                 Value::Vector(v) if v.get().count() <= max => {
@@ -365,6 +370,7 @@ pub fn install(globals: &Arc<GlobalEnv>, endpoint: RuntimeEndpoint) {
             let mut routes = bulwark_engine::keys::KeyRoutes::new(sequences, cancel)
                 .map_err(|e| ValueError::Other(e.to_string()))?;
             routes.option_mode = option_mode;
+            routes.escape_meta = escape_meta;
             control
                 .set_key_routes(routes)
                 .map_err(|e| ValueError::Other(e.to_string()))?;
@@ -581,8 +587,8 @@ fn install_metadata(globals: &GlobalEnv) {
         ),
         (
             "set-key-routes!",
-            "[sequences cancel-strokes] [sequences cancel-strokes option-mode]",
-            "Synchronously replaces bounded native key reservations and optional Option mode (:platform-default, :characters, :meta). Two arguments retain the current mode. Returns nil. Refusal retains the previous snapshot.",
+            "[sequences cancel-strokes] [sequences cancel-strokes option-mode] [sequences cancel-strokes option-mode escape-meta?]",
+            "Synchronously replaces bounded native key reservations, optional Option mode (:platform-default, :characters, :meta), and optional boolean Escape Meta flag. Omitted settings retain their current values. Returns nil. Refusal retains the previous snapshot.",
             &["input"],
         ),
         (

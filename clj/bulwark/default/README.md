@@ -20,7 +20,9 @@ Use `:characters` for native character input or `:platform-default` to restore t
 The setter also works in the internal REPL and applies without restarting.
 Use the setter instead of changing the `bulwark.keymap/option-mode` atom directly.
 In character mode, `C-c x` opens the command palette.
-Escape still cancels prompts and pending prefixes. Escape as a Meta prefix awaits the owner's prompt behavior decision.
+Escape cancels an open prompt immediately, including during a pending command prefix.
+Outside prompts, Escape prefixes a Meta stroke: `Escape x` invokes `M-x` in either Option mode.
+`Escape Escape` cancels that prefix. `C-g` cancels a pending prefix and otherwise cancels an open prompt.
 
 The [P2.6 checkpoint](../../../docs/phase-2-introspection.md) documents Help, Messages, and the example reader configuration.
 The [P2.7 checkpoint](../../../docs/phase-2-browsing.md) documents all default keys, popup ownership, and the internal REPL.

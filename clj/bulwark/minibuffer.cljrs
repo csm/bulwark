@@ -322,7 +322,7 @@
     (await (accept! (:text event)))))
 
 (defn ^:async key-pressed!
-  "Cancels the open prompt for a cancel stroke that cancelled no pending prefix."
+  "Cancels the open prompt for a quit result. Escape quits even during a pending prefix."
   [event]
   (when (and (active?) (:pressed event) (= :quit (:keymap/status event)))
     (await (cancel!))))

@@ -64,8 +64,8 @@
 
 (defn ^:async modes! []
   (keymap/set-route-publisher!
-    (fn [sequences cancel option-mode]
-      (native/set-key-routes! sequences cancel option-mode)
+    (fn [sequences cancel option-mode escape-meta]
+      (native/set-key-routes! sequences cancel option-mode escape-meta)
       (swap! published conj (set sequences))))
   (doseq [event-type [:mode/enabled :mode/disabled]]
     (hooks/add-hook! event-type :test/modes #'record-mode!))

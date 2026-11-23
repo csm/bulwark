@@ -7,7 +7,12 @@ macOS defaults to native character input. Other platforms retain Alt as Meta.
 `bulwark.keymap/set-option-mode!` accepts `:characters`, `:meta`, and `:platform-default` and applies without restarting.
 Physical Mac checks passed Option symbols and acute-accent composition in a page, URL prompt, and internal REPL.
 Meta mode opened the palette. Switching back restored native text in the same open prompt.
-Escape still cancels prompts and prefixes. Ask the owner about Escape behavior inside prompts before implementing a Meta prefix.
+The owner selected immediate Escape cancellation inside prompts, including during pending command prefixes.
+Outside prompts, Escape prefixes Meta in either Option mode. `Escape x` invokes `M-x`; double Escape or `C-g` cancels the prefix.
+Context changes publish that policy with the key reservations. Failed publication preserves the previous context and policy.
+Physical Escape checks passed prompt cancellation during a prefix, page focus after prefix cancellation, palette invocation, and REPL text afterward.
+The adapter now preserves DOM focus when command prefixes temporarily disable native composition.
+Pending prefixes still reset on focus changes. A burst during unfinished REPL activation crossed that existing reset; the settled-input repeat passed.
 Local portable, native, Servo, nREPL, Clippy, and pinned AOT checks passed.
 The owner deferred the small Linux investigation to focus on desktop behavior. Its failures remain unresolved; no minimum specification is established.
 Phase 2 remains open. Phase 3 has not started.
@@ -83,10 +88,11 @@ Text and REPL panes support splits.
 
 ## Current checks
 
-The Option setting passed 60 portable tests, 19 native unit tests, and the Servo contract locally.
+The Option and Escape settings passed 61 portable tests, 20 native unit tests, and the Servo contract locally.
 Both 16-case native process suites, both software Servo modes, both native nREPL modes, and standalone pinned AOT passed.
 Portable and native Clippy passed with warnings denied.
 The [Option report](phase-2-option-mode.md) records the physical checks and their limits.
+The [Option-setting CI](https://github.com/csm/bulwark/actions/runs/45087538289) passed all four jobs at `88037e1`, before the Escape follow-up.
 
 The latest repeat passed all 58 portable tests, all 17 native unit tests, and the Servo contract.
 Both 16-case native process suites, both Servo fixture modes, all four nREPL runs, and standalone pinned AOT passed again.
@@ -144,14 +150,11 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Ask the owner whether Escape inside prompts should cancel immediately or begin a Meta sequence.
-   Implement the chosen behavior and verify prefix cancellation, prompt cancellation, and text ownership.
-   `C-c x` remains the palette fallback.
-2. Review the exit evidence and obtain owner acceptance only after the required criteria pass.
+1. Review the combined Option and Escape evidence and obtain owner acceptance only after the required criteria pass.
    Keep inactive-window input and icon rendering limits distinct from the passing named site workflows.
-3. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
+2. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
    Retain the failed baseline, passing current browser-history repeat, and earlier timing variation.
-4. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
+3. Evaluate a fixed Clojurust pin for closed issues [#500](https://github.com/csm/clojurust/issues/500) and [#501](https://github.com/csm/clojurust/issues/501).
    Remove the two AOT workarounds only after that pin passes their regressions.
 
 E5 remains deferred beyond Phase 2 under the accepted single-visible-webview scope.

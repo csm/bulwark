@@ -116,7 +116,8 @@ impl Input {
                     composition(servo::CompositionState::End, String::new());
                 }
                 self.composing = false;
-                notify(servo::ImeEvent::Dismissed);
+                // Winit also disables composition for shell prefixes and focus changes.
+                // Servo's Dismissed event blurs the DOM input, so it is not equivalent.
             }
             winit::event::Ime::Enabled => {}
         }
@@ -451,6 +452,19 @@ mod tests {
             ]
         );
         assert!(!input.composing);
+        let mut disabled = Vec::new();
+        input.forward_ime(Ime::Disabled, |e| disabled.push(e));
+        assert!(
+            disabled.is_empty(),
+            "Disabling native IME must not blur the DOM input"
+        );
+        input.forward_ime(Ime::Preedit("´".into(), None), |_| {});
+        input.forward_ime(Ime::Disabled, |e| disabled.push(e));
+        assert!(
+            matches!(disabled.as_slice(), [servo::ImeEvent::Composition(e)]
+            if e.state == End && e.data.is_empty())
+        );
+        assert!(!input.composing);
         let routed = input.forward(
             None,
             WindowEvent::Ime(Ime::Preedit("´".into(), None)),
@@ -515,6 +529,25 @@ mod tests {
         );
         let command = input.owned_key("x".into(), true);
         assert!(command.control && command.meta && !command.alt);
+    }
+    #[test]
+    fn escape_meta_keeps_press_repeats_and_releases_away_from_page_and_chrome() {
+        let mut keys = KeyboardRoute::default();
+        let mut routes = KeyRoutes::new(vec![vec!["M-x".into()]], vec!["Escape".into()]).unwrap();
+        routes.escape_meta = true;
+        keys.sync(Arc::new(routes), Handle(1));
+        for (physical, name) in [(KeyCode::Escape, "Escape"), (KeyCode::KeyX, "x")] {
+            for pressed in [true, true, false] {
+                let route = keys.route(PhysicalKey::Code(physical), &key(name, pressed), false);
+                assert!(!route.page);
+            }
+        }
+        assert!(keys.pending.is_empty());
+        assert!(keys.held.is_empty());
+        assert!(
+            keys.route(PhysicalKey::Code(KeyCode::KeyX), &key("x", true), false)
+                .page
+        );
     }
     #[test]
     fn view_changes_clear_page_ownership_but_preserve_physical_input_state() {
