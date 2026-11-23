@@ -1,0 +1,532 @@
+--- a/servo/javascript_evaluator.rs
++++ b/servo/javascript_evaluator.rs
+@@ -2,7 +2,9 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+ 
+-use embedder_traits::{JSValue, JavaScriptEvaluationError, JavaScriptEvaluationId};
++use embedder_traits::{
++    DocumentIdentity, DocumentJavaScriptResult, JavaScriptEvaluationError, JavaScriptEvaluationId,
++};
+ use rustc_hash::FxHashMap;
+ use servo_base::id::WebViewId;
+ use servo_constellation_traits::EmbedderToConstellationMessage;
+@@ -10,7 +12,7 @@
+ use crate::proxies::ConstellationProxy;
+ 
+ struct PendingEvaluation {
+-    callback: Box<dyn FnOnce(Result<JSValue, JavaScriptEvaluationError>)>,
++    callback: Box<dyn FnOnce(Result<DocumentJavaScriptResult, JavaScriptEvaluationError>)>,
+ }
+ 
+ pub(crate) struct JavaScriptEvaluator {
+@@ -36,14 +38,16 @@
+     pub(crate) fn evaluate(
+         &mut self,
+         webview_id: WebViewId,
++        expected_document: Option<DocumentIdentity>,
+         script: String,
+-        callback: Box<dyn FnOnce(Result<JSValue, JavaScriptEvaluationError>)>,
++        callback: Box<dyn FnOnce(Result<DocumentJavaScriptResult, JavaScriptEvaluationError>)>,
+     ) {
+         let evaluation_id = self.generate_id();
+         self.constellation_proxy
+             .send(EmbedderToConstellationMessage::EvaluateJavaScript(
+                 webview_id,
+                 evaluation_id,
++                expected_document,
+                 script,
+             ));
+         self.pending_evaluations
+@@ -53,7 +57,7 @@
+     pub(crate) fn finish_evaluation(
+         &mut self,
+         evaluation_id: JavaScriptEvaluationId,
+-        result: Result<JSValue, JavaScriptEvaluationError>,
++        result: Result<DocumentJavaScriptResult, JavaScriptEvaluationError>,
+     ) {
+         (self
+             .pending_evaluations
+--- a/servo/webview.rs
++++ b/servo/webview.rs
+@@ -12,10 +12,11 @@
+ };
+ use dpi::PhysicalSize;
+ use embedder_traits::{
+-    ContextMenuAction, ContextMenuItem, Cursor, EmbedderControlId, EmbedderControlRequest, Image,
+-    InputEvent, InputEventAndId, InputEventId, JSValue, JavaScriptEvaluationError, LoadStatus,
+-    MediaSessionActionType, NewWebViewDetails, ScreenGeometry, ScreenshotCaptureError, Scroll,
+-    Theme, TraversalId, UrlRequest, ViewportDetails, WebViewPoint, WebViewRect,
++    ContextMenuAction, ContextMenuItem, Cursor, DocumentIdentity, DocumentJavaScriptResult,
++    EmbedderControlId, EmbedderControlRequest, Image, InputEvent, InputEventAndId, InputEventId,
++    JSValue, JavaScriptEvaluationError, LoadStatus, MediaSessionActionType, NewWebViewDetails,
++    ScreenGeometry, ScreenshotCaptureError, Scroll, Theme, TraversalId, UrlRequest,
++    ViewportDetails, WebViewPoint, WebViewRect,
+ };
+ use euclid::{Scale, Size2D};
+ use image::RgbaImage;
+@@ -735,6 +736,39 @@
+     ) {
+         self.servo().javascript_evaluator_mut().evaluate(
+             self.id(),
++            None,
++            script.to_string(),
++            Box::new(move |result| callback(result.map(|result| result.value))),
++        );
++    }
++
++    /// Snapshot the active top document's engine identity without reading page-controlled data.
++    /// This prototype uses an empty script; it does not install lifecycle notifications.
++    pub fn request_document_identity(
++        &self,
++        callback: impl FnOnce(Result<DocumentIdentity, JavaScriptEvaluationError>) + 'static,
++    ) {
++        self.servo().javascript_evaluator_mut().evaluate(
++            self.id(),
++            None,
++            String::new(),
++            Box::new(move |result| callback(result.map(|result| result.document))),
++        );
++    }
++
++    /// Evaluate only if the expected document is still active immediately before execution.
++    /// A successful reply identifies the document that executed the script. Mutations already
++    /// performed cannot be undone. Lifecycle revocation and embedder delivery checks are still
++    /// required before this prototype can serve a privileged DOM API.
++    pub fn evaluate_javascript_in_document<T: ToString>(
++        &self,
++        expected_document: DocumentIdentity,
++        script: T,
++        callback: impl FnOnce(Result<DocumentJavaScriptResult, JavaScriptEvaluationError>) + 'static,
++    ) {
++        self.servo().javascript_evaluator_mut().evaluate(
++            self.id(),
++            Some(expected_document),
+             script.to_string(),
+             Box::new(callback),
+         );
+--- a/servo-constellation/constellation.rs
++++ b/servo-constellation/constellation.rs
+@@ -108,12 +108,13 @@
+ use embedder_traits::resources::{self, Resource};
+ use embedder_traits::user_contents::{UserContentManagerId, UserContents};
+ use embedder_traits::{
+-    AnimationState, EmbedderControlId, EmbedderControlResponse, EmbedderProxy, FocusSequenceNumber,
+-    GenericEmbedderProxy, InputEvent, InputEventAndId, InputEventOutcome, JSValue,
+-    JavaScriptEvaluationError, JavaScriptEvaluationId, KeyboardEvent, MediaSessionActionType,
+-    MediaSessionEvent, MediaSessionPlaybackState, MouseButtonAction, MouseButtonEvent,
+-    NewWebViewDetails, PaintHitTestResult, Theme, ViewportDetails, WakeLockDelegate, WakeLockType,
+-    WebDriverCommandMsg, WebDriverLoadStatus, WebDriverScriptCommand,
++    AnimationState, DocumentIdentity, DocumentJavaScriptResult, EmbedderControlId,
++    EmbedderControlResponse, EmbedderProxy, FocusSequenceNumber, GenericEmbedderProxy, InputEvent,
++    InputEventAndId, InputEventOutcome, JavaScriptEvaluationError, JavaScriptEvaluationId,
++    KeyboardEvent, MediaSessionActionType, MediaSessionEvent, MediaSessionPlaybackState,
++    MouseButtonAction, MouseButtonEvent, NewWebViewDetails, PaintHitTestResult, Theme,
++    ViewportDetails, WakeLockDelegate, WakeLockType, WebDriverCommandMsg, WebDriverLoadStatus,
++    WebDriverScriptCommand,
+ };
+ use euclid::default::Size2D as UntypedSize2D;
+ use fonts::SystemFontServiceProxy;
+@@ -1408,10 +1409,16 @@
+             EmbedderToConstellationMessage::EvaluateJavaScript(
+                 webview_id,
+                 evaluation_id,
++                expected_document,
+                 script,
+             ) => {
+-                self.handle_evaluate_javascript(webview_id, evaluation_id, script);
+-            },
++                self.handle_evaluate_javascript(
++                    webview_id,
++                    evaluation_id,
++                    expected_document,
++                    script,
++                );
++            }
+             EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
+                 self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
+             },
+@@ -1576,6 +1583,7 @@
+         &mut self,
+         webview_id: WebViewId,
+         evaluation_id: JavaScriptEvaluationId,
++        expected_document: Option<DocumentIdentity>,
+         script: String,
+     ) {
+         let browsing_context_id = BrowsingContextId::from(webview_id);
+@@ -1591,12 +1599,21 @@
+             return;
+         };
+ 
++        if expected_document.is_some_and(|expected| expected.pipeline_id() != pipeline.id) {
++            self.handle_finish_javascript_evaluation(
++                evaluation_id,
++                Err(JavaScriptEvaluationError::StaleDocument),
++            );
++            return;
++        }
++
+         if pipeline
+             .event_loop
+             .send(ScriptThreadMessage::EvaluateJavaScript(
+                 webview_id,
+                 pipeline.id,
+                 evaluation_id,
++                expected_document,
+                 script,
+             ))
+             .is_err()
+@@ -2025,6 +2042,18 @@
+                     .send(mem::ProfilerMsg::Report(sender));
+             },
+             ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
++                // A result from a replaced pipeline cannot become a successful scoped reply.
++                let active = self
++                    .browsing_contexts
++                    .get(&BrowsingContextId::from(webview_id))
++                    .map(|context| context.pipeline_id);
++                let result = result.and_then(|result| {
++                    if active == Some(result.document.pipeline_id()) {
++                        Ok(result)
++                    } else {
++                        Err(JavaScriptEvaluationError::StaleDocument)
++                    }
++                });
+                 self.handle_finish_javascript_evaluation(evaluation_id, result)
+             },
+             ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
+@@ -3471,7 +3500,7 @@
+     fn handle_finish_javascript_evaluation(
+         &mut self,
+         evaluation_id: JavaScriptEvaluationId,
+-        result: Result<JSValue, JavaScriptEvaluationError>,
++        result: Result<DocumentJavaScriptResult, JavaScriptEvaluationError>,
+     ) {
+         self.constellation_to_embedder_proxy.send(
+             ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
+--- a/servo-constellation/embedder.rs
++++ b/servo-constellation/embedder.rs
+@@ -3,7 +3,7 @@
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+ 
+ use embedder_traits::{
+-    InputEventOutcome, JSValue, JavaScriptEvaluationError, JavaScriptEvaluationId,
++    DocumentJavaScriptResult, InputEventOutcome, JavaScriptEvaluationError, JavaScriptEvaluationId,
+     MediaSessionEvent, NewWebViewDetails, TraversalId,
+ };
+ use servo_base::generic_channel::GenericSender;
+@@ -32,7 +32,7 @@
+     /// finished with the given result.
+     FinishJavaScriptEvaluation(
+         JavaScriptEvaluationId,
+-        Result<JSValue, JavaScriptEvaluationError>,
++        Result<DocumentJavaScriptResult, JavaScriptEvaluationError>,
+     ),
+     /// Whether or not to allow script to open a new tab/browser
+     AllowOpeningWebView(WebViewId, GenericSender<Option<NewWebViewDetails>>),
+--- a/servo-constellation-traits/from_script_message.rs
++++ b/servo-constellation-traits/from_script_message.rs
+@@ -10,7 +10,7 @@
+ use devtools_traits::{DevtoolScriptControlMsg, ScriptToDevtoolsControlMsg, WorkerId};
+ use embedder_traits::user_contents::UserContentManagerId;
+ use embedder_traits::{
+-    AnimationState, FocusSequenceNumber, JSValue, JavaScriptEvaluationError,
++    AnimationState, DocumentJavaScriptResult, FocusSequenceNumber, JavaScriptEvaluationError,
+     JavaScriptEvaluationId, MediaSessionEvent, ScriptToEmbedderChan, ViewportDetails, WakeLockType,
+ };
+ use encoding_rs::Encoding;
+@@ -810,7 +810,7 @@
+     /// Return the result of the evaluated JavaScript with the given [`JavaScriptEvaluationId`].
+     FinishJavaScriptEvaluation(
+         JavaScriptEvaluationId,
+-        Result<JSValue, JavaScriptEvaluationError>,
++        Result<DocumentJavaScriptResult, JavaScriptEvaluationError>,
+     ),
+     /// Forward a keyboard scroll operation from an `<iframe>` to a parent pipeline.
+     ForwardKeyboardScroll(PipelineId, KeyboardScroll),
+--- a/servo-constellation-traits/lib.rs
++++ b/servo-constellation-traits/lib.rs
+@@ -19,9 +19,9 @@
+     UserContentManagerId, UserScript, UserScriptId, UserStyleSheet, UserStyleSheetId,
+ };
+ use embedder_traits::{
+-    EmbedderControlId, EmbedderControlResponse, InputEventAndId, JavaScriptEvaluationId,
+-    MediaSessionActionType, NewWebViewDetails, PaintHitTestResult, Theme, TraversalId, UrlRequest,
+-    ViewportDetails, WebDriverCommandMsg,
++    DocumentIdentity, EmbedderControlId, EmbedderControlResponse, InputEventAndId,
++    JavaScriptEvaluationId, MediaSessionActionType, NewWebViewDetails, PaintHitTestResult, Theme,
++    TraversalId, UrlRequest, ViewportDetails, WebDriverCommandMsg,
+ };
+ pub use from_script_message::*;
+ use malloc_size_of_derive::MallocSizeOf;
+@@ -97,7 +97,12 @@
+     PaintMetric(PipelineId, PaintMetricEvent),
+     /// Evaluate a JavaScript string in the context of a `WebView`. When execution is complete or an
+     /// error is encountered, a correpsonding message will be sent to the embedding layer.
+-    EvaluateJavaScript(WebViewId, JavaScriptEvaluationId, String),
++    EvaluateJavaScript(
++        WebViewId,
++        JavaScriptEvaluationId,
++        Option<DocumentIdentity>,
++        String,
++    ),
+     /// Create a memory report and return it via the [`GenericCallback`]
+     CreateMemoryReport(GenericCallback<MemoryReportResult>),
+     /// Sends the generated image key to the image cache associated with this pipeline.
+--- a/servo-embedder-traits/lib.rs
++++ b/servo-embedder-traits/lib.rs
+@@ -1033,6 +1033,39 @@
+ #[derive(Clone, Copy, Deserialize, Eq, Hash, PartialEq, Serialize)]
+ pub struct JavaScriptEvaluationId(pub usize);
+ 
++/// Engine identity for one document incarnation. This is scope, not an authority grant.
++/// Same-document URL changes preserve it. Document replacement and successful
++/// document.open() reset it. Lifecycle delivery is outside this prototype.
++#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
++pub struct DocumentIdentity {
++    pipeline_id: PipelineId,
++    incarnation: u64,
++}
++
++impl DocumentIdentity {
++    /// Internal constructor used by the script engine, never by page data.
++    #[doc(hidden)]
++    pub fn new(pipeline_id: PipelineId, incarnation: u64) -> Self {
++        Self {
++            pipeline_id,
++            incarnation,
++        }
++    }
++
++    /// Correlate an identity with authenticated protocol request metadata.
++    /// A matching pipeline alone does not establish the current incarnation.
++    pub fn pipeline_id(self) -> PipelineId {
++        self.pipeline_id
++    }
++}
++
++/// Result tagged with the identity checked immediately before execution.
++#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
++pub struct DocumentJavaScriptResult {
++    pub document: DocumentIdentity,
++    pub value: JSValue,
++}
++
+ /// A JavaScript value produced by evaluation of a script.
+ #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+ pub enum JSValue {
+@@ -1081,6 +1114,8 @@
+ /// An error that happens when trying to evaluate JavaScript on a `WebView`.
+ #[derive(Clone, Debug, Deserialize, EnumMessage, PartialEq, Serialize)]
+ pub enum JavaScriptEvaluationError {
++    /// The expected document is not active, or the script reset its document.
++    StaleDocument,
+     /// The `Document` of frame that the script was going to execute in no longer exists.
+     DocumentNotFound,
+     /// The script could not be compiled.
+--- a/servo-script/dom/document/document.rs
++++ b/servo-script/dom/document/document.rs
+@@ -12,6 +12,7 @@
+ use std::ops::Deref;
+ use std::rc::Rc;
+ use std::str::FromStr;
++use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+ use std::sync::{Arc as StdArc, LazyLock};
+ use std::time::Duration;
+ 
+@@ -24,8 +25,8 @@
+ use devtools_traits::ScriptToDevtoolsControlMsg;
+ use dom_struct::dom_struct;
+ use embedder_traits::{
+-    AllowOrDeny, AnimationState, CustomHandlersAutomationMode, EmbedderMsg, Image, LoadStatus,
+-    Theme,
++    AllowOrDeny, AnimationState, CustomHandlersAutomationMode, DocumentIdentity, EmbedderMsg,
++    Image, LoadStatus, Theme,
+ };
+ use encoding_rs::{Encoding, UTF_8};
+ use html5ever::{LocalName, QualName, local_name, ns};
+@@ -400,6 +401,16 @@
+     pub(crate) top_level_dom_complete: Cell<Option<CrossProcessInstant>>,
+ }
+ 
++// The pipeline disambiguates processes. Checked allocation never reuses an incarnation.
++static EVALUATION_INCARNATIONS: AtomicU64 = AtomicU64::new(1);
++fn next_evaluation_incarnation() -> u64 {
++    EVALUATION_INCARNATIONS
++        .fetch_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |id| {
++            id.checked_add(1)
++        })
++        .expect("document incarnation identifiers exhausted")
++}
++
+ /// <https://dom.spec.whatwg.org/#document>
+ #[dom_struct]
+ pub(crate) struct Document {
+@@ -420,6 +431,8 @@
+     /// <https://html.spec.whatwg.org/multipage/#the-document%27s-address>
+     #[no_trace]
+     url: DomRefCell<ServoUrl>,
++    /// Not page controlled. A reset invalidates the complete DOM incarnation.
++    evaluation_incarnation: Cell<u64>,
+     /// <https://html.spec.whatwg.org/multipage/#concept-document-about-base-url>
+     #[no_trace]
+     about_base_url: DomRefCell<Option<ServoUrl>>,
+@@ -1050,6 +1063,14 @@
+         self.content_type.matches(APPLICATION, "xhtml+xml")
+     }
+ 
++    /// Identity for embedder evaluation scope, independent of page-controlled state.
++    pub(crate) fn evaluation_identity(&self) -> DocumentIdentity {
++        DocumentIdentity::new(
++            self.window().pipeline_id(),
++            self.evaluation_incarnation.get(),
++        )
++    }
++
+     /// <https://html.spec.whatwg.org/multipage/#fully-active>
+     pub(crate) fn is_fully_active(&self) -> bool {
+         // > A Document d is said to be fully active when d is the active document of a
+@@ -4051,6 +4072,7 @@
+ 
+         Document {
+             node: Node::new_document_node(),
++            evaluation_incarnation: Cell::new(next_evaluation_incarnation()),
+             document_or_shadow_root: DocumentOrShadowRoot::new(window),
+             window: Dom::from_ref(window),
+             has_browsing_context,
+@@ -6873,6 +6895,10 @@
+             self.window.upcast::<EventTarget>().remove_all_listeners(cx);
+         }
+ 
++        // Invalidate references before clearing the DOM, including reentrant callbacks.
++        self.evaluation_incarnation
++            .set(next_evaluation_incarnation());
++
+         // Step 11. Replace all with null within document.
+         Node::replace_all(cx, None, self.upcast::<Node>());
+ 
+--- a/servo-script/event_loop/script_thread.rs
++++ b/servo-script/event_loop/script_thread.rs
+@@ -44,9 +44,9 @@
+ };
+ use embedder_traits::user_contents::{UserContentManagerId, UserContents, UserScript};
+ use embedder_traits::{
+-    EmbedderControlId, EmbedderControlResponse, EmbedderMsg, FocusSequenceNumber,
+-    InputEventOutcome, JavaScriptEvaluationError, JavaScriptEvaluationId, MediaSessionActionType,
+-    ViewportDetails, WebDriverScriptCommand,
++    DocumentIdentity, DocumentJavaScriptResult, EmbedderControlId, EmbedderControlResponse,
++    EmbedderMsg, FocusSequenceNumber, InputEventOutcome, JavaScriptEvaluationError,
++    JavaScriptEvaluationId, MediaSessionActionType, ViewportDetails, WebDriverScriptCommand,
+ };
+ use encoding_rs::Encoding;
+ use fonts::{FontContext, SystemFontServiceProxy, WebFontLoadEvent};
+@@ -1897,10 +1897,18 @@
+                 webview_id,
+                 pipeline_id,
+                 evaluation_id,
++                expected_document,
+                 script,
+             ) => {
+-                self.handle_evaluate_javascript(webview_id, pipeline_id, evaluation_id, script, cx);
+-            },
++                self.handle_evaluate_javascript(
++                    webview_id,
++                    pipeline_id,
++                    evaluation_id,
++                    expected_document,
++                    script,
++                    cx,
++                );
++            }
+             ScriptThreadMessage::SendImageKeysBatch(pipeline_id, image_keys) => {
+                 if let Some(window) = self.documents.borrow().find_window(pipeline_id) {
+                     window
+@@ -4522,6 +4530,7 @@
+         webview_id: WebViewId,
+         pipeline_id: PipelineId,
+         evaluation_id: JavaScriptEvaluationId,
++        expected_document: Option<DocumentIdentity>,
+         script: String,
+         cx: &mut js::context::JSContext,
+     ) {
+@@ -4536,6 +4545,22 @@
+             ));
+             return;
+         };
++
++        let document = window.Document();
++        let identity = document.evaluation_identity();
++        if !document.is_fully_active()
++            || expected_document.is_some_and(|expected| expected != identity)
++        {
++            let _ = self.senders.pipeline_to_constellation_sender.send((
++                webview_id,
++                pipeline_id,
++                ScriptToConstellationMessage::FinishJavaScriptEvaluation(
++                    evaluation_id,
++                    Err(JavaScriptEvaluationError::StaleDocument),
++                ),
++            ));
++            return;
++        }
+ 
+         let global_scope = window.as_global_scope();
+         let mut realm = enter_auto_realm(cx, global_scope);
+@@ -4558,6 +4583,16 @@
+         };
+ 
+         let result = jsval_to_webdriver(cx, global_scope, return_value.handle());
++        // Serialization can invoke getters; check the document again after it finishes.
++        let result =
++            if window.Document().evaluation_identity() != identity || !document.is_fully_active() {
++                Err(JavaScriptEvaluationError::StaleDocument)
++            } else {
++                result.map(|value| DocumentJavaScriptResult {
++                    document: identity,
++                    value,
++                })
++            };
+         let _ = self.senders.pipeline_to_constellation_sender.send((
+             webview_id,
+             pipeline_id,
+--- a/servo-script/messaging.rs
++++ b/servo-script/messaging.rs
+@@ -100,7 +100,7 @@
+                 #[cfg(feature = "webgpu")]
+                 ScriptThreadMessage::SetWebGPUPort(..) => None,
+                 ScriptThreadMessage::SetScrollStates(id, ..) => Some(*id),
+-                ScriptThreadMessage::EvaluateJavaScript(_, id, _, _) => Some(*id),
++                ScriptThreadMessage::EvaluateJavaScript(_, id, _, _, _) => Some(*id),
+                 ScriptThreadMessage::SendImageKeysBatch(..) => None,
+                 ScriptThreadMessage::PreferencesUpdated(..) => None,
+                 ScriptThreadMessage::NoLongerWaitingOnAsychronousImageUpdates(_) => None,
+--- a/servo-script-traits/lib.rs
++++ b/servo-script-traits/lib.rs
+@@ -18,9 +18,9 @@
+ use devtools_traits::ScriptToDevtoolsControlMsg;
+ use embedder_traits::user_contents::{UserContentManagerId, UserContents};
+ use embedder_traits::{
+-    EmbedderControlId, EmbedderControlResponse, FocusSequenceNumber, InputEventAndId,
+-    JavaScriptEvaluationId, MediaSessionActionType, MouseButton, PaintHitTestResult,
+-    ScriptToEmbedderChan, Theme, ViewportDetails, WebDriverScriptCommand,
++    DocumentIdentity, EmbedderControlId, EmbedderControlResponse, FocusSequenceNumber,
++    InputEventAndId, JavaScriptEvaluationId, MediaSessionActionType, MouseButton,
++    PaintHitTestResult, ScriptToEmbedderChan, Theme, ViewportDetails, WebDriverScriptCommand,
+ };
+ use euclid::{Scale, Size2D};
+ use fonts_traits::{SystemFontServiceProxySender, WebFontLoadEvent};
+@@ -298,7 +298,13 @@
+     SetScrollStates(PipelineId, ScrollStateUpdate),
+     /// Evaluate the given JavaScript and return a result via a corresponding message
+     /// to the Constellation.
+-    EvaluateJavaScript(WebViewId, PipelineId, JavaScriptEvaluationId, String),
++    EvaluateJavaScript(
++        WebViewId,
++        PipelineId,
++        JavaScriptEvaluationId,
++        Option<DocumentIdentity>,
++        String,
++    ),
+     /// A new batch of keys for the image cache for the specific pipeline.
+     SendImageKeysBatch(PipelineId, Vec<ImageKey>),
+     /// Preferences were updated in the parent process.

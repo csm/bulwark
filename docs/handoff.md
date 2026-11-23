@@ -10,6 +10,13 @@ P3.1 passed deferred navigation, deferred resource responses, bounded observer d
 The final release DOM prototype used two requests, with p50 values of 0.095333 ms in Tiered and 0.090500 ms in TreeWalk.
 These measurements exclude the future node registry and JSON schema conversion. C6 remains pending.
 
+The next [S1 document scope prototype](phase-3-document-scope.md) now passes nine local cases in three runs.
+An isolated Servo patch checks document incarnations before execution and tags successful results.
+The regressions include queued resets, serialization getters, reload, history, and different views.
+They also prove that a successful reply can become obsolete before host consumption.
+Lifecycle revocation and host delivery checks remain necessary before product integration.
+The product pins and installed natives remain unchanged.
+
 P3.1 remains open on these requirements:
 
 - Engine document identity and protocol-source binding to the current privileged document.
@@ -23,6 +30,9 @@ The [contract draft](phase-3-contracts.md) and two proposed ADRs record intended
 The namespace-only counterexamples demonstrate missing restriction. They do not establish capability enforcement or authorize restricted extension loading.
 
 ## Current evidence
+
+The [document scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) retains the three S1 runs and both existing engine controls.
+The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
 
 All six final probe cases, 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
 The [retained evidence](../experiments/phase3/evidence-2026-11-22.json) includes timing samples, source hashes, and final probe results.
@@ -46,7 +56,9 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Prepare document identity, protocol-source binding, redirect/rewrite, and evaluator authority mechanisms with their required regressions.
+   Extend the S1 prototype with activation/revocation notifications and host rejection of obsolete replies before node allocation.
+   Cover redirects, failed loads, close, crash, and cancellation.
+   Protocol-source binding, redirect/rewrite, and evaluator authority mechanisms also remain open.
 2. Review the remaining Phase 3 scope decisions and acceptance criteria with the owner before dependent implementation.
    Preserve the accepted single-visible-webview scope until E5 supplies evidence for simultaneous live web splits.
 3. Keep the [small Linux investigation](phase-2-small-linux-follow-up.md) deferred under the owner's desktop focus.

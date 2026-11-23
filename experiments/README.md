@@ -335,6 +335,10 @@ Its counterexamples reproduce namespace authority leaks, identical source-frame 
 The six-case runner retains logs and enforces independent process deadlines.
 These diagnostic results do not establish a restricted extension loader or a privileged page bridge.
 
+The [S1 document scope prototype](../docs/phase-3-document-scope.md) adds an isolated engine patch and nine regression cases.
+Its preparation script keeps the product pins unchanged.
+Lifecycle revocation and host delivery checks remain open.
+
 For runtime-only checks without graphics, build the example without the Servo feature and use `--runtime-only` on the Python runner.
 For release product timings, build the example with `--release` and pass `--binary target/release/examples/phase3` to that runner.
 The E4 binary remains a separate debug measurement unless its path explicitly selects another build.

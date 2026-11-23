@@ -189,6 +189,13 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and nine regression cases.
+Three local runs pass, along with the existing Servo contracts and E4 baseline.
+The prototype checks document incarnations at execution and after serialization.
+Its delayed-delivery case retains an obsolete successful callback, so S1 remains open on lifecycle revocation and host delivery.
+The reset case also proves that S2 cannot bind the current incarnation through pipeline equality alone.
+Product pins and installed behavior remain unchanged.
+
 ## Reproduction and checks
 
 Build the probes:

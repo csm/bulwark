@@ -1,5 +1,7 @@
 //! E4 measures Servo's public script and resource interception channels.
 mod contracts;
+#[cfg(feature = "document-scope")]
+mod document_scope;
 use anyhow::{Result, bail, ensure};
 use servo::{
     EventLoopWaker, JSValue, LoadStatus, RenderingContext, Servo, ServoBuilder,
@@ -141,6 +143,14 @@ fn report(label: &str, samples: &[Duration]) {
 }
 
 fn main() -> Result<()> {
+    #[cfg(feature = "document-scope")]
+    if std::env::args().nth(1).as_deref() == Some("--document-scope") {
+        return document_scope::run();
+    }
+    #[cfg(not(feature = "document-scope"))]
+    if std::env::args().nth(1).as_deref() == Some("--document-scope") {
+        bail!("Build the isolated document-scope candidate before running this probe");
+    }
     if std::env::args().nth(1).as_deref() == Some("--phase3") {
         return contracts::run();
     }

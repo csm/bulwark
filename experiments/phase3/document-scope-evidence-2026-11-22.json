@@ -1,0 +1,153 @@
+{
+  "started_utc": "2026-11-23T06:32:00.996956+00:00",
+  "binary_sha256": "fda3a0f2071ed72feac59f03b3dcf61b5bdef4ca23c7713e2b0a40757b9e3428",
+  "preparation": {
+    "servo": "0.7.0",
+    "patch_sha256": "e8a2892ec75a247d8c704f94f5ebf07a9171a31d57ed43f3cf0ab37311102491",
+    "source_hashes": {
+      "servo/javascript_evaluator.rs": "61fbbb07f18804b02350f412bd627f782347fcdfcf03e6ade64b75a1d8c9986a",
+      "servo/webview.rs": "ab37f1503585706e5275d78ddd1f11b76a6c5bed0a1a3b11c03507fa1f117a8a",
+      "servo-constellation/constellation.rs": "179ba65976d941f83670411bd92dbab603ac7180ffaacd1d81d13ed41e4efb43",
+      "servo-constellation/embedder.rs": "b0cfe993db3ea601adcea19bfca09ccb5ae6ce1c3c4d7b3541751ccefb0d7614",
+      "servo-constellation-traits/from_script_message.rs": "e003e99fa57a3e8fa9dba17bae12c3189ffad30cbbabd51cee960af73dcaf31e",
+      "servo-constellation-traits/lib.rs": "ef2f0a0728c95d747b6dcba47888691b709107a9fd4be83604df55a1d0b8fafa",
+      "servo-embedder-traits/lib.rs": "23cd7e914fad955519cd88cd3ae3c99f055f669ef3db377c21d9c5273ae2dc61",
+      "servo-script/dom/document/document.rs": "01f12b46c59a4a5be54a42a12f9fd35bd68a33efc42dcb619cb672064203ca05",
+      "servo-script/event_loop/script_thread.rs": "ee6a861fd8416f174e425a0ae3d0d049074015fe4cbdb7fd581fc400bf51f162",
+      "servo-script/messaging.rs": "123e066ae57d783c5a83ee61ef6ef52a19cf622514c3a15459dcf9db626dcda8",
+      "servo-script-traits/lib.rs": "8138a73b6e544c3f7113ae0b0563a8c88053d33950885ca6d950212683e01f91"
+    },
+    "product_hashes": {
+      "Cargo.toml": "7b5b598976d830e481ff8fbb7a2695face27633fabb49d5bb41bf4caaf52cf41",
+      "Cargo.lock": "9c6198751af6d38f9bae7a0d9cb4a01bfd60ec2a35857f101ff99c89bbfa4438"
+    },
+    "candidate": "/Users/csm/.codex-workspaces/worktrees/ios-1a48bc9d-95e1-4279-abce-8eef9666e37e/bulwark/target/phase3-document-scope/candidate"
+  },
+  "platform": {
+    "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64"
+  },
+  "source_hashes": {
+    "experiments/e4-dom-channel/Cargo.toml": "bc762a964a7f39054b21a4c7b65e49a383bd7438a404624977ab2c023821b42b",
+    "experiments/e4-dom-channel/src/document_scope.rs": "401f1f2ffad6aab8b3a0825fde26a9d7b9bf95e960c50fdd423a63249e582bc2",
+    "experiments/e4-dom-channel/src/main.rs": "111ccbcb8159f3217c899dbcddeb197ed311603485f2abdb988eac38b8045951",
+    "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+    "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+    "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+    "experiments/prepare_document_scope.py": "b7ea2bc73f119ea097ef1a5ff8fd505864855937f9140e6a859f0029ffa70cab",
+    "experiments/run_document_scope.py": "eb2aebed02fc84f6058ea6db6fbea1149d9cde3dc2f38a6cea77b5cf32180ba1"
+  },
+  "scope": "Experimental engine only. S1 lifecycle and host delivery remain open.",
+  "cases": [
+    {
+      "name": "document-scope-1",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1a48bc9d-95e1-4279-abce-8eef9666e37e/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 3.0528169590979815,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (obsolete success requires host revocation)",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=true)",
+        "S1 cross-view: PASS",
+        "S1 document-scope prototype: PASS (9 cases; lifecycle and host delivery still pending)"
+      ],
+      "log_sha256": "b9a57b25c5acb7922af35a22caa32f13a60c47fe81e3b3b180698b14e56801a4",
+      "log": "S1 initial-blank-and-tagged-result: PASS\nUNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nS1 same-document-navigation: PASS\nS1 held-A-after-B-and-unscoped-control: PASS\nS1 queued-reset-race-and-pipeline-collision: PASS\nS1 serialization-reset: PASS\nS1 delayed-host-delivery: PASS (obsolete success requires host revocation)\nS1 reload: PASS\nS1 history: PASS (retained_identity=true)\nS1 cross-view: PASS\nS1 document-scope prototype: PASS (9 cases; lifecycle and host delivery still pending)\n"
+    },
+    {
+      "name": "document-scope-2",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1a48bc9d-95e1-4279-abce-8eef9666e37e/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 0.20534775033593178,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (obsolete success requires host revocation)",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=true)",
+        "S1 cross-view: PASS",
+        "S1 document-scope prototype: PASS (9 cases; lifecycle and host delivery still pending)"
+      ],
+      "log_sha256": "b9a57b25c5acb7922af35a22caa32f13a60c47fe81e3b3b180698b14e56801a4",
+      "log": "S1 initial-blank-and-tagged-result: PASS\nUNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nS1 same-document-navigation: PASS\nS1 held-A-after-B-and-unscoped-control: PASS\nS1 queued-reset-race-and-pipeline-collision: PASS\nS1 serialization-reset: PASS\nS1 delayed-host-delivery: PASS (obsolete success requires host revocation)\nS1 reload: PASS\nS1 history: PASS (retained_identity=true)\nS1 cross-view: PASS\nS1 document-scope prototype: PASS (9 cases; lifecycle and host delivery still pending)\n"
+    },
+    {
+      "name": "document-scope-3",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1a48bc9d-95e1-4279-abce-8eef9666e37e/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 0.21261637518182397,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (obsolete success requires host revocation)",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=true)",
+        "S1 cross-view: PASS",
+        "S1 document-scope prototype: PASS (9 cases; lifecycle and host delivery still pending)"
+      ],
+      "log_sha256": "b9a57b25c5acb7922af35a22caa32f13a60c47fe81e3b3b180698b14e56801a4",
+      "log": "S1 initial-blank-and-tagged-result: PASS\nUNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nS1 same-document-navigation: PASS\nS1 held-A-after-B-and-unscoped-control: PASS\nS1 queued-reset-race-and-pipeline-collision: PASS\nS1 serialization-reset: PASS\nS1 delayed-host-delivery: PASS (obsolete success requires host revocation)\nS1 reload: PASS\nS1 history: PASS (retained_identity=true)\nS1 cross-view: PASS\nS1 document-scope prototype: PASS (9 cases; lifecycle and host delivery still pending)\n"
+    },
+    {
+      "name": "servo-contracts",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1a48bc9d-95e1-4279-abce-8eef9666e37e/bulwark/target/debug/bulwark-experiment-e4",
+        "--phase3"
+      ],
+      "status": 0,
+      "elapsed_seconds": 0.44690450001508,
+      "assertions_complete": true,
+      "markers": [],
+      "log_sha256": "6c914dc6024ecd494e5a04e46281f72fa14bd62fbc3f122d5eaff936b7c12567",
+      "log": "UNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nP3.1 Servo: deferred navigation allow/deny passed; page timers progressed\nP3.1 Servo: deferred resource response/cancel passed\nP3.1 Servo gap: top-document and iframe fetch metadata are identical\nP3.1 Servo candidate: custom protocol identifies top, same-origin, remote, and sandboxed sources: [ProtocolSource { pipeline: \"Some((1,2))\", view: \"Some(WebViewId(PainterId(1), (0,1)))\", origin: \"Some(Origin(Tuple(\\\"https\\\", Domain(\\\"bulwark.invalid\\\"), 443)))\", nested: Some(false) }, ProtocolSource { pipeline: \"Some((2,7))\", view: \"Some(WebViewId(PainterId(1), (0,1)))\", origin: \"Some(Origin(Tuple(\\\"https\\\", Domain(\\\"bulwark.invalid\\\"), 443)))\", nested: Some(true) }, ProtocolSource { pipeline: \"Some((2,10))\", view: \"Some(WebViewId(PainterId(1), (0,1)))\", origin: \"Some(Origin(Tuple(\\\"https\\\", Domain(\\\"remote.bulwark.invalid\\\"), 443)))\", nested: Some(true) }, ProtocolSource { pipeline: \"Some((2,13))\", view: \"Some(WebViewId(PainterId(1), (0,1)))\", origin: \"Some(Origin(Opaque(OpaqueOrigin { id: 13cee918-7efa-46ba-8e25-76450c21e719, is_for_data_worker_from_secure_context: false, is_file_origin: false })))\", nested: Some(true) }]\nP3.1 Servo: bounded observer drain passed; shared-world agent forgery reproduced\nP3.1 Servo: bulwark:// HTML and retained-view switching passed; origin=null; no Servo internals privilege\nP3.1 Servo contracts passed; document identity and bridge authority remain unproven\n"
+    },
+    {
+      "name": "e4-baseline",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1a48bc9d-95e1-4279-abce-8eef9666e37e/bulwark/target/debug/bulwark-experiment-e4"
+      ],
+      "status": 0,
+      "elapsed_seconds": 2.1811745408922434,
+      "assertions_complete": true,
+      "markers": [],
+      "log_sha256": "f8328d670f3cba8aebbb1358f334ef3017f58b64a74da1803f86f9905b451fa1",
+      "log": "UNSUPPORTED (log once): POSSIBLE ISSUE: unit 1 GLD_TEXTURE_INDEX_2D is unloadable and bound to sampler type (Float) - using zero texture because texture unloadable\nE4 trivial: samples=100, p50=51.292\u00b5s, p95=63.875\u00b5s, max=96.875\u00b5s\nE4 subtree_5000: samples=30, p50=22.553792ms, p95=24.553459ms, max=26.252667ms\nE4: subtree_bytes=232781, intercepted_messages=1, reply=ack\n"
+    }
+  ],
+  "checks": {
+    "portable_tests": {
+      "passed": 61,
+      "failed": 0,
+      "command": "CARGO_INCREMENTAL=0 cargo test --offline --locked --workspace --exclude bulwark-engine-servo --no-default-features"
+    },
+    "portable_clippy": "passed with warnings denied",
+    "candidate_e4_clippy": "passed with warnings denied for the probe; published-source dependency warnings remain",
+    "product_e4_clippy": "passed with warnings denied against unpatched Servo 0.7.0",
+    "formatting": "passed",
+    "python_syntax": "passed",
+    "lockfile_edges": "only the six intended candidate package sources changed; product unchanged"
+  }
+}
