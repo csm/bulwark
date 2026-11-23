@@ -5,7 +5,7 @@
 Phase 2 is complete and accepted by the owner as of 2026-11-22.
 The owner reported no app-experience blockers and accepted the documented desktop scope, Linux deferral, and input limits.
 The [acceptance review](phase-2-acceptance.md#owner-acceptance-2026-11-22) records the exit interview and acceptance at product checkpoint `cf3e6be`.
-The accepted work is on `codex/phase-2-option-mode`. Phase 3 implementation has not started.
+The accepted Phase 2 work is integrated into `main`. Phase 3 implementation has not started.
 The next work is Phase 3 planning, beginning with E4 and the DOM-channel contracts.
 
 The [Option setting](phase-2-option-mode.md) implements the owner's keyboard policy.
@@ -161,7 +161,6 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 1. Prepare the Phase 3 implementation plan from the accepted Phase 2 checkpoint.
    Start with E4, navigation-scoped DOM handles, the query/mutation channel, and capability enforcement.
-   Reconcile the accepted branch with current `main` before Phase 3 implementation.
 2. Review the Phase 3 scope and acceptance criteria with the owner before implementation.
    Preserve the accepted single-visible-webview scope until E5 supplies evidence for simultaneous live web splits.
 3. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
