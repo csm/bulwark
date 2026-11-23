@@ -559,7 +559,8 @@ The [P2.6 checkpoint](phase-2-introspection.md) adds help, Messages, and live co
 The [P2.7 checkpoint](phase-2-browsing.md) adds default configuration modules, page commands, auxiliary views, and a bounded internal REPL.
 The [P2.8 acceptance review](phase-2-acceptance.md) records physical workflows, release startup samples, and the native policy review.
 The latest [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks after the compatibility corrections.
-Phase 2 remains open for the Option-as-Alt decision, the small-host deadline investigation, and owner acceptance.
+The [keyboard follow-up](phase-2-option-mode.md) implements the owner's Option and Escape decisions.
+Phase 2 remains open for owner acceptance. The owner deferred the small-host investigation to focus on desktop behavior.
 The [mechanism checkpoint](phase-2-mechanisms.md) begins P2.1 with retained webviews and standalone AOT assertions.
 The [buffer checkpoint](phase-2-buffers.md) implements P2.2 with the buffer registry and explicit lifecycles.
 The [mode checkpoint](phase-2-modes.md) implements P2.4 with mode definitions and contextual keymaps.
@@ -755,12 +756,12 @@ The [acceptance CI run](https://github.com/csm/bulwark/actions/runs/42931611072)
 The [physical macOS checks](phase-1-acceptance.md#physical-macos-results-2026-11-11) passed on 2026-11-11.
 All Phase 1 acceptance criteria now pass.
 
-1. Resolve the Option-as-Alt policy before changing native key translation.
-2. Retry the small Linux host and diagnose its remaining deadline failures.
-3. Review the [repeat checks](phase-2-repeat-checks.md) and obtain owner acceptance after all required criteria pass.
+1. Complete the owner exit interview using the [acceptance review](phase-2-acceptance.md) and final keyboard evidence.
+2. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
+   Its failures remain unresolved. No minimum hardware specification is established.
 
 E5 remains mandatory for simultaneous web content splits.
-Interactive Linux behavior, multiprocess comparison, IME, clipboard, and display-scale transitions remain recorded follow-up work.
+Basic Mac Option composition passed. Broader IME, interactive Linux behavior, multiprocess comparison, clipboard, and display-scale transitions remain follow-up work.
 The [gap register](clojurust-async-gaps.md) records the adopted upstream mechanisms and their limits.
 
 ---

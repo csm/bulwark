@@ -149,3 +149,7 @@ Formatting and whitespace checks passed.
 The bridge checks retain the two- and three-argument native forms and cover synchronous Escape policy changes across prompt contexts.
 The shared shell model covers failed context publication in the interpreter, Tiered mode, and standalone AOT.
 Physical observations, both bundle hashes, the failed baseline, the final screenshot, and shutdown logs reside in `target/option-mode/escape-physical/`.
+
+The [final keyboard CI](https://github.com/csm/bulwark/actions/runs/45107213807) passed all four jobs at `cf3e6be`.
+Linux and macOS runtime checks, Linux Servo/native checks, and standalone Linux AOT passed.
+No required keyboard validation remains. Broader input coverage retains the limits recorded in this report.

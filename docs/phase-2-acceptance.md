@@ -1,10 +1,37 @@
 # Phase 2 acceptance review
 
-Date: 2026-11-14. P2.8 evidence is recorded. Phase 2 remains open.
+Initial review: 2026-11-14. Exit interview preparation: 2026-11-22. Phase 2 remains open for owner acceptance.
 The latest named five-site tasks passed after the compatibility corrections.
 The original BBC failure and GitHub workaround remain historical evidence in this report.
 No site substitution or scope exception is accepted by this report.
 Owner acceptance remains outstanding.
+
+## Current exit checkpoint
+
+The product checkpoint is `cf3e6be` on `codex/phase-2-option-mode`.
+The [keyboard report](phase-2-option-mode.md) records the owner's final Option and Escape decisions, local checks, and physical Mac evidence.
+Mac Option defaults to native character input, with a live Meta setting.
+Escape cancels an open prompt immediately, including during another prefix. Outside prompts, Escape prefixes Meta.
+Local checks passed 61 portable tests, 20 native unit tests, the Servo contract, both native process suites, and standalone pinned AOT.
+Both software Servo and native nREPL modes passed. Formatting and portable/native Clippy passed.
+The [final keyboard CI](https://github.com/csm/bulwark/actions/runs/45107213807) passed all four jobs at `cf3e6be`.
+Linux and macOS runtime checks passed. Linux Servo/native checks and standalone AOT also passed.
+No required keyboard validation remains before the owner interview.
+
+The five-site physical repeat used product source `4d406d6` before the keyboard changes.
+The keyboard follow-up used local page, prompt, and REPL tasks. It did not repeat all five live-site workflows.
+The owner deferred small Linux startup and introspection investigation to focus on desktop behavior.
+Those failures remain unresolved and do not establish a minimum hardware specification.
+Basic Option symbols and acute-accent composition passed on the Mac. Full IME language coverage remains unverified.
+Clipboard, display-scale transitions, interactive Linux keyboard behavior, and initial inactive-window input retain their recorded limits.
+Focus changes cancel pending prefixes. The keyboard report records the burst sent during unfinished REPL activation.
+Long synthetic input bursts can reach the existing fatal event-overflow contract. The original physical report retains that reproduction.
+E5 remains deferred under the accepted single-visible-webview scope.
+The two Clojurust AOT workarounds remain until a fixed pin passes their regressions.
+
+The owner requested the exit interview. This checkpoint records evidence and accepted deferrals. Owner acceptance remains pending.
+
+## Earlier acceptance evidence
 
 The subsequent [BBC investigation](phase-2-bbc-investigation.md) identified a missing Bulwark build feature and tested a correction.
 Its diagnostic results do not replace the physical acceptance results below.
@@ -26,7 +53,8 @@ The [CI run at `4d406d6`](https://github.com/csm/bulwark/actions/runs/4498689345
 Linux passed runtime, Servo, and standalone AOT checks. The macOS runtime job also passed.
 The later [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks, live configuration, introspection, and REPL checks.
 All local automated suites passed again. Startup had a 0.230-second median, with a 2.458-second first sample retained.
-The required five-site scope remains unchanged. Option-as-Alt, the small-host deadline investigation, and owner acceptance remain open.
+The required five-site scope remains unchanged. The later keyboard follow-up resolved Option-as-Alt and Escape behavior.
+The owner deferred the small-host investigation. Owner acceptance remains open.
 The [small Linux follow-up](phase-2-small-linux-follow-up.md) restored connectivity and passed browser history and the corrected REPL regression in both modes.
 Embedded-shell startup and TreeWalk introspection still failed their existing deadlines. The complete small-host portable suite did not pass.
 
@@ -67,13 +95,13 @@ Those release captures establish rendering at capture time, not additional physi
 
 | Criterion | Result |
 |---|---|
-| B1: preserve Phase 1 | Current CI passed all four jobs at `4d406d6`. Earlier physical input and stall evidence remains in the Phase 1 review. The separate small-host deadline failures remain unresolved. |
+| B1: preserve Phase 1 | Current CI passed all four jobs at `cf3e6be`. Earlier physical input and stall evidence remains in the Phase 1 review. The owner deferred the separate small-host deadline failures. |
 | B2: default browser | Passed all five named physical workflows in the latest repeat. Initial inactive-window behavior and icon rendering limits remain separate. |
 | B3: live configuration | Passed again on live Wikipedia. Reload changed the binding and applied reader mode without a new document or duplicate hooks and styles. |
 | B4: introspection | Passed. The installed inventory contains 25 documented native functions. Physical apropos opened a text buffer. |
-| B5: policy boundary | Passed the source review below. Native additions provide mechanisms. Clojure retains browser policy. |
+| B5: policy boundary | Passed the source review below, including the keyboard follow-up at `cf3e6be`. Native additions provide mechanisms. Clojure retains browser policy. |
 | B6: startup | Recorded again. The latest seven release samples have a 0.230-second median, including a 2.458-second first sample. The target remains informational. |
-| B7: language coverage | Interpreter assertions and the standalone pinned AOT binary passed again locally. Current Linux CI also passed both paths. |
+| B7: language coverage | Interpreter assertions and the standalone pinned AOT binary passed again locally. Linux CI passed both paths at `cf3e6be`. |
 | Other Phase 2 deliverables | Automated checks passed in both modes. Physical mixed-pane REPL focus, interruption, close, and native shutdown passed. |
 
 ## BBC physical follow-up at `833ad5f`
@@ -215,6 +243,21 @@ Loader registrations for `bulwark.default.*` embed Clojure source and identify n
 Native names such as `reload`, `back`, and `forward` identify explicit engine operations.
 These matches do not move browser policy into Rust.
 
+### Keyboard follow-up review at `cf3e6be`
+
+The installed inventory remains 25 natives. `set-key-routes!` now accepts optional Option and Escape settings with the bounded reservation snapshot.
+Its two- and three-argument forms retain omitted settings. Refusal preserves the previous snapshot.
+Clojure chooses the live Option setting and whether an input context permits Escape Meta.
+Rust applies the native Option interpretation, reserves prefix tails, converts composition events, and preserves held-key ownership.
+The `Escape` literal implements the published prefix mechanism. It installs no default command binding.
+The native Escape flag defaults to false until Clojure publishes its policy.
+
+The same source search now returns 18 matches, retained in `target/option-mode/exit-review/policy-search.log`.
+They comprise nine test lines, six reader API references, two Mozilla license lines, and one comment explaining global engine preferences.
+The comment names BBC and GitHub. The engine enables those interfaces globally and contains no domain condition.
+The test lines publish or inspect arbitrary reservations. They do not install product defaults.
+No keyboard change moves command names, prompt decisions, or site policy into production Rust.
+
 ## Release startup measurements
 
 Hardware: MacBook Pro `Mac15,9`, Apple M3 Max, 16 cores (12 performance and four efficiency), 48 GB RAM.
@@ -278,16 +321,17 @@ Both native nREPL modes and the standalone AOT job also passed.
 These results do not establish interactive Linux behavior.
 The earlier [P2.7 main CI run](https://github.com/csm/bulwark/actions/runs/43629036365) passed at `9835f77`.
 
-## Exit disposition
+## Original exit disposition and current status
 
 P2.8 now has physical macOS workflows, live-site results, release measurements, and a native policy review.
-The required BBC task still fails, and GitHub retains the documented navigation limits.
-Phase 2 cannot close under the agreed site scope.
-The next work must diagnose compatibility or obtain an explicit scope decision before any failed task changes.
+At the original review, BBC failed and GitHub retained navigation limits. Those failures prevented closure under the agreed site scope.
+The later compatibility corrections and physical repeat passed all five required workflows without a site substitution.
+The keyboard follow-up resolved the owner's Option and Escape decisions.
+The owner deferred the separate small-host investigation and requested the exit interview.
 Owner acceptance follows the required passing criteria. This report does not supply that acceptance.
 
 E5 remains deferred beyond Phase 2 under the owner's single-visible-webview scope decision.
 It remains necessary before simultaneous live web splits can be claimed.
-IME, clipboard, display-scale transitions, and interactive Linux behavior remain unverified.
-The Option-as-Alt policy remains unresolved. `C-c x` supplies the palette fallback.
+Basic Mac Option composition passed. Broader IME, clipboard, display-scale transitions, and interactive Linux behavior remain unverified.
+`C-c x` supplies the palette fallback in either Option mode. `Escape x` invokes the palette outside prompts.
 The two Clojurust AOT workarounds remain until a fixed pin passes their regressions.

@@ -209,9 +209,13 @@ Exit evidence: no-init browsing workflow, find and zoom, link opening, popup fix
 The [acceptance review](phase-2-acceptance.md) records the 2026-11-14 macOS workflows, startup samples, and native policy review.
 The latest [repeat checks](phase-2-repeat-checks.md) passed all five named physical site tasks after the compatibility corrections.
 Live configuration, introspection, REPL checks, and local automated suites also passed again.
-The Option-as-Alt decision and the separate small-host deadline investigation remain open.
+The [keyboard follow-up](phase-2-option-mode.md) implements the owner's Option and Escape decisions.
+Mac Option defaults to native character input. Escape cancels prompts immediately and prefixes Meta outside prompts.
+The owner deferred the separate small-host deadline investigation to focus on desktop behavior.
 The [P2.8 CI run](https://github.com/csm/bulwark/actions/runs/43670796887) passed all four jobs at `689ba2d`.
-Owner acceptance remains outstanding. Phase 2 is not complete.
+The [final keyboard CI](https://github.com/csm/bulwark/actions/runs/45107213807) passed all four jobs at `cf3e6be`.
+No required keyboard validation remains.
+The owner requested the exit interview after the final keyboard checks. Owner acceptance remains outstanding. Phase 2 is not complete.
 
 1. Run the acceptance matrix below from a clean profile.
 2. Record release startup measurements on the development laptop.

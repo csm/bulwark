@@ -14,6 +14,9 @@ Physical Escape checks passed prompt cancellation during a prefix, page focus af
 The adapter now preserves DOM focus when command prefixes temporarily disable native composition.
 Pending prefixes still reset on focus changes. A burst during unfinished REPL activation crossed that existing reset; the settled-input repeat passed.
 Local portable, native, Servo, nREPL, Clippy, and pinned AOT checks passed.
+The [final keyboard CI](https://github.com/csm/bulwark/actions/runs/45107213807) passed all four jobs at `cf3e6be`.
+No required keyboard validation remains. The owner requested the Phase 2 exit interview.
+The [acceptance review](phase-2-acceptance.md) now consolidates the current evidence, policy review, and retained limits.
 The owner deferred the small Linux investigation to focus on desktop behavior. Its failures remain unresolved; no minimum specification is established.
 Phase 2 remains open. Phase 3 has not started.
 
@@ -150,7 +153,7 @@ The [P2.7 checkpoint](phase-2-browsing.md) and [P2.5/P2.6 physical report](phase
 
 ## Next steps
 
-1. Review the combined Option and Escape evidence and obtain owner acceptance only after the required criteria pass.
+1. Complete the owner exit interview against the current acceptance review. Owner acceptance remains pending.
    Keep inactive-window input and icon rendering limits distinct from the passing named site workflows.
 2. Keep the small Linux startup and introspection investigation deferred under the owner's desktop focus.
    Retain the failed baseline, passing current browser-history repeat, and earlier timing variation.
