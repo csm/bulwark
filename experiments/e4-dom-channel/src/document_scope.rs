@@ -669,6 +669,221 @@ pub(super) fn run() -> Result<()> {
     delegate.reject(cancelled, cancelled_reply)?;
     println!("S1 host-cancellation: PASS");
 
+    // Hold the receiving script thread. Cancellation must prevent this queued mutation,
+    // not merely suppress its reply. The host never pumps results inside the barrier.
+    let cancel_delegate = Rc::new(Delegate::default());
+    let cancel_view = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/cancellation"))?)
+        .delegate(cancel_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || cancel_delegate.loads.get() > 0)?;
+    let cancel_document = identity(&servo, &cancel_view, deadline)?;
+    let cancel_ticket = cancel_delegate.ticket(cancel_document)?;
+    let cancellation_calls = Rc::new(Cell::new(0));
+    let capture = Rc::new(());
+    let released_capture = Rc::downgrade(&capture);
+    let (sender, cancellation_reply) = mpsc::channel();
+    let (sender_survivor, cancel_survivor) = mpsc::channel();
+    let survivor_view = view.clone();
+    let calls = cancellation_calls.clone();
+    let mut cancelled_id = None;
+    cancel_view.with_paused_script_for_document_scope_probe(|| {
+        let id = cancel_view
+            .evaluate_cancellable_javascript_in_document(
+                cancel_document,
+                "window.mutations++;'must-not-run'",
+                move |result| {
+                    let _capture = capture;
+                    calls.set(calls.get() + 1);
+                    let _ = sender.send(result);
+                    // Reentry must not hold the evaluator's RefCell borrow.
+                    survivor_view.evaluate_javascript("'cancel-survivor'", move |result| {
+                        let _ = sender_survivor.send(result);
+                    });
+                },
+            )
+            .unwrap();
+        ensure!(
+            !view.cancel_javascript_evaluation(id),
+            "A foreign view cancelled the request"
+        );
+        ensure!(
+            cancel_view.cancel_javascript_evaluation(id),
+            "Cancellation missed pending work"
+        );
+        ensure!(
+            !cancel_view.cancel_javascript_evaluation(id),
+            "Repeated cancellation delivered twice"
+        );
+        cancelled_id = Some(id);
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        cancellation_calls.get() == 1,
+        "Cancellation missed terminal delivery"
+    );
+    ensure!(
+        released_capture.upgrade().is_none(),
+        "Cancellation retained captures"
+    );
+    let cancelled_result = cancellation_reply.try_recv()?;
+    ensure!(
+        matches!(cancelled_result, Err(JavaScriptEvaluationError::Cancelled)),
+        "Cancellation did not deliver Cancelled: {cancelled_result:?}"
+    );
+    cancel_delegate.reject(cancel_ticket, cancelled_result)?;
+    ensure!(
+        matches!(receive(&servo, deadline, cancel_survivor)?, Ok(JSValue::String(value)) if value == "cancel-survivor"),
+        "Cancellation blocked reentrant evaluation"
+    );
+    text(
+        scoped(
+            &servo,
+            &cancel_view,
+            deadline,
+            cancel_document,
+            "String(window.mutations)",
+        )?,
+        cancel_document,
+        "0",
+    )?;
+    ensure!(
+        cancel_delegate.active.get() == Some(cancel_document)
+            && cancel_delegate.generation.get() == cancel_ticket.generation
+            && cancel_view.pending_evaluations_for_document_scope_probe() == 0
+            && cancellation_calls.get() == 1
+            && !cancel_view.cancel_javascript_evaluation(cancelled_id.unwrap()),
+        "Late cancellation reply changed scope or repeated delivery"
+    );
+    println!(
+        "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)"
+    );
+
+    // Queue evaluation first, then the gate. Entry proves that JavaScript and result
+    // serialization finished, while its callback remains pending in the embedder.
+    let calls = cancellation_calls.clone();
+    let (sender, completed_reply) = mpsc::channel();
+    let completed = cancel_view
+        .evaluate_cancellable_javascript_in_document(
+            cancel_document,
+            "window.mutations++;'already-ran'",
+            move |result| {
+                calls.set(calls.get() + 1);
+                let _ = sender.send(result);
+            },
+        )
+        .unwrap();
+    let late_cancel = cancel_view.clone();
+    cancel_view.with_paused_script_for_document_scope_probe(|| {
+        ensure!(
+            late_cancel.cancel_javascript_evaluation(completed),
+            "Completed reply was not pending"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    let completed_result = completed_reply.try_recv()?;
+    ensure!(
+        matches!(completed_result, Err(JavaScriptEvaluationError::Cancelled)),
+        "Late cancellation returned a success"
+    );
+    cancel_delegate.reject(cancel_ticket, completed_result)?;
+    text(
+        scoped(
+            &servo,
+            &cancel_view,
+            deadline,
+            cancel_document,
+            "String(window.mutations)",
+        )?,
+        cancel_document,
+        "1",
+    )?;
+    ensure!(
+        cancellation_calls.get() == 2,
+        "Late reply repeated a terminal callback"
+    );
+    // Cancellation after host delivery is a no-op too.
+    let (sender, delivered) = mpsc::channel();
+    let delivered_id = cancel_view
+        .evaluate_cancellable_javascript_in_document(
+            cancel_document,
+            "'delivered'",
+            move |result| {
+                let _ = sender.send(result);
+            },
+        )
+        .unwrap();
+    text(
+        receive(&servo, deadline, delivered)?,
+        cancel_document,
+        "delivered",
+    )?;
+    ensure!(
+        !cancel_view.cancel_javascript_evaluation(delivered_id),
+        "Delivered request was cancelled"
+    );
+    println!(
+        "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)"
+    );
+
+    let capture = Rc::new(());
+    let released_capture = Rc::downgrade(&capture);
+    let calls = cancellation_calls.clone();
+    let (sender, panic_cancelled) = mpsc::channel();
+    cancel_view.with_paused_script_for_document_scope_probe(|| {
+        let id = cancel_view
+            .evaluate_cancellable_javascript_in_document(
+                cancel_document,
+                "window.mutations++;'must-not-run'",
+                move |result| {
+                    let _capture = capture;
+                    calls.set(calls.get() + 1);
+                    let _ = sender.send(result);
+                    panic!("{CALLBACK_PANIC}");
+                },
+            )
+            .unwrap();
+        expect_callback_panic(|| {
+            cancel_view.cancel_javascript_evaluation(id);
+        })?;
+        ensure!(
+            !cancel_view.cancel_javascript_evaluation(id),
+            "Panicking callback remained pending"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        released_capture.upgrade().is_none(),
+        "Panicking cancellation retained captures"
+    );
+    ensure!(
+        matches!(
+            panic_cancelled.try_recv()?,
+            Err(JavaScriptEvaluationError::Cancelled)
+        ),
+        "Panicking cancellation missed terminal delivery"
+    );
+    text(
+        scoped(
+            &servo,
+            &cancel_view,
+            deadline,
+            cancel_document,
+            "String(window.mutations)",
+        )?,
+        cancel_document,
+        "1",
+    )?;
+    ensure!(
+        cancellation_calls.get() == 3
+            && cancel_view.pending_evaluations_for_document_scope_probe() == 0,
+        "Panicking cancellation repeated delivery or retained work"
+    );
+    drop(cancel_view);
+    println!(
+        "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)"
+    );
+
     // A non-string JavaScript URL preserves the document. A string result replaces it.
     evaluate(
         &servo,
@@ -1482,6 +1697,20 @@ pub(super) fn run() -> Result<()> {
         ),
         "Legacy evaluator admitted work after shutdown"
     );
+    let (sender, cancelled_shutdown) = mpsc::channel();
+    ensure!(
+        failure
+            .evaluate_cancellable_javascript_in_document(
+                recovered,
+                "'after-shutdown'",
+                move |result| {
+                    let _ = sender.send(result);
+                },
+            )
+            .is_none(),
+        "Shutdown returned a cancellable admission id"
+    );
+    stale(cancelled_shutdown.try_recv()?)?;
     servo.start_shutdown_for_document_scope_probe();
     drive_until(&servo, deadline, || {
         servo.shutdown_complete_for_document_scope_probe()
@@ -1507,6 +1736,6 @@ pub(super) fn run() -> Result<()> {
     println!(
         "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)"
     );
-    println!("S1 document-scope prototype: PASS (31 cases; experimental lifecycle and host gate)");
+    println!("S1 document-scope prototype: PASS (34 cases; experimental lifecycle and host gate)");
     Ok(())
 }

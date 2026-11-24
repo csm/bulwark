@@ -65,9 +65,10 @@ The delegate receives revocation before those callbacks receive `StaleDocument`.
 The evaluator removes callbacks before it calls them, so a callback can submit another request.
 Later engine replies for removed requests have no effect.
 
-This cleanup rejects pending results. It does not cancel engine execution.
-JavaScript that already ran can still change the document.
-The prototype does not define cancellation of queued engine work or interruption of active JavaScript.
+This cleanup rejects pending results and closes their execution permits.
+The script thread rejects a closed permit before execution.
+JavaScript that passes this check can still change the document.
+The prototype does not interrupt active JavaScript.
 Terminal callbacks from one revocation have no specified order.
 
 The actual failure fixture sends a diagnostic message that panics on the active script thread.
@@ -115,7 +116,7 @@ A pending callback can retain a view or Servo handle and prevent the engine dest
 The explicit experimental shutdown entry point handles this cycle.
 Destructor cleanup alone cannot handle a destructor that ownership prevents from starting.
 This entry point is probe instrumentation, not an installed product API.
-The prototype does not cancel queued engine work or interrupt active JavaScript.
+The prototype closes execution permits for queued work. It does not interrupt active JavaScript.
 Unresponsive JavaScript and backend disconnection remain outside these cleanup checks.
 
 ## Callback unwind audit
@@ -183,6 +184,45 @@ It fails at lifecycle revocation with `Expected eight terminal callbacks`.
 Both existing Servo controls still pass with those files.
 These fixtures do not cover panics in other delegate methods, panic hooks, or panic-payload destructors.
 
+## Queued execution cancellation
+
+The experimental `evaluate_cancellable_javascript_in_document` method returns a pending evaluation id.
+Admission after shutdown returns no id and delivers `StaleDocument` synchronously.
+The view can cancel its own pending id through `cancel_javascript_evaluation`.
+Cancellation removes the callback, closes its execution permit, and delivers `Cancelled` synchronously.
+The callback runs without an evaluator borrow. A callback panic propagates after removal and permit closure.
+Repeated, revoked, and foreign-view cancellation attempts return false.
+A request whose callback already ran also returns false.
+Cancellation preserves the active document and its host generation.
+
+Each pending evaluation retains the sender of a private channel from Servo's generic transport.
+The request carries the receiver through the constellation to the script thread.
+The script thread requires an open, empty channel immediately before JavaScript execution.
+A closed channel or transport error rejects execution. The script thread checks the permit again after result serialization.
+Callback removal also closes the permit during lifecycle revocation, final release, and shutdown.
+The prototype does not queue a cancellation message behind the JavaScript that it must cancel.
+
+Cancellation does not interrupt running JavaScript or undo an existing mutation.
+A cancellation after the execution check can only suppress its result.
+The host removes the callback before terminal delivery, so later engine replies cannot deliver it twice.
+Replies that already reached a host queue still need the host ticket's cancellation check before allocation.
+The channel uses Servo's generic transport, but these runs cover only its single-process backend.
+Multiprocess transport, channel allocation failure, and interruption remain untested.
+This experimental contract needs upstream review before product integration.
+
+Three new fixtures use a script-thread barrier with a five-second deadline.
+The barrier releases on normal return or host unwind and requires no page timer or busy loop.
+The queued fixture cancels a mutation while the receiving thread waits at the barrier.
+It requires an unchanged mutation counter, one terminal callback, released captures, and successful reentrant evaluation.
+It also rejects foreign-view and repeated cancellation without changing the active document.
+The completed fixture places the barrier after execution and serialization, before the host drains the reply.
+Cancellation suppresses delivery, but the mutation counter still records the completed operation.
+The callback-panic fixture requires permit closure before the panic and an unchanged mutation counter after recovery.
+
+The negative control disables only the script thread's check before execution.
+Host cancellation and the check after serialization remain active.
+The queued fixture detects the mutation despite successful host cancellation. Both existing Servo controls still pass.
+
 ## Regression scope
 
 Ordinary fixture resources use interception.
@@ -204,6 +244,9 @@ Fixture markers establish test order, without authentication claims.
 | Serialization reset | A result getter resets the document. The engine rejects the result. |
 | Delayed host delivery | An already successful reply survives in a host queue. A later reset revokes its ticket before allocation. |
 | Host cancellation | Cancellation rejects an otherwise successful current reply before allocation. |
+| Queued engine cancellation | The queued mutation never runs. One callback receives `Cancelled`. Captures release, reentrant evaluation succeeds, and foreign-view cancellation fails. |
+| Completed engine cancellation | Cancellation suppresses the pending reply but preserves the completed mutation. Cancellation after host delivery returns false. |
+| Cancellation callback panic | The execution permit closes before the callback panic. The mutation never runs, captures release, and later evaluation succeeds. |
 | Reload | Reload replaces the identity and rejects the previous scope. |
 | History | Reactivation assigns a fresh incarnation. An old request cannot mutate the restored document. The host rejects the old successful reply. |
 | Redirect | A real HTTP 302 reaches the final fixture. The host rejects the departed reply, and the engine rejects its old scope. |
@@ -226,14 +269,15 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats these thirty-one cases three times and retains the existing Servo contract and E4 baseline results.
-Host cancellation suppresses delivery. It does not cancel JavaScript execution or undo a mutation.
+The runner repeats these thirty-four cases three times and retains the existing Servo contract and E4 baseline results.
+The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before execution.
 The injected crash calls the existing constellation panic handler through an experimental probe method.
 The separate script-thread fixture terminates the receiving thread through a Rust unwind. Neither fixture proves process-failure detection.
 
 ## Local evidence
 
-The [delegate evidence](../experiments/phase3/document-delegate-evidence-2026-11-24.json) records the current runs, source hashes, binary hash, and local checks.
+The [cancellation evidence](../experiments/phase3/document-cancellation-evidence-2026-11-24.json) records the current runs, source hashes, binary hash, and local checks.
+The [delegate evidence](../experiments/phase3/document-delegate-evidence-2026-11-24.json) preserves the thirty-one-case checkpoint.
 The [callback evidence](../experiments/phase3/document-callback-evidence-2026-11-24.json) preserves the twenty-seven-case checkpoint.
 The [cleanup evidence](../experiments/phase3/document-cleanup-evidence-2026-11-23.json) preserves the twenty-two-case checkpoint.
 The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.json) preserves the nineteen-case checkpoint.
@@ -241,10 +285,14 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All thirty-one cases passed in three final runs on macOS arm64 with software rendering.
+All thirty-four cases passed in three final runs on macOS arm64 with software rendering.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
-Python syntax checks and seven runner rejection checks also passed.
+Python syntax checks and five runner rejection checks also passed.
+
+A preliminary validation reused the negative-control binary after source restoration preserved an older timestamp.
+Refreshing the source timestamp forced Cargo to rebuild the fixed engine.
+The evidence retains that failed run separately from the final passes.
 
 One preliminary repeat timed out at the redirect after two successful repeats.
 The final fixture waits for explicit history-traversal completion and exposes HTTP worker errors before the page deadline.
@@ -271,7 +319,7 @@ No remote CI, physical input, Linux, or release latency result applies to this c
 
 This prototype does not close S1 or permit a restricted DOM API.
 Process failure detection still needs a dedicated fixture.
-Cancellation of pending engine work still needs a defined contract.
+Queued execution cancellation needs upstream review and multiprocess evidence. Interruption of active JavaScript remains open.
 Callback cleanup still needs checks for backend disconnection and failures before document construction.
 Upstream review must settle delegate and callback panic propagation, precedence, and suppression during an existing unwind.
 The host allocation counter does not establish registry revocation, retained-node memory bounds, or production scheduling.
@@ -288,14 +336,14 @@ Evaluator authority, redirect/rewrite mechanisms, and owner scope decisions also
 Prepare copies of the six published Servo packages and an isolated Bulwark workspace:
 
 ```sh
-python3 experiments/prepare_document_scope.py --out target/phase3-document-delegates
+python3 experiments/prepare_document_scope.py --out target/phase3-document-cancellation
 ```
 
 Build the candidate:
 
 ```sh
 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/target" cargo build --offline --locked \
-  --manifest-path target/phase3-document-delegates/candidate/Cargo.toml \
+  --manifest-path target/phase3-document-cancellation/candidate/Cargo.toml \
   -p bulwark-experiment-e4 --features document-scope
 ```
 
@@ -304,8 +352,8 @@ Run the candidate with independent 35-second process deadlines:
 ```sh
 python3 experiments/run_document_scope.py \
   --binary target/debug/bulwark-experiment-e4 \
-  --preparation target/phase3-document-delegates \
-  --output target/phase3-document-delegate-evidence
+  --preparation target/phase3-document-cancellation \
+  --output target/phase3-document-cancellation-final-evidence
 ```
 
 The preparation refuses an existing output directory.

@@ -1,6 +1,6 @@
 --- a/servo/javascript_evaluator.rs
 +++ b/servo/javascript_evaluator.rs
-@@ -2,15 +2,55 @@
+@@ -2,15 +2,58 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
@@ -10,6 +10,7 @@
 +    JavaScriptEvaluationId,
 +};
  use rustc_hash::FxHashMap;
++use servo_base::generic_channel::{self, GenericSender};
  use servo_base::id::WebViewId;
  use servo_constellation_traits::EmbedderToConstellationMessage;
 
@@ -55,10 +56,12 @@
 +    webview_id: WebViewId,
 +    expected_document: Option<DocumentIdentity>,
 +    callback: EvaluationCallback,
++    // Keeping this sender alive admits engine execution. Revocation closes the channel.
++    _execution_permit: GenericSender<()>,
  }
 
  pub(crate) struct JavaScriptEvaluator {
-@@ -29,36 +69,87 @@
+@@ -29,36 +72,105 @@
      }
 
      fn generate_id(&mut self) -> JavaScriptEvaluationId {
@@ -78,14 +81,18 @@
 +        expected_document: Option<DocumentIdentity>,
          script: String,
 -        callback: Box<dyn FnOnce(Result<JSValue, JavaScriptEvaluationError>)>,
+-    ) {
 +        callback: Box<dyn FnOnce(Result<DocumentJavaScriptResult, JavaScriptEvaluationError>)>,
-     ) {
++    ) -> JavaScriptEvaluationId {
          let evaluation_id = self.generate_id();
++        let (execution_permit, cancellation) =
++            generic_channel::channel().expect("evaluation permit");
          self.constellation_proxy
              .send(EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
 +                expected_document,
++                cancellation,
                  script,
              ));
 -        self.pending_evaluations
@@ -96,11 +103,26 @@
 +                webview_id,
 +                expected_document,
 +                callback,
++                _execution_permit: execution_permit,
 +            },
 +        );
++        evaluation_id
      }
 
 -    pub(crate) fn finish_evaluation(
++    pub(crate) fn take_cancelled(
++        &mut self,
++        webview_id: WebViewId,
++        evaluation_id: JavaScriptEvaluationId,
++    ) -> Option<EvaluationCallback> {
++        // A view cannot cancel another view's request. Removal drops the engine permit
++        // before user code runs. Late engine replies find no callback.
++        if self.pending_evaluations.get(&evaluation_id)?.webview_id != webview_id {
++            return None;
++        }
++        self.take_finished(evaluation_id)
++    }
++
 +    // Remove callbacks before invoking them. A callback can enqueue new engine work.
 +    pub(crate) fn take_finished(
          &mut self,
@@ -108,13 +130,10 @@
 -        result: Result<JSValue, JavaScriptEvaluationError>,
 -    ) {
 -        (self
--            .pending_evaluations
 +    ) -> Option<EvaluationCallback> {
 +        // A revoked request can still produce a late reply. Never invoke it twice.
 +        self.pending_evaluations
-             .remove(&evaluation_id)
--            .expect("Received request to finish unknown JavaScript evaluation.")
--            .callback)(result)
++            .remove(&evaluation_id)
 +            .map(|pending| pending.callback)
 +    }
 +
@@ -127,7 +146,10 @@
 +            return Vec::new();
 +        };
 +        let ids: Vec<_> = self
-+            .pending_evaluations
+             .pending_evaluations
+-            .remove(&evaluation_id)
+-            .expect("Received request to finish unknown JavaScript evaluation.")
+-            .callback)(result)
 +            .iter()
 +            .filter_map(|(id, pending)| {
 +                (pending.webview_id == webview_id
@@ -159,16 +181,18 @@
  }
 --- a/servo/servo.rs
 +++ b/servo/servo.rs
-@@ -2,6 +2,8 @@
+@@ -1,6 +1,10 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-
-+use embedder_traits::{DocumentIdentity, DocumentLifecycle, JavaScriptEvaluationError};
 +
++use embedder_traits::{
++    DocumentIdentity, DocumentLifecycle, JavaScriptEvaluationError, JavaScriptEvaluationId,
++};
+
  use std::cell::{Cell, Ref, RefCell, RefMut};
  use std::cmp::max;
- use std::rc::{Rc, Weak};
-@@ -406,6 +408,33 @@
+@@ -406,6 +410,33 @@
              .retain(|_webview_id, webview| webview.strong_count() > 0);
      }
 
@@ -202,7 +226,7 @@
      fn finish_shutting_down(&self) {
          debug!("Servo received message that Constellation shutdown is complete");
          self.shutdown_state.set(ShutdownState::FinishedShuttingDown);
-@@ -811,15 +840,38 @@
+@@ -811,15 +842,38 @@
                      webview.request_create_new(response_sender);
                  }
              },
@@ -243,7 +267,7 @@
              },
              ConstellationToEmbedderMsg::InputEventsHandled(webview_id, event_outcomes) => {
                  let webview = self.get_webview_handle(webview_id);
-@@ -878,9 +930,7 @@
+@@ -878,9 +932,7 @@
 
  impl Drop for ServoInner {
      fn drop(&mut self) {
@@ -254,7 +278,7 @@
          while self.spin_event_loop() {
              std::thread::sleep(Duration::from_micros(500));
          }
-@@ -1078,6 +1128,33 @@
+@@ -1078,6 +1130,37 @@
          self.0.spin_event_loop();
      }
 
@@ -276,13 +300,17 @@
 +        expected_document: Option<DocumentIdentity>,
 +        script: String,
 +        callback: crate::javascript_evaluator::EvaluationCallback,
-+    ) {
++    ) -> Option<JavaScriptEvaluationId> {
 +        if self.0.shutdown_state.get() != ShutdownState::NotShuttingDown {
 +            callback(Err(JavaScriptEvaluationError::StaleDocument));
-+            return;
++            return None;
 +        }
-+        self.javascript_evaluator_mut()
-+            .evaluate(webview_id, expected_document, script, callback);
++        Some(self.javascript_evaluator_mut().evaluate(
++            webview_id,
++            expected_document,
++            script,
++            callback,
++        ))
 +    }
 +
      pub fn setup_logging(&self) {
@@ -300,9 +328,9 @@
 -    Theme, TraversalId, UrlRequest, ViewportDetails, WebViewPoint, WebViewRect,
 +    ContextMenuAction, ContextMenuItem, Cursor, DocumentIdentity, DocumentJavaScriptResult,
 +    EmbedderControlId, EmbedderControlRequest, Image, InputEvent, InputEventAndId, InputEventId,
-+    JSValue, JavaScriptEvaluationError, LoadStatus, MediaSessionActionType, NewWebViewDetails,
-+    ScreenGeometry, ScreenshotCaptureError, Scroll, Theme, TraversalId, UrlRequest,
-+    ViewportDetails, WebViewPoint, WebViewRect,
++    JSValue, JavaScriptEvaluationError, JavaScriptEvaluationId, LoadStatus, MediaSessionActionType,
++    NewWebViewDetails, ScreenGeometry, ScreenshotCaptureError, Scroll, Theme, TraversalId,
++    UrlRequest, ViewportDetails, WebViewPoint, WebViewRect,
  };
  use euclid::{Scale, Size2D};
  use image::RgbaImage;
@@ -323,7 +351,7 @@
      }
  }
 
-@@ -733,8 +744,74 @@
+@@ -733,8 +744,131 @@
          script: T,
          callback: impl FnOnce(Result<JSValue, JavaScriptEvaluationError>) + 'static,
      ) {
@@ -367,6 +395,63 @@
 +        self.servo()
 +            .javascript_evaluator_mut()
 +            .pending_for_probe(self.id())
++    }
++
++    /// Experimental instrumentation: hold the script thread while the host queues work.
++    /// The gate has a five-second deadline and releases even if the action unwinds.
++    #[doc(hidden)]
++    pub fn with_paused_script_for_document_scope_probe<R>(&self, action: impl FnOnce() -> R) -> R {
++        let (entered_sender, entered) = servo_base::generic_channel::channel().unwrap();
++        let (resume, resume_receiver) = servo_base::generic_channel::channel::<()>().unwrap();
++        self.servo().constellation_proxy().send(
++            EmbedderToConstellationMessage::PauseScriptForDocumentScopeProbe(
++                self.id(),
++                entered_sender,
++                resume_receiver,
++            ),
++        );
++        assert!(
++            entered
++                .try_recv_timeout(std::time::Duration::from_secs(5))
++                .is_ok(),
++            "Script gate was not entered"
++        );
++        // Closing the channel releases the engine on ordinary return and host unwind.
++        let _resume_on_drop = resume;
++        action()
++    }
++
++    /// Queue a scoped evaluation with an explicit cancellation id.
++    /// Cancellation closes engine admission at the execution check. It cannot interrupt
++    /// running JavaScript or undo effects. A late cancellation still suppresses delivery.
++    pub fn evaluate_cancellable_javascript_in_document<T: ToString>(
++        &self,
++        expected_document: DocumentIdentity,
++        script: T,
++        callback: impl FnOnce(Result<DocumentJavaScriptResult, JavaScriptEvaluationError>) + 'static,
++    ) -> Option<JavaScriptEvaluationId> {
++        self.servo().evaluate_javascript(
++            self.id(),
++            Some(expected_document),
++            script.to_string(),
++            Box::new(callback),
++        )
++    }
++
++    /// Remove a pending evaluation owned by this view and deliver Cancelled synchronously.
++    /// Returns false for unknown, completed, revoked, or foreign-view ids.
++    /// Callback panics propagate after removal and permit closure, without evaluator borrows.
++    pub fn cancel_javascript_evaluation(&self, id: JavaScriptEvaluationId) -> bool {
++        let callback = self
++            .servo()
++            .javascript_evaluator_mut()
++            .take_cancelled(self.id(), id);
++        if let Some(callback) = callback {
++            callback(Err(JavaScriptEvaluationError::Cancelled));
++            true
++        } else {
++            false
++        }
 +    }
 +
 +    /// Snapshot the active top document's engine identity without reading page-controlled data.
@@ -464,17 +549,39 @@
                      devtools_sender: state.devtools_sender,
                      script_to_devtools_callback: Default::default(),
                      #[cfg(feature = "bluetooth")]
-@@ -1342,6 +1345,22 @@
+@@ -1342,6 +1345,44 @@
                  self.handle_new_top_level_browsing_context(url, new_webview_details);
              },
              // Close a top level browsing context.
-+            EmbedderToConstellationMessage::CrashScriptThreadForDocumentScopeProbe(webview_id) => {
-+                if let Some(pipeline) = self.browsing_contexts
++            EmbedderToConstellationMessage::PauseScriptForDocumentScopeProbe(
++                webview_id,
++                entered,
++                resume,
++            ) => {
++                if let Some(pipeline) = self
++                    .browsing_contexts
 +                    .get(&BrowsingContextId::from(webview_id))
 +                    .and_then(|context| self.pipelines.get(&context.pipeline_id))
 +                {
-+                    let _ = pipeline.event_loop.send(
-+                        ScriptThreadMessage::CrashForDocumentScopeProbe(pipeline.id));
++                    let _ =
++                        pipeline
++                            .event_loop
++                            .send(ScriptThreadMessage::PauseForDocumentScopeProbe(
++                                pipeline.id,
++                                entered,
++                                resume,
++                            ));
++                }
++            }
++            EmbedderToConstellationMessage::CrashScriptThreadForDocumentScopeProbe(webview_id) => {
++                if let Some(pipeline) = self
++                    .browsing_contexts
++                    .get(&BrowsingContextId::from(webview_id))
++                    .and_then(|context| self.pipelines.get(&context.pipeline_id))
++                {
++                    let _ = pipeline
++                        .event_loop
++                        .send(ScriptThreadMessage::CrashForDocumentScopeProbe(pipeline.id));
 +                }
 +            }
 +            EmbedderToConstellationMessage::CrashForDocumentScopeProbe(webview_id) => {
@@ -487,11 +594,12 @@
              EmbedderToConstellationMessage::CloseWebView(webview_id) => {
                  self.handle_close_top_level_browsing_context(webview_id);
              },
-@@ -1408,10 +1427,16 @@
+@@ -1408,10 +1449,18 @@
              EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
 +                expected_document,
++                cancellation,
                  script,
              ) => {
 -                self.handle_evaluate_javascript(webview_id, evaluation_id, script);
@@ -500,21 +608,23 @@
 +                    webview_id,
 +                    evaluation_id,
 +                    expected_document,
++                    cancellation,
 +                    script,
 +                );
 +            }
              EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
                  self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
              },
-@@ -1576,6 +1601,7 @@
+@@ -1576,6 +1625,8 @@
          &mut self,
          webview_id: WebViewId,
          evaluation_id: JavaScriptEvaluationId,
 +        expected_document: Option<DocumentIdentity>,
++        cancellation: servo_base::generic_channel::GenericReceiver<()>,
          script: String,
      ) {
          let browsing_context_id = BrowsingContextId::from(webview_id);
-@@ -1591,12 +1617,21 @@
+@@ -1591,12 +1642,22 @@
              return;
          };
 
@@ -533,10 +643,11 @@
                  pipeline.id,
                  evaluation_id,
 +                expected_document,
++                cancellation,
                  script,
              ))
              .is_err()
-@@ -1795,8 +1830,37 @@
+@@ -1795,8 +1856,37 @@
                  self.handle_joint_session_history_length(webview_id, response_sender);
              },
              // Notification that the new document is ready to become active
@@ -575,7 +686,7 @@
              },
              // Update pipeline url after redirections
              ScriptToConstellationMessage::SetFinalUrl(final_url) => {
-@@ -2025,6 +2089,20 @@
+@@ -2025,6 +2115,20 @@
                      .send(mem::ProfilerMsg::Report(sender));
              },
              ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
@@ -596,7 +707,7 @@
                  self.handle_finish_javascript_evaluation(evaluation_id, result)
              },
              ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
-@@ -2968,10 +3046,20 @@
+@@ -2968,10 +3072,20 @@
      fn handle_pipeline_exited(&mut self, pipeline_id: PipelineId, exit_source: PipelineExitSource) {
          debug!("{}: Exited", pipeline_id);
          self.remove_worker_animation_frame_providers_for_pipeline(pipeline_id);
@@ -617,7 +728,7 @@
 
          // Clean up any registered interests for this pipeline.
          self.pipeline_interests.retain(|_, set| {
-@@ -3058,6 +3146,17 @@
+@@ -3058,6 +3172,17 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
@@ -635,7 +746,7 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3402,6 +3501,11 @@
+@@ -3402,6 +3527,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -647,7 +758,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +3575,7 @@
+@@ -3471,7 +3601,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -656,7 +767,7 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -5840,10 +5944,27 @@
+@@ -5840,10 +5970,27 @@
          }
      }
 
@@ -711,16 +822,21 @@
      /// Whether or not to allow a pipeline to load a url.
 --- a/servo-constellation/tracing.rs
 +++ b/servo-constellation/tracing.rs
-@@ -61,6 +61,8 @@
+@@ -61,6 +61,13 @@
                  Self::LogEntry(..) => target!("LogEntry"),
                  Self::NewWebView(..) => target!("NewWebView"),
                  Self::CloseWebView(..) => target!("CloseWebView"),
-+                Self::CrashScriptThreadForDocumentScopeProbe(..) => target!("CrashScriptThreadForDocumentScopeProbe"),
++                Self::CrashScriptThreadForDocumentScopeProbe(..) => {
++                    target!("CrashScriptThreadForDocumentScopeProbe")
++                }
 +                Self::CrashForDocumentScopeProbe(..) => target!("CrashForDocumentScopeProbe"),
++                Self::PauseScriptForDocumentScopeProbe(..) => {
++                    target!("PauseScriptForDocumentScopeProbe")
++                }
                  Self::SetWebViewHasSystemFocus(..) => target!("SetWebViewHasSystemFocus"),
                  Self::ForwardInputEvent(_webview_id, event, ..) => event.log_target(),
                  Self::RefreshCursor(..) => target!("RefreshCursor"),
-@@ -181,7 +183,8 @@
+@@ -181,7 +188,8 @@
                  Self::ScriptLoadedURLInIFrame(..) => target!("ScriptLoadedURLInIFrame"),
                  Self::ScriptNewIFrame(..) => target!("ScriptNewIFrame"),
                  Self::CreateAuxiliaryWebView(..) => target!("ScriptNewAuxiliary"),
@@ -779,7 +895,16 @@
  };
  pub use from_script_message::*;
  use malloc_size_of_derive::MallocSizeOf;
-@@ -72,6 +72,10 @@
+@@ -30,7 +30,7 @@
+ use profile_traits::mem::MemoryReportResult;
+ use rustc_hash::FxHashMap;
+ use serde::{Deserialize, Serialize};
+-use servo_base::generic_channel::GenericCallback;
++use servo_base::generic_channel::{GenericCallback, GenericReceiver, GenericSender};
+ use servo_base::id::{LCPCandidateID, MessagePortId, PipelineId, ScriptEventLoopId, WebViewId};
+ use servo_config::prefs::PrefValue;
+ use servo_url::{ImmutableOrigin, ServoUrl};
+@@ -72,6 +72,12 @@
      NewWebView(ServoUrl, NewWebViewDetails),
      /// Close a top level browsing context.
      CloseWebView(WebViewId),
@@ -787,10 +912,12 @@
 +    CrashForDocumentScopeProbe(WebViewId),
 +    /// Experimental failure injection into the actual active script thread.
 +    CrashScriptThreadForDocumentScopeProbe(WebViewId),
++    /// Experimental execution barrier for deterministic cancellation probes.
++    PauseScriptForDocumentScopeProbe(WebViewId, GenericSender<()>, GenericReceiver<()>),
      /// Set whether a WebView has system focus. This corresponds to the [HTML
      /// specification's] concept of "system focus" and is distinct from the browsing
      /// context or element that has focus within the WebView.
-@@ -97,7 +101,12 @@
+@@ -97,7 +103,13 @@
      PaintMetric(PipelineId, PaintMetricEvent),
      /// Evaluate a JavaScript string in the context of a `WebView`. When execution is complete or an
      /// error is encountered, a correpsonding message will be sent to the embedding layer.
@@ -799,6 +926,7 @@
 +        WebViewId,
 +        JavaScriptEvaluationId,
 +        Option<DocumentIdentity>,
++        GenericReceiver<()>,
 +        String,
 +    ),
      /// Create a memory report and return it via the [`GenericCallback`]
@@ -856,12 +984,14 @@
  /// A JavaScript value produced by evaluation of a script.
  #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
  pub enum JSValue {
-@@ -1081,6 +1124,8 @@
+@@ -1081,6 +1124,10 @@
  /// An error that happens when trying to evaluate JavaScript on a `WebView`.
  #[derive(Clone, Debug, Deserialize, EnumMessage, PartialEq, Serialize)]
  pub enum JavaScriptEvaluationError {
 +    /// The expected document is not active, or the script reset its document.
 +    StaleDocument,
++    /// The embedder cancelled or revoked the pending execution permit.
++    Cancelled,
      /// The `Document` of frame that the script was going to execute in no longer exists.
      DocumentNotFound,
      /// The script could not be compiled.
@@ -1003,10 +1133,25 @@
  };
  use encoding_rs::Encoding;
  use fonts::{FontContext, SystemFontServiceProxy, WebFontLoadEvent};
-@@ -1893,14 +1893,25 @@
+@@ -83,7 +83,7 @@
+ };
+ use servo_arc::Arc as ServoArc;
+ use servo_base::cross_process_instant::CrossProcessInstant;
+-use servo_base::generic_channel::GenericSender;
++use servo_base::generic_channel::{GenericReceiver, GenericSender, TryReceiveError};
+ use servo_base::id::{
+     BrowsingContextId, HistoryStateId, PipelineId, PipelineNamespace, ScriptEventLoopId, WebViewId,
+ };
+@@ -1892,15 +1892,32 @@
+             },
              ScriptThreadMessage::SetScrollStates(pipeline_id, scroll_states) => {
                  self.handle_set_scroll_states(pipeline_id, scroll_states)
-             },
+-            },
++            }
++            ScriptThreadMessage::PauseForDocumentScopeProbe(_pipeline_id, entered, resume) => {
++                let _ = entered.send(());
++                let _ = resume.try_recv_timeout(Duration::from_secs(5));
++            }
 +            ScriptThreadMessage::CrashForDocumentScopeProbe(_) => {
 +                panic!("S1 probe actual script-thread panic");
 +            }
@@ -1015,6 +1160,7 @@
                  pipeline_id,
                  evaluation_id,
 +                expected_document,
++                cancellation,
                  script,
              ) => {
 -                self.handle_evaluate_javascript(webview_id, pipeline_id, evaluation_id, script, cx);
@@ -1024,6 +1170,7 @@
 +                    pipeline_id,
 +                    evaluation_id,
 +                    expected_document,
++                    cancellation,
 +                    script,
 +                    cx,
 +                );
@@ -1031,7 +1178,7 @@
              ScriptThreadMessage::SendImageKeysBatch(pipeline_id, image_keys) => {
                  if let Some(window) = self.documents.borrow().find_window(pipeline_id) {
                      window
-@@ -3766,7 +3777,7 @@
+@@ -3766,7 +3783,7 @@
              .send((
                  webview_id,
                  incomplete.pipeline_id,
@@ -1040,19 +1187,33 @@
              ))
              .unwrap();
 
-@@ -4522,6 +4533,7 @@
+@@ -4522,6 +4539,8 @@
          webview_id: WebViewId,
          pipeline_id: PipelineId,
          evaluation_id: JavaScriptEvaluationId,
 +        expected_document: Option<DocumentIdentity>,
++        cancellation: GenericReceiver<()>,
          script: String,
          cx: &mut js::context::JSContext,
      ) {
-@@ -4536,6 +4548,22 @@
+@@ -4536,6 +4555,35 @@
              ));
              return;
          };
 +
++        // The host closes the permit when a callback is cancelled or revoked. Check on
++        // the script thread rather than queueing a cancellation behind the work itself.
++        if !matches!(cancellation.try_recv(), Err(TryReceiveError::Empty)) {
++            let _ = self.senders.pipeline_to_constellation_sender.send((
++                webview_id,
++                pipeline_id,
++                ScriptToConstellationMessage::FinishJavaScriptEvaluation(
++                    evaluation_id,
++                    Err(JavaScriptEvaluationError::Cancelled),
++                ),
++            ));
++            return;
++        }
 +        let document = window.Document();
 +        let identity = document.evaluation_identity();
 +        if !document.is_fully_active()
@@ -1071,39 +1232,42 @@
 
          let global_scope = window.as_global_scope();
          let mut realm = enter_auto_realm(cx, global_scope);
-@@ -4558,6 +4586,16 @@
+@@ -4558,6 +4606,18 @@
          };
 
          let result = jsval_to_webdriver(cx, global_scope, return_value.handle());
 +        // Serialization can invoke getters; check the document again after it finishes.
-+        let result =
-+            if window.Document().evaluation_identity() != identity || !document.is_fully_active() {
-+                Err(JavaScriptEvaluationError::StaleDocument)
-+            } else {
-+                result.map(|value| DocumentJavaScriptResult {
-+                    document: identity,
-+                    value,
-+                })
-+            };
++        let result = if !matches!(cancellation.try_recv(), Err(TryReceiveError::Empty)) {
++            Err(JavaScriptEvaluationError::Cancelled)
++        } else if window.Document().evaluation_identity() != identity || !document.is_fully_active()
++        {
++            Err(JavaScriptEvaluationError::StaleDocument)
++        } else {
++            result.map(|value| DocumentJavaScriptResult {
++                document: identity,
++                value,
++            })
++        };
          let _ = self.senders.pipeline_to_constellation_sender.send((
              webview_id,
              pipeline_id,
 --- a/servo-script/messaging.rs
 +++ b/servo-script/messaging.rs
-@@ -67,6 +67,7 @@
+@@ -67,6 +67,8 @@
                  ScriptThreadMessage::UnloadDocument(id) => Some(*id),
                  ScriptThreadMessage::ExitPipeline(_webview_id, id, ..) => Some(*id),
                  ScriptThreadMessage::ExitScriptThread => None,
 +                ScriptThreadMessage::CrashForDocumentScopeProbe(id) => Some(*id),
++                ScriptThreadMessage::PauseForDocumentScopeProbe(id, ..) => Some(*id),
                  ScriptThreadMessage::SendInputEvent(_, id, _) => Some(*id),
                  ScriptThreadMessage::RefreshCursor(id, ..) => Some(*id),
                  ScriptThreadMessage::GetTitle(id) => Some(*id),
-@@ -100,7 +101,7 @@
+@@ -100,7 +102,7 @@
                  #[cfg(feature = "webgpu")]
                  ScriptThreadMessage::SetWebGPUPort(..) => None,
                  ScriptThreadMessage::SetScrollStates(id, ..) => Some(*id),
 -                ScriptThreadMessage::EvaluateJavaScript(_, id, _, _) => Some(*id),
-+                ScriptThreadMessage::EvaluateJavaScript(_, id, _, _, _) => Some(*id),
++                ScriptThreadMessage::EvaluateJavaScript(_, id, _, _, _, _) => Some(*id),
                  ScriptThreadMessage::SendImageKeysBatch(..) => None,
                  ScriptThreadMessage::PreferencesUpdated(..) => None,
                  ScriptThreadMessage::NoLongerWaitingOnAsychronousImageUpdates(_) => None,
@@ -1122,16 +1286,18 @@
  };
  use euclid::{Scale, Size2D};
  use fonts_traits::{SystemFontServiceProxySender, WebFontLoadEvent};
-@@ -177,6 +177,8 @@
+@@ -177,6 +177,10 @@
      ExitPipeline(WebViewId, PipelineId, DiscardBrowsingContext),
      /// Notifies the script that the whole thread should be closed.
      ExitScriptThread,
 +    /// Experimental instrumentation: panic on the receiving script thread.
 +    CrashForDocumentScopeProbe(PipelineId),
++    /// Experimental execution barrier for deterministic cancellation probes.
++    PauseForDocumentScopeProbe(PipelineId, GenericSender<()>, GenericReceiver<()>),
      /// Sends a DOM event.
      SendInputEvent(WebViewId, PipelineId, ConstellationInputEvent),
      /// Request that the given pipeline refresh the cursor by doing a hit test at the most
-@@ -298,7 +300,13 @@
+@@ -298,7 +302,14 @@
      SetScrollStates(PipelineId, ScrollStateUpdate),
      /// Evaluate the given JavaScript and return a result via a corresponding message
      /// to the Constellation.
@@ -1141,6 +1307,7 @@
 +        PipelineId,
 +        JavaScriptEvaluationId,
 +        Option<DocumentIdentity>,
++        GenericReceiver<()>,
 +        String,
 +    ),
      /// A new batch of keys for the image cache for the specific pipeline.

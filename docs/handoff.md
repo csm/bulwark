@@ -13,7 +13,7 @@ These measurements exclude the future node registry and JSON schema conversion. 
 The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its thirty-one cases cover JavaScript URLs, script-created initial documents, an actual script-thread unwind, and callback panics.
+Its thirty-four cases cover JavaScript URLs, script-created initial documents, an actual script-thread unwind, and callback panics.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
 Final handle release now revokes host scope and pending callbacks synchronously, including release before host activation.
 Explicit shutdown releases sixteen ordinary callbacks, breaks a retained-view cycle, and rejects new evaluation before the engine stops.
@@ -29,7 +29,12 @@ The prototype now attempts every delegate notification and terminal callback bef
 A delegate panic precedes callback panics in the same batch.
 The host must revoke local scope before any fallible work in those notifications.
 Four new cases cover lifecycle revocation, final release, release during a host unwind, and shutdown with two panicking delegates.
-Actual process failure, cancellation of engine work, backend disconnection, and remaining replacement paths stay open.
+
+The cancellation audit now adds a private execution permit to each pending request.
+Explicit cancellation closes the permit before terminal delivery and prevents queued mutations at the script thread's execution check.
+Three new cases cover queued cancellation, cancellation after execution, and cancellation callback panics.
+Cancellation after the execution check cannot interrupt JavaScript or undo its effects.
+Actual process failure, interruption of active JavaScript, backend disconnection, and remaining replacement paths stay open.
 The product pins and installed natives remain unchanged.
 
 P3.1 remains open on these requirements:
@@ -46,14 +51,15 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [delegate evidence](../experiments/phase3/document-delegate-evidence-2026-11-24.json) records the current S1 runs, engine controls, and local checks.
+The [cancellation evidence](../experiments/phase3/document-cancellation-evidence-2026-11-24.json) records the current S1 runs, engine controls, and local checks.
+The [delegate evidence](../experiments/phase3/document-delegate-evidence-2026-11-24.json) preserves the thirty-one-case checkpoint.
 The [callback evidence](../experiments/phase3/document-callback-evidence-2026-11-24.json) preserves the twenty-seven-case checkpoint.
 The [cleanup evidence](../experiments/phase3/document-cleanup-evidence-2026-11-23.json) preserves the twenty-two-case checkpoint.
 The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.json) preserves the nineteen-case checkpoint.
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The thirty-one lifecycle cases passed in three final runs, with both existing Servo controls.
+The thirty-four lifecycle cases passed in three final runs, with both existing Servo controls.
 The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
 The product keeps its existing engine configuration and dependency versions.
 One preliminary repeat timed out at the redirect. The final fixture waits for explicit history-traversal completion and exposes HTTP worker errors.
@@ -62,10 +68,10 @@ The prior audit also exposed a nonblocking read error on an accepted loopback so
 The fixture now explicitly selects blocking reads with a timeout. This change does not prove the earlier timeout's cause.
 
 All 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
-Python syntax checks and seven runner rejection checks also passed.
-The negative control restores the three engine files from the callback checkpoint.
-It fails at the lifecycle delegate case with the terminal callback count assertion.
-The starting worktree matched freshly fetched `origin/main` at `d3e5ea5`.
+Python syntax checks and five runner rejection checks also passed.
+The negative control disables the script thread's permit check before execution.
+It fails because the cancelled queued mutation runs despite host cancellation. Both existing Servo controls pass.
+The starting worktree fast-forwarded to freshly fetched `origin/main` at `b6b2d93`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
@@ -87,7 +93,8 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Continue the S1 lifecycle audit with actual process failure and cancellation of engine work.
+   Continue the S1 lifecycle audit with actual process failure and interruption of active JavaScript.
+   Review the queued cancellation contract and obtain multiprocess evidence before integration.
    Cover backend disconnection and failures before document construction.
    Cover remaining replacement paths such as `srcdoc`, parser-time resets, and cross-origin history reactivation.
    Review the explicit shutdown contract, callback ownership cycles, and delegate and callback panic policy before product integration.
