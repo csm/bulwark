@@ -189,7 +189,7 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and twenty-seven regression cases.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and thirty-one regression cases.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.
 History reactivation receives a fresh incarnation before script resumes.
@@ -201,6 +201,9 @@ Explicit shutdown releases callback captures, breaks a retained-view cycle, and 
 The callback audit found that one panic skipped terminal delivery to the rest of a revoked batch.
 The prototype now attempts every terminal callback before it resumes the first panic.
 Five new cases cover result delivery, lifecycle revocation, final release, release during a host unwind, and shutdown.
+The delegate audit found the same defect when a host revocation handler panicked.
+The prototype now attempts every delegate notification and terminal callback before it resumes the first panic.
+Four new cases cover lifecycle revocation, final release, release during a host unwind, and shutdown with two views.
 Actual process failure, cancellation of engine work, backend disconnection, and remaining replacement paths stay open.
 The reset case also proves that S2 cannot bind the current incarnation through pipeline equality alone.
 Product pins and installed behavior remain unchanged.
