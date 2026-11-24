@@ -1120,6 +1120,16 @@
 
 --- a/servo-script/event_loop/script_thread.rs
 +++ b/servo-script/event_loop/script_thread.rs
+@@ -25,8 +25,8 @@
+ use std::option::Option;
+ use std::rc::{Rc, Weak};
+ use std::result::Result;
+-use std::sync::Arc;
+ use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::{Arc, Mutex};
+ use std::thread::{self, JoinHandle};
+ use std::time::{Duration, Instant, SystemTime};
+
 @@ -44,9 +44,9 @@
  };
  use embedder_traits::user_contents::{UserContentManagerId, UserContents, UserScript};
@@ -1142,7 +1152,186 @@
  use servo_base::id::{
      BrowsingContextId, HistoryStateId, PipelineId, PipelineNamespace, ScriptEventLoopId, WebViewId,
  };
-@@ -1892,15 +1892,32 @@
+@@ -321,6 +321,10 @@
+     /// A flag set to `true` by the BHM on exit, and checked from within the interrupt handler.
+     closing: Arc<AtomicBool>,
+
++    /// Experimental S1 instrumentation, created by the first embedder evaluation.
++    #[no_trace]
++    evaluation_interrupt: RefCell<Option<EvaluationInterrupt>>,
++
+     /// A [`TimerScheduler`] used to schedule timers for this [`ScriptThread`]. Timers are handled
+     /// in the [`ScriptThread`] event loop.
+     #[no_trace]
+@@ -441,10 +445,97 @@
+     let res = ScriptThread::can_continue_running();
+     if !res {
+         ScriptThread::prepare_for_shutdown();
++        return res;
+     }
+-    res
++    // Uncatchable termination of the active embedder evaluation only. The thread,
++    // its other documents, and later tasks keep running.
++    !ScriptThread::active_evaluation_interrupted()
++}
++
++/// How long the evaluation watcher waits on a permit before it checks for completion.
++/// A closed permit wakes the watcher immediately.
++const EVALUATION_WATCH_INTERVAL: Duration = Duration::from_millis(10);
++
++#[derive(Default)]
++struct EvaluationInterruptState {
++    active: Option<JavaScriptEvaluationId>,
++    interrupted: bool,
++}
++
++/// Experimental S1 instrumentation. One watcher thread per script thread observes the
++/// execution permit of the running embedder evaluation. Closure requests an interrupt.
++struct EvaluationInterrupt {
++    state: Arc<Mutex<EvaluationInterruptState>>,
++    watch: crossbeam_channel::Sender<(JavaScriptEvaluationId, GenericReceiver<()>)>,
+ }
+
++impl EvaluationInterrupt {
++    fn new(js_context: ThreadSafeJSContext) -> Option<Self> {
++        let state = Arc::<Mutex<EvaluationInterruptState>>::default();
++        let (watch, requests) = unbounded();
++        let watched = state.clone();
++        thread::Builder::new()
++            .name("EvaluationWatch".into())
++            .spawn(move || watch_evaluations(watched, requests, js_context))
++            .ok()?;
++        Some(Self { state, watch })
++    }
++}
++
++/// Clears the active evaluation on every exit path, including an unwind.
++struct ActiveEvaluation(Option<Arc<Mutex<EvaluationInterruptState>>>);
++
++impl ActiveEvaluation {
++    /// Ends the evaluation and reports whether its permit interrupted it.
++    fn finish(mut self) -> bool {
++        self.0.take().is_some_and(|state| {
++            let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
++            state.active = None;
++            std::mem::take(&mut state.interrupted)
++        })
++    }
++}
++
++impl Drop for ActiveEvaluation {
++    fn drop(&mut self) {
++        if let Some(state) = self.0.take() {
++            let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
++            state.active = None;
++            state.interrupted = false;
++        }
++    }
++}
++
++fn watch_evaluations(
++    state: Arc<Mutex<EvaluationInterruptState>>,
++    requests: crossbeam_channel::Receiver<(JavaScriptEvaluationId, GenericReceiver<()>)>,
++    js_context: ThreadSafeJSContext,
++) {
++    // The script thread drops the request sender when it exits.
++    while let Ok((id, permit)) = requests.recv() {
++        loop {
++            match permit.try_recv_timeout(EVALUATION_WATCH_INTERVAL) {
++                Err(TryReceiveError::Empty) => {
++                    let state = state.lock().unwrap_or_else(|error| error.into_inner());
++                    if state.active != Some(id) {
++                        break;
++                    }
++                },
++                // A message, disconnection, or transport error closes the permit.
++                _ => {
++                    let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
++                    if state.active == Some(id) {
++                        state.interrupted = true;
++                        // This is a no-op after the runtime is destroyed.
++                        js_context.request_interrupt_callback();
++                    }
++                    break;
++                },
++            }
++        }
++    }
++}
++
+ /// In the event of thread panic, all data on the stack runs its destructor. However, there
+ /// are no reachable, owning pointers to the DOM memory, so it never gets freed by default
+ /// when the script thread fails. The ScriptMemoryFailsafe uses the destructor bomb pattern
+@@ -559,6 +650,60 @@
+         with_script_thread(|script_thread| script_thread.can_continue_running_inner())
+     }
+
++    fn active_evaluation_interrupted() -> bool {
++        with_script_thread(|script_thread| {
++            script_thread
++                .evaluation_interrupt
++                .borrow()
++                .as_ref()
++                .is_some_and(|interrupt| {
++                    let state = interrupt
++                        .state
++                        .lock()
++                        .unwrap_or_else(|error| error.into_inner());
++                    state.active.is_some() && state.interrupted
++                })
++        })
++    }
++
++    /// Mark an embedder evaluation active and let the watcher observe its permit.
++    /// Without a watcher thread, the evaluation runs without interruption.
++    fn begin_active_evaluation(
++        &self,
++        evaluation_id: JavaScriptEvaluationId,
++        permit: GenericReceiver<()>,
++    ) -> ActiveEvaluation {
++        let mut interrupt = self.evaluation_interrupt.borrow_mut();
++        if interrupt.is_none() {
++            *interrupt = EvaluationInterrupt::new(self.js_runtime.thread_safe_js_context());
++        }
++        let Some(interrupt) = interrupt.as_ref() else {
++            return ActiveEvaluation(None);
++        };
++        {
++            let mut state = interrupt
++                .state
++                .lock()
++                .unwrap_or_else(|error| error.into_inner());
++            // Embedder evaluations do not nest. Never let an inner request own the interrupt.
++            if state.active.is_some() {
++                return ActiveEvaluation(None);
++            }
++            state.active = Some(evaluation_id);
++            state.interrupted = false;
++        }
++        // Publish the active id before the watcher can observe a closed permit.
++        if interrupt.watch.send((evaluation_id, permit)).is_err() {
++            interrupt
++                .state
++                .lock()
++                .unwrap_or_else(|error| error.into_inner())
++                .active = None;
++            return ActiveEvaluation(None);
++        }
++        ActiveEvaluation(Some(interrupt.state.clone()))
++    }
++
+     pub(crate) fn prepare_for_shutdown() {
+         with_script_thread(|script_thread| {
+             script_thread.prepare_for_shutdown_inner();
+@@ -955,6 +1100,7 @@
+                     task_queue,
+                     background_hang_monitor,
+                     closing,
++                    evaluation_interrupt: Default::default(),
+                     timer_scheduler: Default::default(),
+                     js_runtime: Rc::new(runtime),
+                     closed_pipelines: DomRefCell::new(FxHashSet::default()),
+@@ -1892,15 +2038,32 @@
              },
              ScriptThreadMessage::SetScrollStates(pipeline_id, scroll_states) => {
                  self.handle_set_scroll_states(pipeline_id, scroll_states)
@@ -1178,7 +1367,7 @@
              ScriptThreadMessage::SendImageKeysBatch(pipeline_id, image_keys) => {
                  if let Some(window) = self.documents.borrow().find_window(pipeline_id) {
                      window
-@@ -3766,7 +3783,7 @@
+@@ -3766,7 +3929,7 @@
              .send((
                  webview_id,
                  incomplete.pipeline_id,
@@ -1187,7 +1376,7 @@
              ))
              .unwrap();
 
-@@ -4522,6 +4539,8 @@
+@@ -4522,6 +4685,8 @@
          webview_id: WebViewId,
          pipeline_id: PipelineId,
          evaluation_id: JavaScriptEvaluationId,
@@ -1196,7 +1385,7 @@
          script: String,
          cx: &mut js::context::JSContext,
      ) {
-@@ -4536,6 +4555,35 @@
+@@ -4536,11 +4701,43 @@
              ));
              return;
          };
@@ -1232,12 +1421,33 @@
 
          let global_scope = window.as_global_scope();
          let mut realm = enter_auto_realm(cx, global_scope);
-@@ -4558,6 +4606,18 @@
+         let cx = &mut realm.current_realm();
+
++        // From here, closing the permit interrupts execution and result serialization.
++        // Interruption cannot undo effects that happened before the interrupt check.
++        let active = self.begin_active_evaluation(evaluation_id, cancellation);
+         rooted!(&in(cx) let mut return_value = UndefinedValue());
+         if let Err(err) = global_scope.evaluate_js_on_global(
+             cx,
+@@ -4549,6 +4746,11 @@
+             None, // No known `introductionType` for JS code from embedder
+             Some(return_value.handle_mut()),
+         ) {
++            let err = if active.finish() {
++                JavaScriptEvaluationError::Cancelled
++            } else {
++                err
++            };
+             _ = self.senders.pipeline_to_constellation_sender.send((
+                 webview_id,
+                 pipeline_id,
+@@ -4558,6 +4760,19 @@
          };
 
          let result = jsval_to_webdriver(cx, global_scope, return_value.handle());
 +        // Serialization can invoke getters; check the document again after it finishes.
-+        let result = if !matches!(cancellation.try_recv(), Err(TryReceiveError::Empty)) {
++        // The watcher reports a permit that closed during execution or serialization.
++        let result = if active.finish() {
 +            Err(JavaScriptEvaluationError::Cancelled)
 +        } else if window.Document().evaluation_identity() != identity || !document.is_fully_active()
 +        {

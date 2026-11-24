@@ -21,7 +21,8 @@ EXPECTED_MARKERS = {
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
     "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
     "queued-engine-cancellation", "completed-engine-cancellation",
-    "engine-cancellation-callback-panic",
+    "engine-cancellation-callback-panic", "active-engine-interruption",
+    "serialization-interruption", "interrupted-scheduled-work", "uninterrupted-long-evaluation",
     "release-during-host-unwind", "shutdown-callback-panics", "lifecycle-delegate-panic",
     "release-delegate-panic", "delegate-panic-during-host-unwind", "shutdown-delegate-panics",
     "document-scope prototype",
@@ -71,8 +72,9 @@ def main():
         )},
         "scope": ("Experimental engine scope, host allocation gate, script-thread unwind, "
                   "final-handle release, explicit engine shutdown, queued execution cancellation, "
+                  "single-process interruption of running JavaScript, "
                   "and callback and delegate unwind safety. "
-                  "Process failure, backend disconnection, interruption of running JavaScript, "
+                  "Process failure, multiprocess transport, backend disconnection, "
                   "and remaining replacement audits remain open."),
         "cases": [],
     }

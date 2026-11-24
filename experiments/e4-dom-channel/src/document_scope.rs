@@ -2,10 +2,10 @@
 use super::{ORIGIN, Waker, drive_until, evaluate};
 use anyhow::{Result, ensure};
 use servo::{
-    CreateNewWebViewRequest, DocumentIdentity, DocumentJavaScriptResult, DocumentLifecycle,
-    JSValue, JavaScriptEvaluationError, LoadStatus, Opts, RenderingContext, Servo, ServoBuilder,
-    SoftwareRenderingContext, TraversalId, WebResourceLoad, WebResourceResponse, WebView,
-    WebViewBuilder, WebViewDelegate,
+    ConsoleLogLevel, CreateNewWebViewRequest, DocumentIdentity, DocumentJavaScriptResult,
+    DocumentLifecycle, JSValue, JavaScriptEvaluationError, LoadStatus, Opts, RenderingContext,
+    Servo, ServoBuilder, SoftwareRenderingContext, TraversalId, WebResourceLoad,
+    WebResourceResponse, WebView, WebViewBuilder, WebViewDelegate,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -36,6 +36,8 @@ struct Delegate {
     popups: RefCell<Vec<CreateNewWebViewRequest>>,
     // One-shot: panic after the host revokes local state for an inactive document.
     panic_on_revoke: Cell<bool>,
+    // Page console messages order the interruption fixtures. They grant no host authority.
+    console: RefCell<Vec<String>>,
 }
 
 const DELEGATE_PANIC: &str = "S1 probe delegate panic";
@@ -131,6 +133,9 @@ impl WebViewDelegate for Delegate {
     }
     fn notify_new_frame_ready(&self, view: WebView) {
         view.paint();
+    }
+    fn show_console_message(&self, _: WebView, _: ConsoleLogLevel, message: String) {
+        self.console.borrow_mut().push(message);
     }
     fn load_web_resource(&self, _: WebView, load: WebResourceLoad) {
         let url = load.request().url.clone();
@@ -393,6 +398,17 @@ impl CleanupAudit {
         );
         Ok(())
     }
+}
+
+// Wait until the running script logs entry. This message arrives while the script runs.
+fn wait_console(servo: &Servo, delegate: &Delegate, deadline: Instant, marker: &str) -> Result<()> {
+    drive_until(servo, deadline, || {
+        delegate
+            .console
+            .borrow()
+            .iter()
+            .any(|message| message == marker)
+    })
 }
 
 fn expect_panic(expected: &str, action: impl FnOnce()) -> Result<()> {
@@ -879,9 +895,229 @@ pub(super) fn run() -> Result<()> {
             && cancel_view.pending_evaluations_for_document_scope_probe() == 0,
         "Panicking cancellation repeated delivery or retained work"
     );
-    drop(cancel_view);
     println!(
         "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)"
+    );
+
+    // Interrupt JavaScript that already passed the execution check. The running script logs
+    // entry, and the host cancels only after that message arrives. If interruption fails,
+    // the bounded loop completes and the mutation counter records both later increments.
+    let calls = cancellation_calls.clone();
+    let (sender, interrupted_reply) = mpsc::channel();
+    let interrupted = cancel_view
+        .evaluate_cancellable_javascript_in_document(
+            cancel_document,
+            "window.mutations++;console.log('s1-interrupt-entered');\
+             try{const end=Date.now()+4000;while(Date.now()<end){}}\
+             catch(e){window.mutations+=100}finally{window.mutations+=1000}\
+             window.mutations++;'must-not-finish'",
+            move |result| {
+                calls.set(calls.get() + 1);
+                let _ = sender.send(result);
+            },
+        )
+        .unwrap();
+    wait_console(&servo, &cancel_delegate, deadline, "s1-interrupt-entered")?;
+    let interrupt_started = Instant::now();
+    ensure!(
+        cancel_view.cancel_javascript_evaluation(interrupted),
+        "Interruption missed running work"
+    );
+    let interrupted_result = interrupted_reply.try_recv()?;
+    ensure!(
+        matches!(
+            interrupted_result,
+            Err(JavaScriptEvaluationError::Cancelled)
+        ),
+        "Interruption did not deliver Cancelled: {interrupted_result:?}"
+    );
+    cancel_delegate.reject(cancel_ticket, interrupted_result)?;
+    // The follow-up runs on the same script thread, so it waits for the interrupted script.
+    text(
+        scoped(
+            &servo,
+            &cancel_view,
+            deadline,
+            cancel_document,
+            "String(window.mutations)",
+        )?,
+        cancel_document,
+        "2",
+    )?;
+    let interrupt_elapsed = interrupt_started.elapsed();
+    ensure!(
+        interrupt_elapsed < Duration::from_secs(2),
+        "Interruption waited for the loop: {interrupt_elapsed:?}"
+    );
+    ensure!(
+        cancellation_calls.get() == 4
+            && cancel_view.pending_evaluations_for_document_scope_probe() == 0
+            && cancel_delegate.active.get() == Some(cancel_document)
+            && cancel_delegate.generation.get() == cancel_ticket.generation
+            && !cancel_delegate.crashed.get(),
+        "Interruption repeated delivery, retained work, or changed scope"
+    );
+    println!(
+        "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, {} us to next result)",
+        interrupt_elapsed.as_micros()
+    );
+
+    // A result getter runs during serialization, after the execution check.
+    let (sender, serialization_reply) = mpsc::channel();
+    let serialized = cancel_view
+        .evaluate_cancellable_javascript_in_document(
+            cancel_document,
+            "window.mutations++;({get value(){console.log('s1-serialization-entered');\
+             const end=Date.now()+4000;while(Date.now()<end){}\
+             window.mutations++;return 'must-not-serialize'}})",
+            move |result| {
+                let _ = sender.send(result);
+            },
+        )
+        .unwrap();
+    wait_console(
+        &servo,
+        &cancel_delegate,
+        deadline,
+        "s1-serialization-entered",
+    )?;
+    let serialization_started = Instant::now();
+    ensure!(
+        cancel_view.cancel_javascript_evaluation(serialized),
+        "Serialization interruption missed pending work"
+    );
+    ensure!(
+        matches!(
+            serialization_reply.try_recv()?,
+            Err(JavaScriptEvaluationError::Cancelled)
+        ),
+        "Serialization interruption did not deliver Cancelled"
+    );
+    text(
+        scoped(
+            &servo,
+            &cancel_view,
+            deadline,
+            cancel_document,
+            "String(window.mutations)",
+        )?,
+        cancel_document,
+        "3",
+    )?;
+    let serialization_elapsed = serialization_started.elapsed();
+    ensure!(
+        serialization_elapsed < Duration::from_secs(2),
+        "Serialization interruption waited for the getter: {serialization_elapsed:?}"
+    );
+    println!(
+        "S1 serialization-interruption: PASS (getter terminated, {} us to next result)",
+        serialization_elapsed.as_micros()
+    );
+
+    // Interruption terminates the running script. It does not revoke work that the script
+    // already scheduled: the microtask checkpoint follows termination, and timers still fire.
+    let (sender, scheduled_reply) = mpsc::channel();
+    let scheduled = cancel_view
+        .evaluate_cancellable_javascript_in_document(
+            cancel_document,
+            "Promise.resolve().then(()=>{window.s1Microtask=true});\
+             setTimeout(()=>{window.s1Timer=true},0);\
+             console.log('s1-scheduled-entered');\
+             {const end=Date.now()+4000;while(Date.now()<end){}}'must-not-finish'",
+            move |result| {
+                let _ = sender.send(result);
+            },
+        )
+        .unwrap();
+    wait_console(&servo, &cancel_delegate, deadline, "s1-scheduled-entered")?;
+    ensure!(
+        cancel_view.cancel_javascript_evaluation(scheduled),
+        "Scheduled-work interruption missed pending work"
+    );
+    ensure!(
+        matches!(
+            scheduled_reply.try_recv()?,
+            Err(JavaScriptEvaluationError::Cancelled)
+        ),
+        "Scheduled-work interruption did not deliver Cancelled"
+    );
+    text(
+        scoped(
+            &servo,
+            &cancel_view,
+            deadline,
+            cancel_document,
+            "String(window.s1Microtask===true)",
+        )?,
+        cancel_document,
+        "true",
+    )?;
+    loop {
+        let timer = scoped(
+            &servo,
+            &cancel_view,
+            deadline,
+            cancel_document,
+            "String(window.s1Timer===true)",
+        )?;
+        if text(timer, cancel_document, "true").is_ok() {
+            break;
+        }
+        ensure!(Instant::now() < deadline, "Scheduled timer never ran");
+    }
+    ensure!(
+        cancel_delegate.active.get() == Some(cancel_document)
+            && cancel_delegate.generation.get() == cancel_ticket.generation,
+        "Scheduled work changed scope"
+    );
+    println!(
+        "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)"
+    );
+
+    // The watcher must not interrupt work whose permit remains open.
+    let (sender, long_reply) = mpsc::channel();
+    let long_started = Instant::now();
+    cancel_view
+        .evaluate_cancellable_javascript_in_document(
+            cancel_document,
+            "{const end=Date.now()+300;while(Date.now()<end){}}\
+             window.mutations++;'long-complete'",
+            move |result| {
+                let _ = sender.send(result);
+            },
+        )
+        .unwrap();
+    text(
+        receive(&servo, deadline, long_reply)?,
+        cancel_document,
+        "long-complete",
+    )?;
+    // Date.now() has millisecond precision. The bound spans many watcher intervals.
+    let long_elapsed = long_started.elapsed();
+    ensure!(
+        long_elapsed >= Duration::from_millis(250),
+        "Long evaluation returned early: {long_elapsed:?}"
+    );
+    text(
+        scoped(
+            &servo,
+            &cancel_view,
+            deadline,
+            cancel_document,
+            "String(window.mutations)",
+        )?,
+        cancel_document,
+        "4",
+    )?;
+    ensure!(
+        cancel_view.pending_evaluations_for_document_scope_probe() == 0
+            && !cancel_delegate.crashed.get(),
+        "Long evaluation retained work or crashed"
+    );
+    drop(cancel_view);
+    println!(
+        "S1 uninterrupted-long-evaluation: PASS ({} ms loop completed with an open permit)",
+        long_elapsed.as_millis()
     );
 
     // A non-string JavaScript URL preserves the document. A string result replaces it.
@@ -1736,6 +1972,6 @@ pub(super) fn run() -> Result<()> {
     println!(
         "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)"
     );
-    println!("S1 document-scope prototype: PASS (34 cases; experimental lifecycle and host gate)");
+    println!("S1 document-scope prototype: PASS (38 cases; experimental lifecycle and host gate)");
     Ok(())
 }
