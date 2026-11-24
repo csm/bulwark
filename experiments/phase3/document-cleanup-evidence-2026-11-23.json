@@ -1,0 +1,247 @@
+{
+  "started_utc": "2026-11-23T23:45:54.622002+00:00",
+  "binary_sha256": "9c1e8b6147eae1b319741d55d62407192e657eb90d67106ba0d5c59e7b1451e4",
+  "preparation": {
+    "servo": "0.7.0",
+    "patch_sha256": "3d252fcc7ad3686af3d00eb2bf566861b3b4e8870179916de27ac208d1fb1ffc",
+    "source_hashes": {
+      "servo/javascript_evaluator.rs": "61fbbb07f18804b02350f412bd627f782347fcdfcf03e6ade64b75a1d8c9986a",
+      "servo/servo.rs": "4d221039ebb370ce254e2987342bcd3b5535b3e51716386e499041d6d687a073",
+      "servo/webview.rs": "ab37f1503585706e5275d78ddd1f11b76a6c5bed0a1a3b11c03507fa1f117a8a",
+      "servo/webview_delegate.rs": "2347f86f6466b249f31c35787aae8e4976b68da869c4c684383ebe2d1d573a62",
+      "servo-constellation/constellation.rs": "179ba65976d941f83670411bd92dbab603ac7180ffaacd1d81d13ed41e4efb43",
+      "servo-constellation/embedder.rs": "b0cfe993db3ea601adcea19bfca09ccb5ae6ce1c3c4d7b3541751ccefb0d7614",
+      "servo-constellation/tracing.rs": "08ebd810c0ba38496ec30552de7bafdeb41df7c8b9aee32afee434db86a00145",
+      "servo-constellation-traits/from_script_message.rs": "e003e99fa57a3e8fa9dba17bae12c3189ffad30cbbabd51cee960af73dcaf31e",
+      "servo-constellation-traits/lib.rs": "ef2f0a0728c95d747b6dcba47888691b709107a9fd4be83604df55a1d0b8fafa",
+      "servo-embedder-traits/lib.rs": "23cd7e914fad955519cd88cd3ae3c99f055f669ef3db377c21d9c5273ae2dc61",
+      "servo-script/dom/document/document.rs": "01f12b46c59a4a5be54a42a12f9fd35bd68a33efc42dcb619cb672064203ca05",
+      "servo-script/event_loop/script_thread.rs": "ee6a861fd8416f174e425a0ae3d0d049074015fe4cbdb7fd581fc400bf51f162",
+      "servo-script/messaging.rs": "123e066ae57d783c5a83ee61ef6ef52a19cf622514c3a15459dcf9db626dcda8",
+      "servo-script-traits/lib.rs": "8138a73b6e544c3f7113ae0b0563a8c88053d33950885ca6d950212683e01f91"
+    },
+    "product_hashes": {
+      "Cargo.toml": "7b5b598976d830e481ff8fbb7a2695face27633fabb49d5bb41bf4caaf52cf41",
+      "Cargo.lock": "54362b7600ddb3da94785a826689746d72528d76b15e752569486d48aa55f31c"
+    },
+    "candidate": "/Users/csm/.codex-workspaces/worktrees/ios-1650cd3b-cc28-4d9f-90c2-3df0ec780df1/bulwark/target/phase3-document-cleanup/candidate",
+    "probe_hashes": {
+      "experiments/e4-dom-channel/Cargo.toml": "a80855e4bc392819ff15eaeb544f0a23579c7346a3a3c4714ab8e08c4224bb65",
+      "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+      "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+      "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+      "experiments/e4-dom-channel/src/document_scope.rs": "cec89fd189bf671f6ad2ed626056812bcdb7cbe0efe2341cd26b0fbe24b6244e",
+      "experiments/e4-dom-channel/src/main.rs": "111ccbcb8159f3217c899dbcddeb197ed311603485f2abdb988eac38b8045951"
+    }
+  },
+  "platform": {
+    "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64"
+  },
+  "source_hashes": {
+    "experiments/e4-dom-channel/Cargo.toml": "a80855e4bc392819ff15eaeb544f0a23579c7346a3a3c4714ab8e08c4224bb65",
+    "experiments/e4-dom-channel/src/document_scope.rs": "cec89fd189bf671f6ad2ed626056812bcdb7cbe0efe2341cd26b0fbe24b6244e",
+    "experiments/e4-dom-channel/src/main.rs": "111ccbcb8159f3217c899dbcddeb197ed311603485f2abdb988eac38b8045951",
+    "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+    "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+    "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+    "experiments/prepare_document_scope.py": "38b340f5fce74f474078db4c02d06d422ba8725ecd683019162b3727136923a2",
+    "experiments/run_document_scope.py": "2ca1023e1c55f363119118d09fd4a2589a2afd09628a556e6dd7d4beff41e79f"
+  },
+  "scope": "Experimental engine scope, host allocation gate, script-thread unwind, final-handle release, and explicit engine shutdown. Process failure, cancellation of engine work, and remaining replacement audits remain open.",
+  "cases": [
+    {
+      "name": "document-scope-1",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1650cd3b-cc28-4d9f-90c2-3df0ec780df1/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 6.074095874559134,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 lifecycle-readiness-and-current-delivery: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 script-created-initial-document: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (revoked before allocation)",
+        "S1 host-cancellation: PASS",
+        "S1 javascript-url-replacement: PASS",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=false)",
+        "S1 redirect: PASS",
+        "S1 failed-load: PASS (error document replaces departed document)",
+        "S1 cross-view: PASS",
+        "S1 subframe-isolation: PASS",
+        "S1 close: PASS",
+        "S1 injected-crash: PASS (constellation panic handler)",
+        "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+        "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+        "S1 release-before-document-activation: PASS (8 callbacks released)",
+        "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+        "S1 document-scope prototype: PASS (22 cases; experimental lifecycle and host gate)"
+      ],
+      "log_sha256": "ab7bfb1ae62058963e1606a02804f7382aa99e1221c103b75451a51fce0f2f46"
+    },
+    {
+      "name": "document-scope-2",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1650cd3b-cc28-4d9f-90c2-3df0ec780df1/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 2.903884124942124,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 lifecycle-readiness-and-current-delivery: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 script-created-initial-document: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (revoked before allocation)",
+        "S1 host-cancellation: PASS",
+        "S1 javascript-url-replacement: PASS",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=false)",
+        "S1 redirect: PASS",
+        "S1 failed-load: PASS (error document replaces departed document)",
+        "S1 cross-view: PASS",
+        "S1 subframe-isolation: PASS",
+        "S1 close: PASS",
+        "S1 injected-crash: PASS (constellation panic handler)",
+        "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+        "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+        "S1 release-before-document-activation: PASS (8 callbacks released)",
+        "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+        "S1 document-scope prototype: PASS (22 cases; experimental lifecycle and host gate)"
+      ],
+      "log_sha256": "c849790c33a89bb8064b2ed8d589a155a36265524c24ac8789a9566c91681297"
+    },
+    {
+      "name": "document-scope-3",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1650cd3b-cc28-4d9f-90c2-3df0ec780df1/bulwark/target/debug/bulwark-experiment-e4",
+        "--document-scope"
+      ],
+      "status": 0,
+      "elapsed_seconds": 2.890321500133723,
+      "assertions_complete": true,
+      "markers": [
+        "S1 initial-blank-and-tagged-result: PASS",
+        "S1 lifecycle-readiness-and-current-delivery: PASS",
+        "S1 same-document-navigation: PASS",
+        "S1 script-created-initial-document: PASS",
+        "S1 held-A-after-B-and-unscoped-control: PASS",
+        "S1 queued-reset-race-and-pipeline-collision: PASS",
+        "S1 serialization-reset: PASS",
+        "S1 delayed-host-delivery: PASS (revoked before allocation)",
+        "S1 host-cancellation: PASS",
+        "S1 javascript-url-replacement: PASS",
+        "S1 reload: PASS",
+        "S1 history: PASS (retained_identity=false)",
+        "S1 redirect: PASS",
+        "S1 failed-load: PASS (error document replaces departed document)",
+        "S1 cross-view: PASS",
+        "S1 subframe-isolation: PASS",
+        "S1 close: PASS",
+        "S1 injected-crash: PASS (constellation panic handler)",
+        "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+        "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+        "S1 release-before-document-activation: PASS (8 callbacks released)",
+        "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+        "S1 document-scope prototype: PASS (22 cases; experimental lifecycle and host gate)"
+      ],
+      "log_sha256": "2fdb035669882afdc9f3c5f5755a4b9a825b0b63be38314d0ed3d6cdb41ee5c0"
+    },
+    {
+      "name": "servo-contracts",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1650cd3b-cc28-4d9f-90c2-3df0ec780df1/bulwark/target/debug/bulwark-experiment-e4",
+        "--phase3"
+      ],
+      "status": 0,
+      "elapsed_seconds": 0.37949258415028453,
+      "assertions_complete": true,
+      "markers": [],
+      "log_sha256": "19a4dc0411214662fdb5b7d106594c80b74134b9e9b28f74f5059e3a2be3fd07"
+    },
+    {
+      "name": "e4-baseline",
+      "command": [
+        "/Users/csm/.codex-workspaces/worktrees/ios-1650cd3b-cc28-4d9f-90c2-3df0ec780df1/bulwark/target/debug/bulwark-experiment-e4"
+      ],
+      "status": 0,
+      "elapsed_seconds": 2.3571245833300054,
+      "assertions_complete": true,
+      "markers": [],
+      "log_sha256": "cb40c408c64bc8b9c3fa120f797babf5b47344115d53215a821d294819cfb0e8"
+    }
+  ],
+  "local_validation": {
+    "candidate_build": {
+      "status": 0,
+      "log": "target/s1-cleanup-build-final.log",
+      "log_sha256": "0f718955390c9e9e8b5139b4746327ff21700ae5e30274384a69b0670e406988"
+    },
+    "portable_tests": {
+      "status": 0,
+      "log": "target/s1-cleanup-workspace-tests.log",
+      "log_sha256": "34b909f85de844733f8ca3f1bfc203c8baa1d444a12a2a9aae9c034f9c117801",
+      "passed_tests": 61
+    },
+    "portable_clippy": {
+      "status": 0,
+      "log": "target/s1-cleanup-portable-clippy.log",
+      "log_sha256": "6dd77e37f08372cd9d35150af31f2b047ac3a1e3a0b1b1acfb7c83134db0dc5f"
+    },
+    "probe_clippy": {
+      "status": 0,
+      "log": "target/s1-cleanup-probe-clippy.log",
+      "log_sha256": "65d71575b9d8807d0dd34dd732cc22242630a5b679ba7a20e69a49b671ef13a1"
+    },
+    "runner_guards": [
+      {
+        "name": "missing-final-handle-release",
+        "status": 1,
+        "expected_rejection": "assertions_complete=False"
+      },
+      {
+        "name": "missing-release-before-document-activation",
+        "status": 1,
+        "expected_rejection": "assertions_complete=False"
+      },
+      {
+        "name": "missing-engine-shutdown-cleanup",
+        "status": 1,
+        "expected_rejection": "assertions_complete=False"
+      },
+      {
+        "name": "repeat-0",
+        "status": 2,
+        "expected_rejection": "--repeat must be between 1 and 20"
+      },
+      {
+        "name": "repeat-21",
+        "status": 2,
+        "expected_rejection": "--repeat must be between 1 and 20"
+      },
+      {
+        "name": "stale-patch",
+        "status": 2,
+        "expected_rejection": "does not match"
+      },
+      {
+        "name": "stale-probe",
+        "status": 2,
+        "expected_rejection": "does not match"
+      }
+    ],
+    "formatting": "cargo fmt --all -- --check; passed",
+    "python_syntax": "python3 -m py_compile experiments/run_document_scope.py experiments/prepare_document_scope.py; passed"
+  }
+}

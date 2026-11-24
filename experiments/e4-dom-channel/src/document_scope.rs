@@ -28,6 +28,7 @@ struct Delegate {
     allocations: Cell<usize>,
     events: RefCell<Vec<DocumentLifecycle>>,
     closed: Cell<bool>,
+    released: Cell<bool>,
     traversals: RefCell<Vec<TraversalId>>,
     crashed: Cell<bool>,
     crash_reasons: RefCell<Vec<String>>,
@@ -42,6 +43,16 @@ struct Ticket {
 }
 
 impl Delegate {
+    fn notify_document_lifecycle_without_view(&self, event: DocumentLifecycle) {
+        if let DocumentLifecycle::Active(document) = event
+            && self.active.replace(document) != document
+        {
+            self.generation
+                .set(self.generation.get().checked_add(1).unwrap());
+        }
+        self.events.borrow_mut().push(event);
+    }
+
     fn ticket(&self, document: DocumentIdentity) -> Result<Ticket> {
         ensure!(
             self.active.get() == Some(document),
@@ -83,17 +94,15 @@ impl Delegate {
     }
 }
 impl WebViewDelegate for Delegate {
+    fn notify_document_scope_released(&self) {
+        self.released.set(true);
+        self.notify_document_lifecycle_without_view(DocumentLifecycle::Active(None));
+    }
     fn request_create_new(&self, _: WebView, request: CreateNewWebViewRequest) {
         self.popups.borrow_mut().push(request);
     }
     fn notify_document_lifecycle(&self, _: WebView, event: DocumentLifecycle) {
-        if let DocumentLifecycle::Active(document) = event
-            && self.active.replace(document) != document
-        {
-            self.generation
-                .set(self.generation.get().checked_add(1).unwrap());
-        }
-        self.events.borrow_mut().push(event);
+        self.notify_document_lifecycle_without_view(event);
     }
     fn notify_traversal_complete(&self, _: WebView, id: TraversalId) {
         self.traversals.borrow_mut().push(id);
@@ -285,6 +294,82 @@ fn redirect_fixture() -> Result<(u16, thread::JoinHandle<Result<()>>)> {
         Ok(())
     });
     Ok((port, worker))
+}
+
+// Keep captures observable independently of engine replies. Every group mixes scoped
+// and unscoped requests; no callback may retain its captures after terminal delivery.
+struct CleanupAudit {
+    released: std::rc::Weak<()>,
+    calls: Rc<Cell<usize>>,
+    replies: Receiver<(Option<DocumentIdentity>, bool)>,
+}
+
+impl CleanupAudit {
+    fn queue(
+        view: &WebView,
+        document: Option<DocumentIdentity>,
+        delegate: &Rc<Delegate>,
+        retain_view: bool,
+    ) -> Self {
+        let capture = Rc::new(());
+        let released = Rc::downgrade(&capture);
+        let calls = Rc::new(Cell::new(0));
+        let (sender, replies) = mpsc::channel();
+        for index in 0..8 {
+            let capture = capture.clone();
+            let calls = calls.clone();
+            let sender = sender.clone();
+            let delegate = delegate.clone();
+            // Exercise the callback -> view -> Servo ownership cycle during explicit shutdown.
+            let retained_view = retain_view.then(|| view.clone());
+            let callback = move |stale| {
+                drop(capture);
+                drop(retained_view);
+                calls.set(calls.get() + 1);
+                let _ = sender.send((delegate.active.get(), stale));
+            };
+            if let Some(document) = document.filter(|_| index % 2 == 0) {
+                view.evaluate_javascript_in_document(document, "'pending'", move |result| {
+                    callback(matches!(
+                        result,
+                        Err(JavaScriptEvaluationError::StaleDocument)
+                    ));
+                });
+            } else {
+                view.evaluate_javascript("'pending'", move |result| {
+                    callback(matches!(
+                        result,
+                        Err(JavaScriptEvaluationError::StaleDocument)
+                    ));
+                });
+            }
+        }
+        Self {
+            released,
+            calls,
+            replies,
+        }
+    }
+
+    fn check(&self) -> Result<()> {
+        ensure!(self.calls.get() == 8, "Expected eight terminal callbacks");
+        for _ in 0..8 {
+            let (active, stale) = self.replies.try_recv()?;
+            ensure!(
+                active.is_none() && stale,
+                "Cleanup callback preceded revocation or returned success"
+            );
+        }
+        ensure!(
+            self.replies.try_recv().is_err(),
+            "Duplicate cleanup callback"
+        );
+        ensure!(
+            self.released.upgrade().is_none(),
+            "Cleanup retained callback captures"
+        );
+        Ok(())
+    }
 }
 
 pub(super) fn run() -> Result<()> {
@@ -932,6 +1017,148 @@ pub(super) fn run() -> Result<()> {
     )?;
     ensure!(calls.get() == 8, "Recovery delivered a duplicate callback");
     println!("S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)");
-    println!("S1 document-scope prototype: PASS (19 cases; experimental lifecycle and host gate)");
+    // Releasing one clone must preserve the scope. Releasing the last handle must
+    // revoke host state and callbacks without waiting for another event-loop drain.
+    let release_delegate = Rc::new(Delegate::default());
+    let release_view = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/final-release"))?)
+        .delegate(release_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || release_delegate.loads.get() > 0)?;
+    let release_id = identity(&servo, &release_view, deadline)?;
+    let release_ticket = release_delegate.ticket(release_id)?;
+    let release_reply = scoped(&servo, &release_view, deadline, release_id, "'retained'")?;
+    ensure!(release_reply.is_ok(), "Final-release control failed");
+    let release_audit =
+        CleanupAudit::queue(&release_view, Some(release_id), &release_delegate, false);
+    let clone = release_view.clone();
+    drop(clone);
+    ensure!(
+        !release_delegate.released.get() && release_audit.calls.get() == 0,
+        "Non-final handle release revoked the view"
+    );
+    let (sender, reentrant_release) = mpsc::channel();
+    let survivor = failure.clone();
+    release_view.evaluate_javascript_in_document(release_id, "'pending'", move |result| {
+        if !matches!(result, Err(JavaScriptEvaluationError::StaleDocument)) {
+            return;
+        }
+        survivor.evaluate_javascript_in_document(recovered, "'survived-release'", move |result| {
+            let _ = sender.send(result);
+        });
+    });
+    drop(release_view);
+    ensure!(
+        release_delegate.released.get(),
+        "Missing synchronous final-release notification"
+    );
+    release_audit.check()?;
+    release_delegate.reject(release_ticket, release_reply)?;
+    text(
+        receive(&servo, deadline, reentrant_release)?,
+        recovered,
+        "survived-release",
+    )?;
+    ensure!(
+        release_audit.calls.get() == 8,
+        "Late reply repeated a final-release callback"
+    );
+    println!(
+        "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)"
+    );
+
+    // No document identity or activation has reached the host yet.
+    let initial_delegate = Rc::new(Delegate::default());
+    let initial = WebViewBuilder::new(&servo, context.clone())
+        .delegate(initial_delegate.clone())
+        .build();
+    let initial_audit = CleanupAudit::queue(&initial, None, &initial_delegate, false);
+    ensure!(
+        initial_delegate.events.borrow().is_empty(),
+        "Initial-release fixture already activated"
+    );
+    drop(initial);
+    initial_audit.check()?;
+    ensure!(
+        initial_delegate.released.get(),
+        "Initial release did not notify the host"
+    );
+    println!("S1 release-before-document-activation: PASS (8 callbacks released)");
+
+    let shutdown_ticket = failure_delegate.ticket(recovered)?;
+    let shutdown_reply = scoped(&servo, &failure, deadline, recovered, "'before-shutdown'")?;
+    ensure!(shutdown_reply.is_ok(), "Shutdown control failed");
+    let shutdown_audit = CleanupAudit::queue(&failure, Some(recovered), &failure_delegate, true);
+    let initial_shutdown_delegate = Rc::new(Delegate::default());
+    let initial_shutdown = WebViewBuilder::new(&servo, context)
+        .delegate(initial_shutdown_delegate.clone())
+        .build();
+    let initial_shutdown_audit =
+        CleanupAudit::queue(&initial_shutdown, None, &initial_shutdown_delegate, true);
+    let (sender, reentrant_shutdown) = mpsc::channel();
+    let stopped_view = failure.clone();
+    failure.evaluate_javascript_in_document(recovered, "'pending'", move |_| {
+        stopped_view.request_document_identity(move |result| {
+            let _ = sender.send(result);
+        });
+    });
+    // Pending closures are now the only owners of this view. Explicit shutdown must
+    // break their ownership cycle before Servo's destructor can ever become reachable.
+    drop(initial_shutdown);
+    ensure!(
+        !initial_shutdown_delegate.released.get(),
+        "Cycle fixture lost its retained view"
+    );
+    servo.start_shutdown_for_document_scope_probe();
+    shutdown_audit.check()?;
+    initial_shutdown_audit.check()?;
+    ensure!(
+        matches!(
+            reentrant_shutdown.try_recv()?,
+            Err(JavaScriptEvaluationError::StaleDocument)
+        ),
+        "Shutdown callback admitted new engine work"
+    );
+    failure_delegate.reject(shutdown_ticket, shutdown_reply)?;
+    ensure!(
+        failure.pending_evaluations_for_document_scope_probe() == 0
+            && initial_shutdown_delegate.released.get(),
+        "Shutdown retained pending callbacks"
+    );
+    // Admission after shutdown must reject scoped and legacy requests too.
+    stale(scoped(
+        &servo,
+        &failure,
+        deadline,
+        recovered,
+        "'after-shutdown'",
+    )?)?;
+    let (sender, unscoped_shutdown) = mpsc::channel();
+    failure.evaluate_javascript("'after-shutdown'", move |result| {
+        let _ = sender.send(result);
+    });
+    ensure!(
+        matches!(
+            unscoped_shutdown.try_recv()?,
+            Err(JavaScriptEvaluationError::StaleDocument)
+        ),
+        "Legacy evaluator admitted work after shutdown"
+    );
+    servo.start_shutdown_for_document_scope_probe();
+    drive_until(&servo, deadline, || {
+        servo.shutdown_complete_for_document_scope_probe()
+    })?;
+    ensure!(
+        shutdown_audit.calls.get() == 8 && initial_shutdown_audit.calls.get() == 8,
+        "Shutdown or late engine replies repeated callback delivery"
+    );
+    ensure!(
+        failure_delegate.active.get().is_none() && initial_shutdown_delegate.active.get().is_none(),
+        "Queued lifecycle messages reactivated a stopped engine"
+    );
+    println!(
+        "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)"
+    );
+    println!("S1 document-scope prototype: PASS (22 cases; experimental lifecycle and host gate)");
     Ok(())
 }

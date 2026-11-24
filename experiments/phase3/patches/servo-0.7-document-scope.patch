@@ -26,7 +26,7 @@
  }
 
  pub(crate) struct JavaScriptEvaluator {
-@@ -29,36 +37,80 @@
+@@ -29,36 +37,87 @@
      }
 
      fn generate_id(&mut self) -> JavaScriptEvaluationId {
@@ -111,6 +111,13 @@
 +            .collect()
 +    }
 +
++    pub(crate) fn take_all(&mut self) -> Vec<EvaluationCallback> {
++        self.pending_evaluations
++            .drain()
++            .map(|(_, pending)| pending.callback)
++            .collect()
++    }
++
 +    pub(crate) fn pending_for_probe(&self, webview_id: WebViewId) -> usize {
 +        self.pending_evaluations
 +            .values()
@@ -125,16 +132,55 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 +
-+use embedder_traits::JavaScriptEvaluationError;
++use embedder_traits::{DocumentIdentity, DocumentLifecycle, JavaScriptEvaluationError};
 
  use std::cell::{Cell, Ref, RefCell, RefMut};
  use std::cmp::max;
-@@ -811,15 +813,26 @@
+@@ -406,6 +408,31 @@
+             .retain(|_webview_id, webview| webview.strong_count() > 0);
+     }
+
++    fn start_shutting_down(&self) {
++        if self.shutdown_state.get() != ShutdownState::NotShuttingDown {
++            return;
++        }
++        // Stop admission before delegates or callbacks can reenter the embedder.
++        self.shutdown_state.set(ShutdownState::ShuttingDown);
++        self.constellation_proxy
++            .send(EmbedderToConstellationMessage::Exit);
++        let callbacks = self.javascript_evaluator.borrow_mut().take_all();
++        let webviews: Vec<_> = self
++            .webviews
++            .borrow()
++            .values()
++            .filter_map(WebView::from_weak_handle)
++            .collect();
++        for webview in webviews {
++            webview
++                .delegate()
++                .notify_document_lifecycle(webview, DocumentLifecycle::Active(None));
++        }
++        for callback in callbacks {
++            callback(Err(JavaScriptEvaluationError::StaleDocument));
++        }
++    }
++
+     fn finish_shutting_down(&self) {
+         debug!("Servo received message that Constellation shutdown is complete");
+         self.shutdown_state.set(ShutdownState::FinishedShuttingDown);
+@@ -811,15 +838,36 @@
                      webview.request_create_new(response_sender);
                  }
              },
 +            ConstellationToEmbedderMsg::DocumentLifecycle(webview_id, event) => {
-+                let callbacks = self.javascript_evaluator.borrow_mut().take_revoked(webview_id, event);
++                // Queued activation/readiness messages cannot reactivate a stopped engine.
++                if self.shutdown_state.get() != ShutdownState::NotShuttingDown {
++                    return;
++                }
++                let callbacks = self
++                    .javascript_evaluator
++                    .borrow_mut()
++                    .take_revoked(webview_id, event);
 +                // Publish revocation before callback delivery, without holding evaluator borrows.
 +                if let Some(webview) = self.get_webview_handle(webview_id) {
 +                    webview.delegate().notify_document_lifecycle(webview, event);
@@ -142,7 +188,7 @@
 +                for callback in callbacks {
 +                    callback(Err(JavaScriptEvaluationError::StaleDocument));
 +                }
-+            }
++            },
              ConstellationToEmbedderMsg::WebViewClosed(webview_id) => {
                  if let Some(webview) = self.get_webview_handle(webview_id) {
                      webview.delegate().notify_closed(webview);
@@ -150,15 +196,62 @@
              },
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result) => {
 -                self.javascript_evaluator
--                    .borrow_mut()
++                let callback = self
++                    .javascript_evaluator
+                     .borrow_mut()
 -                    .finish_evaluation(evaluation_id, result);
-+                let callback = self.javascript_evaluator.borrow_mut().take_finished(evaluation_id);
++                    .take_finished(evaluation_id);
 +                if let Some(callback) = callback {
 +                    callback(result);
 +                }
              },
              ConstellationToEmbedderMsg::InputEventsHandled(webview_id, event_outcomes) => {
                  let webview = self.get_webview_handle(webview_id);
+@@ -878,9 +926,7 @@
+
+ impl Drop for ServoInner {
+     fn drop(&mut self) {
+-        self.constellation_proxy
+-            .send(EmbedderToConstellationMessage::Exit);
+-        self.shutdown_state.set(ShutdownState::ShuttingDown);
++        self.start_shutting_down();
+         while self.spin_event_loop() {
+             std::thread::sleep(Duration::from_micros(500));
+         }
+@@ -1078,6 +1124,33 @@
+         self.0.spin_event_loop();
+     }
+
++    /// Experimental instrumentation: start the real engine shutdown with live view handles.
++    /// Revokes all document scopes and callbacks synchronously. Does not interrupt JavaScript.
++    #[doc(hidden)]
++    pub fn start_shutdown_for_document_scope_probe(&self) {
++        self.0.start_shutting_down();
++    }
++
++    #[doc(hidden)]
++    pub fn shutdown_complete_for_document_scope_probe(&self) -> bool {
++        self.0.shutdown_state.get() == ShutdownState::FinishedShuttingDown
++    }
++
++    pub(crate) fn evaluate_javascript(
++        &self,
++        webview_id: WebViewId,
++        expected_document: Option<DocumentIdentity>,
++        script: String,
++        callback: crate::javascript_evaluator::EvaluationCallback,
++    ) {
++        if self.0.shutdown_state.get() != ShutdownState::NotShuttingDown {
++            callback(Err(JavaScriptEvaluationError::StaleDocument));
++            return;
++        }
++        self.javascript_evaluator_mut()
++            .evaluate(webview_id, expected_document, script, callback);
++    }
++
+     pub fn setup_logging(&self) {
+         let constellation_chan = self.0.constellation_proxy.sender();
+         let env = env_logger::Env::default();
 --- a/servo/webview.rs
 +++ b/servo/webview.rs
 @@ -12,10 +12,11 @@
@@ -177,9 +270,28 @@
  };
  use euclid::{Scale, Size2D};
  use image::RgbaImage;
-@@ -735,6 +736,70 @@
+@@ -147,6 +148,15 @@
+             .constellation_proxy()
+             .send(EmbedderToConstellationMessage::CloseWebView(self.id));
+         self.servo.paint_mut().remove_webview(self.id);
++        let callbacks = self
++            .servo
++            .javascript_evaluator_mut()
++            .take_revoked(self.id, embedder_traits::DocumentLifecycle::Active(None));
++        // A final handle cannot be reconstructed. Notify host scope state without a view.
++        self.delegate.notify_document_scope_released();
++        for callback in callbacks {
++            callback(Err(JavaScriptEvaluationError::StaleDocument));
++        }
+     }
+ }
+
+@@ -733,8 +743,74 @@
+         script: T,
+         callback: impl FnOnce(Result<JSValue, JavaScriptEvaluationError>) + 'static,
      ) {
-         self.servo().javascript_evaluator_mut().evaluate(
+-        self.servo().javascript_evaluator_mut().evaluate(
++        self.servo().evaluate_javascript(
              self.id(),
 +            None,
 +            script.to_string(),
@@ -215,7 +327,9 @@
 +    /// Experimental instrumentation: number of retained evaluation callbacks for this view.
 +    #[doc(hidden)]
 +    pub fn pending_evaluations_for_document_scope_probe(&self) -> usize {
-+        self.servo().javascript_evaluator_mut().pending_for_probe(self.id())
++        self.servo()
++            .javascript_evaluator_mut()
++            .pending_for_probe(self.id())
 +    }
 +
 +    /// Snapshot the active top document's engine identity without reading page-controlled data.
@@ -224,7 +338,7 @@
 +        &self,
 +        callback: impl FnOnce(Result<DocumentIdentity, JavaScriptEvaluationError>) + 'static,
 +    ) {
-+        self.servo().javascript_evaluator_mut().evaluate(
++        self.servo().evaluate_javascript(
 +            self.id(),
 +            None,
 +            String::new(),
@@ -242,7 +356,7 @@
 +        script: T,
 +        callback: impl FnOnce(Result<DocumentJavaScriptResult, JavaScriptEvaluationError>) + 'static,
 +    ) {
-+        self.servo().javascript_evaluator_mut().evaluate(
++        self.servo().evaluate_javascript(
 +            self.id(),
 +            Some(expected_document),
              script.to_string(),
@@ -268,10 +382,14 @@
  };
  use paint_api::rendering_context::RenderingContext;
  use servo_base::generic_channel::{GenericCallback, GenericSender, SendError};
-@@ -916,6 +917,10 @@
+@@ -916,6 +917,14 @@
  /// instance. A [`WebView`]'s delegate needs to be set at the time of creation using
  /// [`WebViewBuilder::delegate`].
  pub trait WebViewDelegate {
++    /// The final host view handle was released. Revoke local scope before callback cleanup.
++    /// No WebView handle exists at this point; retaining one would prevent final release.
++    fn notify_document_scope_released(&self) {}
++
 +    /// Engine-authenticated top-document lifecycle, ordered with evaluation replies.
 +    /// Revocation must invalidate retained replies before allocating host handles.
 +    fn notify_document_lifecycle(&self, _webview: WebView, _event: DocumentLifecycle) {}
