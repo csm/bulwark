@@ -13,10 +13,15 @@ These measurements exclude the future node registry and JSON schema conversion. 
 The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its twenty-two cases cover JavaScript URLs, script-created initial documents, and an actual script-thread unwind.
+Its twenty-seven cases cover JavaScript URLs, script-created initial documents, an actual script-thread unwind, and callback panics.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
 Final handle release now revokes host scope and pending callbacks synchronously, including release before host activation.
-Explicit shutdown releases sixteen callbacks, breaks a retained-view cycle, and rejects new evaluation before the engine stops.
+Explicit shutdown releases sixteen ordinary callbacks, breaks a retained-view cycle, and rejects new evaluation before the engine stops.
+
+The callback audit found that one panic skipped terminal delivery to the rest of a revoked batch.
+The prototype now attempts every terminal callback before it resumes the first panic.
+Cleanup during an existing host unwind preserves the outer panic.
+Five new cases cover result delivery, lifecycle revocation, final release, release during a host unwind, and shutdown.
 Actual process failure, cancellation of engine work, backend disconnection, and remaining replacement paths stay open.
 The product pins and installed natives remain unchanged.
 
@@ -34,12 +39,13 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [cleanup evidence](../experiments/phase3/document-cleanup-evidence-2026-11-23.json) records the current S1 runs, engine controls, and local checks.
+The [callback evidence](../experiments/phase3/document-callback-evidence-2026-11-24.json) records the current S1 runs, engine controls, and local checks.
+The [cleanup evidence](../experiments/phase3/document-cleanup-evidence-2026-11-23.json) preserves the twenty-two-case checkpoint.
 The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.json) preserves the nineteen-case checkpoint.
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The twenty-two lifecycle cases passed in three final runs, with both existing Servo controls.
+The twenty-seven lifecycle cases passed in three final runs, with both existing Servo controls.
 The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
 The product keeps its existing engine configuration and dependency versions.
 One preliminary repeat timed out at the redirect. The final fixture waits for explicit history-traversal completion and exposes HTTP worker errors.
@@ -49,7 +55,8 @@ The fixture now explicitly selects blocking reads with a timeout. This change do
 
 All 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
 Python syntax checks and seven runner rejection checks also passed.
-The starting worktree matched freshly fetched `origin/main` at `be1fd81`.
+The negative control restores the earlier cleanup loop and fails the new terminal callback count assertion.
+The starting worktree matched freshly fetched `origin/main` at `7540fdb`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
@@ -72,9 +79,9 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
    Continue the S1 lifecycle audit with actual process failure and cancellation of engine work.
-   Cover backend disconnection, callback panics, and failures before document construction.
+   Cover backend disconnection, delegate panics, and failures before document construction.
    Cover remaining replacement paths such as `srcdoc`, parser-time resets, and cross-origin history reactivation.
-   Review the explicit shutdown contract and callback ownership cycles before product integration.
+   Review the explicit shutdown contract, callback ownership cycles, and callback panic policy before product integration.
    Review the proposed history reactivation policy before product integration.
    The current host counter still needs a production registry and handle revocation.
    Protocol-source binding, redirect/rewrite, and evaluator authority mechanisms also remain open.

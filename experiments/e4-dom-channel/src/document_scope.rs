@@ -11,6 +11,7 @@ use std::{
     cell::{Cell, RefCell},
     io::{Read, Write},
     net::TcpListener,
+    panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     sync::mpsc::{self, Receiver},
     thread,
@@ -311,6 +312,16 @@ impl CleanupAudit {
         delegate: &Rc<Delegate>,
         retain_view: bool,
     ) -> Self {
+        Self::queue_with_panics(view, document, delegate, retain_view, false)
+    }
+
+    fn queue_with_panics(
+        view: &WebView,
+        document: Option<DocumentIdentity>,
+        delegate: &Rc<Delegate>,
+        retain_view: bool,
+        panic_after_delivery: bool,
+    ) -> Self {
         let capture = Rc::new(());
         let released = Rc::downgrade(&capture);
         let calls = Rc::new(Cell::new(0));
@@ -327,6 +338,9 @@ impl CleanupAudit {
                 drop(retained_view);
                 calls.set(calls.get() + 1);
                 let _ = sender.send((delegate.active.get(), stale));
+                if panic_after_delivery {
+                    panic!("S1 probe terminal callback panic");
+                }
             };
             if let Some(document) = document.filter(|_| index % 2 == 0) {
                 view.evaluate_javascript_in_document(document, "'pending'", move |result| {
@@ -370,6 +384,16 @@ impl CleanupAudit {
         );
         Ok(())
     }
+}
+
+fn expect_callback_panic(action: impl FnOnce()) -> Result<()> {
+    let payload = catch_unwind(AssertUnwindSafe(action))
+        .expect_err("Callback panic did not propagate to the embedder");
+    ensure!(
+        payload.downcast_ref::<&str>() == Some(&"S1 probe terminal callback panic"),
+        "Unexpected panic payload"
+    );
+    Ok(())
 }
 
 pub(super) fn run() -> Result<()> {
@@ -1085,6 +1109,165 @@ pub(super) fn run() -> Result<()> {
     );
     println!("S1 release-before-document-activation: PASS (8 callbacks released)");
 
+    // A normal result callback also runs without an evaluator borrow. Its unwind
+    // must leave the pending table usable and its captures released.
+    let capture = Rc::new(());
+    let released_result = Rc::downgrade(&capture);
+    let (sender, panicking_result) = mpsc::channel();
+    failure.evaluate_javascript_in_document(recovered, "'before-callback-panic'", move |result| {
+        let _capture = capture;
+        let _ = sender.send(result);
+        panic!("S1 probe terminal callback panic");
+    });
+    expect_callback_panic(|| {
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "Callback panic deadline exceeded"
+            );
+            servo.spin_event_loop();
+            thread::park_timeout(Duration::from_millis(1));
+        }
+    })?;
+    text(
+        panicking_result.try_recv()?,
+        recovered,
+        "before-callback-panic",
+    )?;
+    ensure!(
+        released_result.upgrade().is_none(),
+        "Result panic retained captures"
+    );
+    ensure!(
+        failure.pending_evaluations_for_document_scope_probe() == 0,
+        "Result panic retained a pending callback"
+    );
+    text(
+        scoped(
+            &servo,
+            &failure,
+            deadline,
+            recovered,
+            "'after-callback-panic'",
+        )?,
+        recovered,
+        "after-callback-panic",
+    )?;
+    println!(
+        "S1 result-callback-panic: PASS (unwind propagated, captures released, evaluation resumed)"
+    );
+
+    let panic_delegate = Rc::new(Delegate::default());
+    let panic_view = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/callback-panic-close"))?)
+        .delegate(panic_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || panic_delegate.loads.get() > 0)?;
+    let panic_id = identity(&servo, &panic_view, deadline)?;
+    let panic_ticket = panic_delegate.ticket(panic_id)?;
+    let panic_reply = scoped(
+        &servo,
+        &panic_view,
+        deadline,
+        panic_id,
+        "'before-panic-close'",
+    )?;
+    ensure!(panic_reply.is_ok(), "Panic-close control failed");
+    panic_view.close_for_document_scope_probe();
+    let panic_close =
+        CleanupAudit::queue_with_panics(&panic_view, Some(panic_id), &panic_delegate, false, true);
+    expect_callback_panic(|| {
+        while panic_close.calls.get() == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "Callback panic deadline exceeded"
+            );
+            servo.spin_event_loop();
+            thread::park_timeout(Duration::from_millis(1));
+        }
+    })?;
+    panic_close.check()?;
+    panic_delegate.reject(panic_ticket, panic_reply)?;
+    drive_until(&servo, deadline, || panic_delegate.closed.get())?;
+    ensure!(
+        panic_view.pending_evaluations_for_document_scope_probe() == 0,
+        "Lifecycle panic retained callbacks"
+    );
+    ensure!(
+        panic_close.calls.get() == 8,
+        "Lifecycle panic duplicated callbacks"
+    );
+    println!(
+        "S1 lifecycle-callback-panics: PASS (8 terminal callbacks, host revoked, unwind propagated)"
+    );
+
+    let release_panic_delegate = Rc::new(Delegate::default());
+    let release_panic_view = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!(
+            "{ORIGIN}/callback-panic-release"
+        ))?)
+        .delegate(release_panic_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || release_panic_delegate.loads.get() > 0)?;
+    let release_panic_id = identity(&servo, &release_panic_view, deadline)?;
+    let release_panic = CleanupAudit::queue_with_panics(
+        &release_panic_view,
+        Some(release_panic_id),
+        &release_panic_delegate,
+        false,
+        true,
+    );
+    expect_callback_panic(|| drop(release_panic_view))?;
+    release_panic.check()?;
+    ensure!(
+        release_panic_delegate.released.get(),
+        "Panic release missed host notification"
+    );
+    text(
+        scoped(
+            &servo,
+            &failure,
+            deadline,
+            recovered,
+            "'survived-callback-panics'",
+        )?,
+        recovered,
+        "survived-callback-panics",
+    )?;
+    ensure!(
+        release_panic.calls.get() == 8,
+        "Late reply repeated panicking callbacks"
+    );
+    println!(
+        "S1 release-callback-panics: PASS (8 terminal callbacks, captures released, survivor usable)"
+    );
+
+    // Destruction during a pre-existing host unwind must still finish the batch
+    // without replacing the original panic or causing a double-panic abort.
+    let unwind_delegate = Rc::new(Delegate::default());
+    let unwind_view = WebViewBuilder::new(&servo, context.clone())
+        .delegate(unwind_delegate.clone())
+        .build();
+    let unwind_audit =
+        CleanupAudit::queue_with_panics(&unwind_view, None, &unwind_delegate, false, true);
+    let outer = catch_unwind(AssertUnwindSafe(|| {
+        let _owned_view = unwind_view;
+        panic!("S1 probe outer unwind");
+    }))
+    .expect_err("Outer unwind disappeared");
+    ensure!(
+        outer.downcast_ref::<&str>() == Some(&"S1 probe outer unwind"),
+        "Cleanup replaced the outer unwind"
+    );
+    unwind_audit.check()?;
+    ensure!(
+        unwind_delegate.released.get(),
+        "Unwind release missed host notification"
+    );
+    println!(
+        "S1 release-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)"
+    );
+
     let shutdown_ticket = failure_delegate.ticket(recovered)?;
     let shutdown_reply = scoped(&servo, &failure, deadline, recovered, "'before-shutdown'")?;
     ensure!(shutdown_reply.is_ok(), "Shutdown control failed");
@@ -1109,7 +1292,10 @@ pub(super) fn run() -> Result<()> {
         !initial_shutdown_delegate.released.get(),
         "Cycle fixture lost its retained view"
     );
-    servo.start_shutdown_for_document_scope_probe();
+    let shutdown_panics =
+        CleanupAudit::queue_with_panics(&failure, Some(recovered), &failure_delegate, false, true);
+    expect_callback_panic(|| servo.start_shutdown_for_document_scope_probe())?;
+    shutdown_panics.check()?;
     shutdown_audit.check()?;
     initial_shutdown_audit.check()?;
     ensure!(
@@ -1159,6 +1345,13 @@ pub(super) fn run() -> Result<()> {
     println!(
         "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)"
     );
-    println!("S1 document-scope prototype: PASS (22 cases; experimental lifecycle and host gate)");
+    ensure!(
+        shutdown_panics.calls.get() == 8,
+        "Shutdown repeated panicking callbacks"
+    );
+    println!(
+        "S1 shutdown-callback-panics: PASS (all terminal callbacks delivered, admission closed, shutdown complete)"
+    );
+    println!("S1 document-scope prototype: PASS (27 cases; experimental lifecycle and host gate)");
     Ok(())
 }

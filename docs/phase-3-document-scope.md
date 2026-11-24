@@ -116,7 +116,37 @@ The explicit experimental shutdown entry point handles this cycle.
 Destructor cleanup alone cannot handle a destructor that ownership prevents from starting.
 This entry point is probe instrumentation, not an installed product API.
 The prototype does not cancel queued engine work or interrupt active JavaScript.
-Callback panics, unresponsive JavaScript, and backend disconnection remain outside these cleanup checks.
+Unresponsive JavaScript and backend disconnection remain outside these cleanup checks.
+
+## Callback unwind audit
+
+The earlier cleanup loop removed all callbacks before delivery.
+If one callback panicked, Rust dropped the remaining callbacks without terminal delivery.
+Rust dropped their captures even though their terminal handlers never ran.
+The new fixture checks callback counts as well as capture release.
+
+The experimental patch catches each callback unwind in a revoked batch.
+It attempts every terminal callback before it resumes the first panic.
+The host receives scope revocation before the first terminal callback.
+The evaluator holds no callback-table borrow during delivery.
+If cleanup starts during an existing host unwind, it preserves that outer panic after terminal delivery.
+These rules apply to lifecycle revocation, final handle release, and explicit shutdown.
+
+A normal result callback still propagates its panic directly after removal from the pending table.
+
+Five fixtures cover normal results, lifecycle revocation, final release, release during a host unwind, and shutdown.
+Each new group contains eight callbacks that panic after they record terminal delivery.
+The shutdown fixture also retains the existing sixteen ordinary callbacks and the reentrant admission check.
+The fixtures require terminal delivery exactly once, host revocation, capture release, and successful continuation where the engine remains active.
+The shutdown fixture requires actual engine shutdown after the embedder catches the panic.
+
+The negative control restores the earlier cleanup loop in the candidate engine.
+It fails at lifecycle revocation with `Expected eight terminal callbacks`.
+Both existing Servo controls still pass with that loop.
+
+These fixtures use Rust unwinds with string panic payloads.
+They do not cover process aborts, panicking panic hooks, panic-payload destructors, or delegate panics.
+This experimental policy still needs upstream review before product integration.
 
 ## Regression scope
 
@@ -150,22 +180,28 @@ Fixture markers establish test order, without authentication claims.
 | Script-thread failure | An actual Rust unwind revokes scope and releases eight pending callbacks exactly once. A new document accepts evaluation after recovery. |
 | Final handle release | Release revokes host scope and mixed callbacks synchronously. A callback can submit work to a surviving view. |
 | Release before activation | Release cleans eight callbacks before the host receives a document identity. |
-| Engine shutdown | Shutdown releases sixteen callbacks, breaks a retained-view cycle, rejects new evaluation, and completes the engine shutdown. |
+| Engine shutdown | Shutdown releases sixteen ordinary callbacks, breaks a retained-view cycle, rejects new evaluation, and completes the engine shutdown. |
+| Result callback panic | The embedder catches the panic. The evaluator releases captures and accepts a later request. |
+| Lifecycle callback panics | All eight callbacks receive terminal errors after host revocation. The embedder catches the first panic and continues the event loop. |
+| Final release callback panics | All eight callbacks receive terminal errors. A surviving view still accepts evaluation. |
+| Release during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
+| Shutdown callback panics | All callbacks receive terminal errors. Admission stays closed, the retained-view cycle breaks, and engine shutdown completes. |
 
-The runner repeats these twenty-two cases three times and retains the existing Servo contract and E4 baseline results.
+The runner repeats these twenty-seven cases three times and retains the existing Servo contract and E4 baseline results.
 Host cancellation suppresses delivery. It does not cancel JavaScript execution or undo a mutation.
 The injected crash calls the existing constellation panic handler through an experimental probe method.
 The separate script-thread fixture terminates the receiving thread through a Rust unwind. Neither fixture proves process-failure detection.
 
 ## Local evidence
 
-The [cleanup evidence](../experiments/phase3/document-cleanup-evidence-2026-11-23.json) records the current runs, source hashes, binary hash, and local checks.
+The [callback evidence](../experiments/phase3/document-callback-evidence-2026-11-24.json) records the current runs, source hashes, binary hash, and local checks.
+The [cleanup evidence](../experiments/phase3/document-cleanup-evidence-2026-11-23.json) preserves the twenty-two-case checkpoint.
 The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.json) preserves the nineteen-case checkpoint.
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All twenty-two cases passed in three final runs on macOS arm64 with software rendering.
+All twenty-seven cases passed in three final runs on macOS arm64 with software rendering.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
 Python syntax checks and seven runner rejection checks also passed.
@@ -184,7 +220,7 @@ The initial sandboxed graphics run failed during macOS surface initialization.
 Graphics runs require normal macOS graphics services outside that sandbox.
 Servo emits its known GL texture warning and debug linker warning.
 The copied engine packages also emit warnings from published code under disabled features.
-The panic hook logs the intentional script-thread panic. Recovery also logs pipeline teardown warnings.
+The panic hook logs the intentional script-thread panic, callback panics, and host unwind. Recovery also logs pipeline teardown warnings.
 Explicit shutdown logs script termination, profiler disconnection, and timer warnings.
 Release of retained handles after shutdown also logs constellation disconnection warnings.
 All assertions and process exit checks passed despite these warnings.
@@ -196,7 +232,8 @@ No remote CI, physical input, Linux, or release latency result applies to this c
 This prototype does not close S1 or permit a restricted DOM API.
 Process failure detection still needs a dedicated fixture.
 Cancellation of pending engine work still needs a defined contract.
-Callback cleanup still needs checks for backend disconnection, callback panics, and failures before document construction.
+Callback cleanup still needs checks for backend disconnection, delegate panics, and failures before document construction.
+Upstream review must settle callback panic propagation and suppression during an existing unwind.
 The host allocation counter does not establish registry revocation, retained-node memory bounds, or production scheduling.
 The lifecycle audit must cover remaining replacement paths, including `srcdoc`, parser-time resets, and cross-origin history reactivation.
 Upstream review must settle the conservative history policy and lifecycle API.
@@ -211,14 +248,14 @@ Evaluator authority, redirect/rewrite mechanisms, and owner scope decisions also
 Prepare copies of the six published Servo packages and an isolated Bulwark workspace:
 
 ```sh
-python3 experiments/prepare_document_scope.py --out target/phase3-document-cleanup
+python3 experiments/prepare_document_scope.py --out target/phase3-document-callbacks
 ```
 
 Build the candidate:
 
 ```sh
 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/target" cargo build --offline --locked \
-  --manifest-path target/phase3-document-cleanup/candidate/Cargo.toml \
+  --manifest-path target/phase3-document-callbacks/candidate/Cargo.toml \
   -p bulwark-experiment-e4 --features document-scope
 ```
 
@@ -227,14 +264,14 @@ Run the candidate with independent 35-second process deadlines:
 ```sh
 python3 experiments/run_document_scope.py \
   --binary target/debug/bulwark-experiment-e4 \
-  --preparation target/phase3-document-cleanup \
-  --output target/phase3-document-cleanup-evidence
+  --preparation target/phase3-document-callbacks \
+  --output target/phase3-document-callback-evidence
 ```
 
 The preparation refuses an existing output directory.
 It records the patch hash, original source hashes, product manifest hashes, and candidate probe hashes in `provenance.json`.
 The runner rejects a preparation whose patch, product manifests, or probe files differ from the current sources.
 Only candidate manifests reference the copied packages.
-The runner records the binary hash, probe hashes, all twenty-two case markers, the summary marker, exit statuses, and log hashes.
+The runner records the binary hash, probe hashes, all twenty-seven case markers, the summary marker, exit statuses, and log hashes.
 The `document-scope` feature requires the patched candidate and cannot compile against the product engine.
 The normal E4 feature and the portable workspace retain their existing build commands.

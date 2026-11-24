@@ -19,7 +19,8 @@ EXPECTED_MARKERS = {
     "script-created-initial-document", "javascript-url-replacement",
     "script-thread-failure-and-callback-cleanup",
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
-    "document-scope prototype",
+    "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
+    "release-during-host-unwind", "shutdown-callback-panics", "document-scope prototype",
 }
 
 
@@ -65,7 +66,8 @@ def main():
             "experiments/prepare_document_scope.py", "experiments/run_document_scope.py",
         )},
         "scope": ("Experimental engine scope, host allocation gate, script-thread unwind, "
-                  "final-handle release, and explicit engine shutdown. Process failure, cancellation of engine work, "
+                  "final-handle release, explicit engine shutdown, and callback unwind safety. "
+                  "Process failure, backend disconnection, cancellation of engine work, "
                   "and remaining replacement audits remain open."),
         "cases": [],
     }
