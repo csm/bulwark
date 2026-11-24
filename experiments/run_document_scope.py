@@ -3,8 +3,10 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
+import signal
 import subprocess
 import time
 
@@ -33,12 +35,29 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def run_case(command, log, timeout):
+    # Servo content processes inherit this group. A deadline must stop them too.
+    with subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                          start_new_session=True) as process:
+        try:
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return "timeout"
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--preparation", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument("--multiprocess", action="store_true",
+                        help="Run all S1 cases with IPC and the content-process failure case")
     args = parser.parse_args()
     if not 1 <= args.repeat <= 20:
         parser.error("--repeat must be between 1 and 20")
@@ -70,15 +89,18 @@ def main():
             "experiments/e4-dom-channel/phase3-agent.js",
             "experiments/prepare_document_scope.py", "experiments/run_document_scope.py",
         )},
+        "multiprocess": args.multiprocess,
         "scope": ("Experimental engine scope, host allocation gate, script-thread unwind, "
                   "final-handle release, explicit engine shutdown, queued execution cancellation, "
-                  "single-process interruption of running JavaScript, "
+                  "interruption of running JavaScript, content-process failure in multiprocess mode, "
                   "and callback and delegate unwind safety. "
-                  "Process failure, multiprocess transport, backend disconnection, "
+                  "Backend disconnection, failures before document construction, "
                   "and remaining replacement audits remain open."),
         "cases": [],
     }
-    cases = [(f"document-scope-{i + 1}", ["--document-scope"])
+    scope_flags = ["--document-scope-multiprocess" if args.multiprocess else "--document-scope"]
+    expected_markers = EXPECTED_MARKERS | ({"content-process-failure"} if args.multiprocess else set())
+    cases = [(f"document-scope-{i + 1}", scope_flags)
              for i in range(args.repeat)]
     cases += [("servo-contracts", ["--phase3"]), ("e4-baseline", [])]
     for name, flags in cases:
@@ -86,18 +108,15 @@ def main():
         command = [str(binary), *flags]
         log_path = args.output / f"{name}.log"
         with log_path.open("w") as log:
-            try:
-                status = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
-                                        timeout=35).returncode
-            except subprocess.TimeoutExpired:
-                status = "timeout"
+            status = run_case(command, log, timeout=(
+                90 if args.multiprocess and flags == scope_flags else 35))
         log = log_path.read_text(errors="replace")
         markers = [line for line in log.splitlines() if line.startswith("S1 ")]
         # An unpatched E4 binary must not pass by silently running its baseline path.
-        assertions_complete = flags != ["--document-scope"] or (
-            len(markers) == len(EXPECTED_MARKERS)
+        assertions_complete = flags != scope_flags or (
+            len(markers) == len(expected_markers)
             and {line.removeprefix("S1 ").split(": PASS", 1)[0] for line in markers}
-            == EXPECTED_MARKERS
+            == expected_markers
             and all(": PASS" in line for line in markers)
             and markers[-1].startswith("S1 document-scope prototype: PASS"))
         report["cases"].append({

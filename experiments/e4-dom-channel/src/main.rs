@@ -143,9 +143,24 @@ fn report(label: &str, samples: &[Duration]) {
 }
 
 fn main() -> Result<()> {
+    #[cfg(feature = "document-scope-multiprocess")]
+    if let Some(token) = std::env::args()
+        .skip_while(|arg| arg != "--content-process")
+        .nth(1)
+    {
+        document_scope::install_panic_hook();
+        servo::run_content_process(token);
+        return Ok(());
+    }
     #[cfg(feature = "document-scope")]
     if std::env::args().nth(1).as_deref() == Some("--document-scope") {
-        return document_scope::run();
+        return document_scope::run(false);
+    }
+    if std::env::args().nth(1).as_deref() == Some("--document-scope-multiprocess") {
+        #[cfg(feature = "document-scope-multiprocess")]
+        return document_scope::run(true);
+        #[cfg(not(feature = "document-scope-multiprocess"))]
+        bail!("Build the isolated document-scope-multiprocess candidate before running this probe");
     }
     #[cfg(not(feature = "document-scope"))]
     if std::env::args().nth(1).as_deref() == Some("--document-scope") {

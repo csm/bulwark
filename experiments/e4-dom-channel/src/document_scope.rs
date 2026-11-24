@@ -429,9 +429,21 @@ fn expect_callback_panic(action: impl FnOnce()) -> Result<()> {
     expect_panic(CALLBACK_PANIC, action)
 }
 
-pub(super) fn run() -> Result<()> {
+pub(super) fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic");
+        log::error!("{message}");
+    }));
+}
+
+pub(super) fn run(multiprocess: bool) -> Result<()> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(if multiprocess { 80 } else { 30 });
     let context = Rc::new(
         SoftwareRenderingContext::new((640, 480).into())
             .map_err(|error| anyhow::anyhow!("Software context: {error:?}"))?,
@@ -442,21 +454,14 @@ pub(super) fn run() -> Result<()> {
     let servo = ServoBuilder::default()
         .opts(Opts {
             hard_fail: false,
+            multiprocess,
             ..Opts::default()
         })
         .event_loop_waker(Box::new(Waker(thread::current())))
         .build();
     // Servo's own crash tests use this public logging path to report thread panics.
     servo.setup_logging();
-    std::panic::set_hook(Box::new(|info| {
-        let message = info
-            .payload()
-            .downcast_ref::<&str>()
-            .copied()
-            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
-            .unwrap_or("non-string panic");
-        log::error!("{message}");
-    }));
+    install_panic_hook();
     let delegate = Rc::new(Delegate::default());
     let view = WebViewBuilder::new(&servo, context.clone())
         .url(url::Url::parse("about:blank")?)
@@ -1862,6 +1867,121 @@ pub(super) fn run() -> Result<()> {
         "S1 delegate-panic-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)"
     );
 
+    if multiprocess {
+        let process_delegate = Rc::new(Delegate::default());
+        let process_view = WebViewBuilder::new(&servo, context.clone())
+            .url(url::Url::parse(&format!("{ORIGIN}/process-failure"))?)
+            .delegate(process_delegate.clone())
+            .build();
+        drive_until(&servo, deadline, || process_delegate.loads.get() > 0)?;
+        let process_document = identity(&servo, &process_view, deadline)?;
+        let process_ticket = process_delegate.ticket(process_document)?;
+        let process_reply = scoped(
+            &servo,
+            &process_view,
+            deadline,
+            process_document,
+            "'before-process-exit'",
+        )?;
+        ensure!(process_reply.is_ok(), "Process failure control failed");
+        let process_audit =
+            process_view.with_terminating_content_process_for_document_scope_probe(|| {
+                CleanupAudit::queue(
+                    &process_view,
+                    Some(process_document),
+                    &process_delegate,
+                    true,
+                )
+            });
+        ensure!(
+            process_view.pending_evaluations_for_document_scope_probe() == 8,
+            "Process failure fixture did not retain eight callbacks"
+        );
+        // Do not send work to the dead process. Only its lifeline can trigger recovery.
+        drive_until(
+            &servo,
+            deadline.min(Instant::now() + Duration::from_secs(5)),
+            || process_delegate.crashed.get(),
+        )
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "Content lifeline recovery failed: {error}; active={:?}, pending={}, calls={}",
+                process_delegate.active.get(),
+                process_view.pending_evaluations_for_document_scope_probe(),
+                process_audit.calls.get()
+            )
+        })?;
+        ensure!(
+            process_delegate.crash_reasons.borrow().as_slice() == ["Content process disconnected"],
+            "Process failure did not use lifeline recovery: {:?}",
+            process_delegate.crash_reasons.borrow()
+        );
+        process_audit.check()?;
+        ensure!(
+            process_view.pending_evaluations_for_document_scope_probe() == 0,
+            "Process failure retained callbacks"
+        );
+        process_delegate.reject(process_ticket, process_reply)?;
+        drive_until(&servo, deadline, || {
+            process_delegate
+                .active
+                .get()
+                .is_some_and(|id| id != process_document)
+        })?;
+        let crash_document = identity(&servo, &process_view, deadline)?;
+        text(
+            scoped(
+                &servo,
+                &process_view,
+                deadline,
+                crash_document,
+                "'crash-document'",
+            )?,
+            crash_document,
+            "crash-document",
+        )?;
+        load(&servo, &process_view, deadline, "/after-process-failure")?;
+        let process_recovered = identity(&servo, &process_view, deadline)?;
+        ensure!(
+            process_recovered != process_document,
+            "Process recovery revived old scope"
+        );
+        stale(scoped(
+            &servo,
+            &process_view,
+            deadline,
+            process_document,
+            "'obsolete'",
+        )?)?;
+        text(
+            scoped(
+                &servo,
+                &process_view,
+                deadline,
+                process_recovered,
+                "'recovered'",
+            )?,
+            process_recovered,
+            "recovered",
+        )?;
+        ensure!(
+            failure_delegate.active.get() == Some(recovered),
+            "Process failure revoked an independent view"
+        );
+        text(
+            scoped(&servo, &failure, deadline, recovered, "'survivor'")?,
+            recovered,
+            "survivor",
+        )?;
+        ensure!(
+            process_audit.calls.get() == 8,
+            "Process recovery repeated callbacks"
+        );
+        println!(
+            "S1 content-process-failure: PASS (lifeline revocation, 8 callbacks released, recovery and independent survivor)"
+        );
+    }
+
     let shutdown_ticket = failure_delegate.ticket(recovered)?;
     let shutdown_reply = scoped(&servo, &failure, deadline, recovered, "'before-shutdown'")?;
     ensure!(shutdown_reply.is_ok(), "Shutdown control failed");
@@ -1972,6 +2092,9 @@ pub(super) fn run() -> Result<()> {
     println!(
         "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)"
     );
-    println!("S1 document-scope prototype: PASS (38 cases; experimental lifecycle and host gate)");
+    println!(
+        "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
+        if multiprocess { 39 } else { 38 }
+    );
     Ok(())
 }

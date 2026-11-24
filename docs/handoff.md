@@ -13,7 +13,8 @@ These measurements exclude the future node registry and JSON schema conversion. 
 The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its thirty-eight cases cover JavaScript URLs, script-created initial documents, an actual script-thread unwind, and callback panics.
+Its thirty-eight shared cases cover JavaScript URLs, script-created initial documents, an actual script-thread unwind, and callback panics.
+Multiprocess mode adds a thirty-ninth case for actual content-process exit.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
 Final handle release now revokes host scope and pending callbacks synchronously, including release before host activation.
 Explicit shutdown releases sixteen ordinary callbacks, breaks a retained-view cycle, and rejects new evaluation before the engine stops.
@@ -41,7 +42,16 @@ Closure requests a SpiderMonkey interrupt, and the existing callback terminates 
 Four new cases cover a running loop, a serialization getter, scheduled work, and an uninterrupted 300-millisecond control.
 Interruption cannot undo earlier effects. A promise reaction and a timer that the script scheduled still run.
 Two negative controls show that both the execution check and the interrupt are necessary.
-Actual process failure, multiprocess transport, backend disconnection, and remaining replacement paths stay open.
+Both process modes now pass the cancellation and interruption cases.
+
+The process audit found that Servo reaped a dead child without scope revocation until another send failed.
+The experimental patch now connects the process lifeline to the existing recovery path.
+A blocked child exits with code 86 after the constellation forwards eight pending requests.
+The fixture sends no further work until the lifeline revokes host scope and releases all eight callbacks.
+It rejects a retained reply before allocation, evaluates the crash document, and accepts work after navigation.
+An independent view remains usable. Ordinary close and engine shutdown bypass crash recovery.
+The runner now stops the entire process group on a deadline, including content processes.
+Backend disconnection, failures before document construction, and remaining replacement paths stay open.
 The product pins and installed natives remain unchanged.
 
 P3.1 remains open on these requirements:
@@ -58,8 +68,9 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) records the current S1 runs, engine controls, and local checks.
-It also records a rerun of the thirty-four-case checkpoint, which passed before any change.
+The [process evidence](../experiments/phase3/document-process-evidence-2026-11-24.json) records the current S1 runs, engine controls, and local checks.
+The previous thirty-eight-case checkpoint and both Servo controls passed before development.
+The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) preserves that checkpoint and its earlier cancellation baseline.
 The [cancellation evidence](../experiments/phase3/document-cancellation-evidence-2026-11-24.json) preserves the thirty-four-case checkpoint.
 The [delegate evidence](../experiments/phase3/document-delegate-evidence-2026-11-24.json) preserves the thirty-one-case checkpoint.
 The [callback evidence](../experiments/phase3/document-callback-evidence-2026-11-24.json) preserves the twenty-seven-case checkpoint.
@@ -68,8 +79,10 @@ The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.js
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The thirty-eight lifecycle cases passed in three final runs, with both existing Servo controls.
-These builds used line-table debug information because of limited local disk space.
+The thirty-eight shared cases passed in three single-process runs.
+All thirty-nine cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
+These builds retained the previous line-table debug configuration.
+Multiprocess evidence uses unsandboxed content processes on macOS arm64.
 The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
 The product keeps its existing engine configuration and dependency versions.
 One preliminary repeat timed out at the redirect. The final fixture waits for explicit history-traversal completion and exposes HTTP worker errors.
@@ -78,12 +91,16 @@ The prior audit also exposed a nonblocking read error on an accepted loopback so
 The fixture now explicitly selects blocking reads with a timeout. This change does not prove the earlier timeout's cause.
 
 All 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
-Python syntax checks and six runner rejection checks also passed.
+Python syntax checks and six runner tests also passed, including mode admission and child cleanup after a deadline.
+The process negative control reaps the child without lifecycle recovery.
+It fails at the process fixture deadline, with eight callbacks and the obsolete scope still live.
+Both existing Servo controls pass with that negative control.
+The prior interruption evidence retains the following two negative controls.
 The interrupt negative control ignores closed permits in the interrupt callback.
 The interrupted loop then completes, runs its `finally` block, and records `1003` mutations.
 The execution-check negative control keeps the watcher but lets the cancelled queued mutation run.
 Both existing Servo controls pass with each negative control.
-The starting worktree already contained freshly fetched `origin/main` at `da599a7`.
+The starting worktree matched freshly fetched `origin/main` at `3b0a19c`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
@@ -105,10 +122,10 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Continue the S1 lifecycle audit with actual process failure, which needs multiprocess mode.
-   Review the queued cancellation and interruption contracts and obtain multiprocess evidence before integration.
+   Continue the S1 lifecycle audit with backend disconnection and failures before document construction.
+   Extend process-exit evidence to shared-process views, forced termination, and normal teardown races.
+   Review the queued cancellation, interruption, and process-lifeline contracts before integration.
    Decide whether a product contract revokes or tolerates work that an interrupted script already scheduled.
-   Cover backend disconnection and failures before document construction.
    Cover remaining replacement paths such as `srcdoc`, parser-time resets, and cross-origin history reactivation.
    Review the explicit shutdown contract, callback ownership cycles, and delegate and callback panic policy before product integration.
    Review the proposed history reactivation policy before product integration.

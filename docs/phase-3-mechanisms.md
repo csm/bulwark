@@ -189,7 +189,8 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and thirty-eight regression cases.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and thirty-eight shared regression cases.
+Multiprocess mode adds a thirty-ninth case for unexpected content-process exit.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.
 History reactivation receives a fresh incarnation before script resumes.
@@ -209,7 +210,12 @@ Three new cases cover queued mutations, cancellation after execution, and callba
 A per-script-thread watcher now interrupts running JavaScript when its permit closes.
 Four new cases cover a running loop, a serialization getter, scheduled work, and an uninterrupted control.
 Interruption cannot undo earlier effects or revoke promise reactions and timers that the script already scheduled.
-Actual process failure, multiprocess transport, backend disconnection, and remaining replacement paths stay open.
+Both process modes pass queued cancellation and active interruption.
+The process audit found that child reaping alone left host scope and callbacks live until another send failed.
+The experimental patch now connects the process lifeline to scope revocation and callback cleanup.
+Its exit fixture checks eight pending callbacks, retained replies, recovery, and an independent surviving view.
+Backend disconnection, failures before document construction, and remaining replacement paths stay open.
+Shared-process views, forced termination, and normal teardown races still need dedicated evidence.
 The reset case also proves that S2 cannot bind the current incarnation through pipeline equality alone.
 Product pins and installed behavior remain unchanged.
 

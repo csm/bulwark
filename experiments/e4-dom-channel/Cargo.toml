@@ -8,6 +8,7 @@ publish.workspace = true
 servo = ["dep:servo"]
 # Only build against the isolated P3.1 engine patch, never the product pin.
 document-scope = ["servo", "dep:log"]
+document-scope-multiprocess = ["document-scope", "servo/multiprocess"]
 
 [[bin]]
 name = "bulwark-experiment-e4"

@@ -79,8 +79,9 @@ That path revokes every affected view and creates the engine crash document.
 The fixture requires the unwind notification, eight terminal errors, released callback captures, an empty pending table, and successful recovery.
 A retained successful reply from before the unwind must also fail the host allocation check.
 
-This fixture covers a Rust unwind after document construction in the single-process engine.
-Process termination, aborts, constructor failures, and failures inside the failsafe remain untested.
+This fixture covers a Rust unwind after document construction in both process modes.
+The process audit below covers child exit without an unwind.
+Aborts, constructor failures, and failures inside the failsafe remain untested.
 The report path uses published engine APIs. Only the panic trigger and document-scope mechanisms require the experimental patch.
 The default Servo option exits the process on a reported panic, so this recovery result requires the explicit fixture configuration.
 
@@ -206,8 +207,9 @@ Cancellation cannot undo an existing mutation.
 The [interruption section](#active-javascript-interruption) describes cancellation after the execution check.
 The host removes the callback before terminal delivery, so later engine replies cannot deliver it twice.
 Replies that already reached a host queue still need the host ticket's cancellation check before allocation.
-The channel uses Servo's generic transport, but these runs cover only its single-process backend.
-Multiprocess transport and channel allocation failure remain untested.
+The channel uses Servo's generic transport.
+The original cancellation checkpoint covers its single-process backend. The process audit below adds multiprocess evidence.
+Channel allocation failure remains untested.
 This experimental contract needs upstream review before product integration.
 
 Three new fixtures use a script-thread barrier with a five-second deadline.
@@ -254,7 +256,8 @@ A closure that the watcher has not yet observed can produce a success reply.
 The host has already removed that callback, so it cannot receive the reply.
 
 The permit uses Servo's generic transport, and the watcher runs in the script's process.
-These runs cover only the single-process backend. Multiprocess interruption remains untested.
+The interruption checkpoint covers the single-process backend.
+The process audit below also checks interruption through multiprocess transport.
 This experimental mechanism needs upstream review before product integration.
 
 Four new fixtures use page console messages only to establish test order.
@@ -272,6 +275,48 @@ Host cancellation still delivers `Cancelled`, but the loop, `finally` block, and
 The second negative control disables only the execution check, with the watcher still active.
 The cancelled queued mutation runs, so asynchronous interruption does not replace that check.
 Both existing Servo controls pass with each negative control.
+
+## Content-process failure audit
+
+The process audit uses Servo's public multiprocess feature and content-process entry point.
+The fixture enables `Opts::multiprocess` and keeps `hard_fail = false`.
+Content processes use the same panic hook as the host for the existing script-thread unwind case.
+These runs use unsandboxed content processes on macOS arm64. The product keeps its existing single-process configuration.
+
+The source audit found that the process manager only reaped a child after its lifeline closed.
+It did not notify the affected views. Host scope and pending callbacks remained live until another send failed.
+The experimental patch records each child's script event-loop identity beside its lifeline.
+An unexpected lifeline closure now enters the existing panic recovery path for that event loop.
+Recovery revokes affected views before terminal callbacks and creates a crash document.
+Service-worker processes have no script event-loop identity and retain their existing behavior.
+
+Ordinary close removes each pipeline from its browsing context before script teardown.
+The patch checks that connection before recovery because normal pipeline-exit messages can still be queued.
+During engine shutdown, the patch completes pipeline teardown without new crash recovery.
+These checks preserve normal teardown. Dedicated race controls for these checks remain open.
+
+The new fixture blocks an independent content process at an experimental barrier.
+The host retains a successful reply and queues eight callbacks, with both scoped and legacy requests.
+A constellation acknowledgment proves that those requests reached the blocked child before release.
+The child then calls `std::process::exit(86)` without an unwind, panic report, or destructor cleanup.
+The host sends no further work until the lifeline delivers the crash notification.
+The fixture requires that notification within five seconds and checks its exact recovery reason.
+
+The fixture requires host revocation before all eight terminal callbacks and release of their captures.
+It rejects the retained reply before host allocation and requires an empty pending table.
+It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
+An independent view keeps its scope and accepts evaluation.
+
+All thirty-eight shared cases also run in multiprocess mode, including queued cancellation and active interruption.
+The process-exit fixture adds a thirty-ninth case in that mode.
+The negative control disables only lifeline recovery after process reaping.
+It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
+Both existing Servo controls pass with that negative control.
+
+The runner uses an independent process group for each case.
+It stops the group after each case, including a deadline, so child processes cannot survive a failed probe.
+Six portable runner tests check mode admission, marker rejection, and child cleanup after a deadline.
+Single-process cases retain a 35-second deadline. Multiprocess scope cases use a 90-second deadline for child startup and recovery.
 
 ## Regression scope
 
@@ -310,6 +355,7 @@ Fixture markers establish test order, without authentication claims.
 | Close | The engine revokes the document before the close notification. The host rejects the retained reply, and the evaluator releases a pending callback. |
 | Injected crash | The constellation's panic handler revokes the document before the crash notification. The host rejects the retained reply. |
 | Script-thread failure | An actual Rust unwind revokes scope and releases eight pending callbacks exactly once. A new document accepts evaluation after recovery. |
+| Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
 | Final handle release | Release revokes host scope and mixed callbacks synchronously. A callback can submit work to a surviving view. |
 | Release before activation | Release cleans eight callbacks before the host receives a document identity. |
 | Engine shutdown | Shutdown releases sixteen ordinary callbacks, breaks a retained-view cycle, rejects new evaluation, and completes the engine shutdown. |
@@ -323,15 +369,17 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats these thirty-eight cases three times and retains the existing Servo contract and E4 baseline results.
+The runner repeats thirty-eight cases in single-process mode or thirty-nine cases in multiprocess mode.
+Both modes retain the existing Servo contract and E4 baseline results.
 The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before and during execution.
 The injected crash calls the existing constellation panic handler through an experimental probe method.
 The separate script-thread fixture terminates the receiving thread through a Rust unwind. Neither fixture proves process-failure detection.
 
 ## Local evidence
 
-The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) records the current runs, source hashes, binary hash, and local checks.
-It also records a rerun of the thirty-four-case checkpoint before any change.
+The [process evidence](../experiments/phase3/document-process-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
+It also records the previous thirty-eight-case checkpoint and both Servo controls before development.
+The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) preserves that checkpoint and its earlier cancellation baseline.
 The [cancellation evidence](../experiments/phase3/document-cancellation-evidence-2026-11-24.json) preserves the thirty-four-case checkpoint.
 The [delegate evidence](../experiments/phase3/document-delegate-evidence-2026-11-24.json) preserves the thirty-one-case checkpoint.
 The [callback evidence](../experiments/phase3/document-callback-evidence-2026-11-24.json) preserves the twenty-seven-case checkpoint.
@@ -341,11 +389,14 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All thirty-eight cases passed in three final runs on macOS arm64 with software rendering.
+All thirty-eight shared cases passed in three single-process runs on macOS arm64 with software rendering.
+All thirty-nine cases passed in three multiprocess runs.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
-Python syntax checks and six runner rejection checks also passed. A replay of the complete marker set passed the runner.
-These builds used line-table debug information because of limited local disk space.
+Python syntax checks and six runner tests also passed.
+These builds retained the previous line-table debug configuration.
+
+The prior interruption checkpoint records the following preliminary fixture defects and negative controls.
 
 Two preliminary fixture defects failed before the final runs.
 A top-level `const` in an interrupted script persisted as a global binding and broke a later evaluation.
@@ -380,8 +431,9 @@ No remote CI, physical input, Linux, or release latency result applies to this c
 ## Remaining requirements
 
 This prototype does not close S1 or permit a restricted DOM API.
-Process failure detection still needs a dedicated fixture.
-Queued cancellation and active interruption need upstream review and multiprocess evidence.
+Unexpected content-process exit, queued cancellation, and active interruption now have unsandboxed multiprocess evidence.
+Their contracts still need upstream review.
+Forced termination, shared-process views, and normal teardown races need dedicated process fixtures.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
 Callback cleanup still needs checks for backend disconnection and failures before document construction.
 Upstream review must settle delegate and callback panic propagation, precedence, and suppression during an existing unwind.
@@ -399,15 +451,15 @@ Evaluator authority, redirect/rewrite mechanisms, and owner scope decisions also
 Prepare copies of the six published Servo packages and an isolated Bulwark workspace:
 
 ```sh
-python3 experiments/prepare_document_scope.py --out target/phase3-document-interruption
+python3 experiments/prepare_document_scope.py --out target/phase3-document-process
 ```
 
 Build the candidate:
 
 ```sh
-CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/target" cargo build --offline --locked \
-  --manifest-path target/phase3-document-interruption/candidate/Cargo.toml \
-  -p bulwark-experiment-e4 --features document-scope
+CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_TARGET_DIR="$PWD/target" cargo build --offline --locked \
+  --manifest-path target/phase3-document-process/candidate/Cargo.toml \
+  -p bulwark-experiment-e4 --features document-scope-multiprocess
 ```
 
 Run the candidate with independent 35-second process deadlines:
@@ -415,14 +467,24 @@ Run the candidate with independent 35-second process deadlines:
 ```sh
 python3 experiments/run_document_scope.py \
   --binary target/debug/bulwark-experiment-e4 \
-  --preparation target/phase3-document-interruption \
-  --output target/phase3-document-interruption-final-evidence
+  --preparation target/phase3-document-process \
+  --output target/phase3-document-process-single-evidence
+```
+
+Run the multiprocess cases with independent 90-second process deadlines:
+
+```sh
+python3 experiments/run_document_scope.py \
+  --binary target/debug/bulwark-experiment-e4 \
+  --preparation target/phase3-document-process \
+  --output target/phase3-document-process-multiprocess-evidence --multiprocess
+python3 -m unittest discover -s experiments -p test_document_scope_runner.py -v
 ```
 
 The preparation refuses an existing output directory.
 It records the patch hash, original source hashes, product manifest hashes, and candidate probe hashes in `provenance.json`.
 The runner rejects a preparation whose patch, product manifests, or probe files differ from the current sources.
 Only candidate manifests reference the copied packages.
-The runner records the binary hash, probe hashes, all thirty-eight case markers, the summary marker, exit statuses, and log hashes.
-The `document-scope` feature requires the patched candidate and cannot compile against the product engine.
+The runner records the binary hash, probe hashes, case markers, the summary marker, exit statuses, and log hashes.
+Both document-scope features require the patched candidate and cannot compile against the product engine.
 The normal E4 feature and the portable workspace retain their existing build commands.
