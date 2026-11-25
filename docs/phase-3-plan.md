@@ -268,5 +268,17 @@ The review needs these decisions:
 4. Agree on the five reader sites and article tasks.
 5. Set ordinary navigation/resource timeout behavior and the initial manifest grant procedure.
 
+### Recorded decisions, 2026-11-24
+
+- A failed pending navigation replaces the healthy active document with an error page.
+  The existing Servo recovery already does this after it revokes the old document. No engine change is needed.
+- A failed buffer stays visibly failed until the user kills it, by key or by command. Retry in place is not required.
+  The product renders this state natively from `:page/crashed`, without an engine crash page.
+  This covers failure before the first document, where Servo creates no crash page, and backend loss, where no engine page can render.
+  The error view shows the engine's failure reason.
+  The presentation follows the platform for fun: a classic sad Mac on macOS, a kernel panic screen on Linux, and a blue screen on Windows.
+  These are original renderings in those styles, not copied vendor artwork. Windows applies only if Windows support is added.
+  No milestone schedules this work yet. P3.3's lifecycle work is the natural place for it.
+
 The contract review produces concrete ADRs and bounded schemas in P3.1.
 No new extension trust claim, engine pin, display scope, or failed acceptance criterion changes without a recorded decision.

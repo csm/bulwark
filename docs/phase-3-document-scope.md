@@ -391,7 +391,7 @@ The barrier makes revocation the only path that can complete those callbacks.
 Upstream recovery treats the failure as a failure of the whole view.
 The panic handler revokes the healthy active document and releases all eight callbacks. A crash document then replaces it.
 The host rejects the retained reply, the view navigates normally, and the engine rejects the old scope.
-A product contract must decide whether a failed pending navigation should replace a healthy document.
+The owner accepted this replacement as product behavior.
 
 These fixtures characterize existing engine and patch behavior. The only engine change is the probe message, so they have no negative control.
 Failures during parsing or after the response headers remain untested.
@@ -585,8 +585,9 @@ Failures during parsing, after response headers, and in `about:blank` or `srcdoc
 Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
 Constellation loss now has single-process and unsandboxed multiprocess evidence. Its local shutdown contract needs upstream review.
-A view that fails before its first document cannot recover. The product must close it.
-Upstream recovery replaces a healthy active document when its pending navigation fails. A product contract must accept or change that policy.
+A view that fails before its first document cannot recover. The owner decided that the product shows a native error state until the user kills the buffer.
+The owner accepted the upstream recovery that replaces a healthy active document when its pending navigation fails.
+The [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-24) describe both.
 Upstream review must settle delegate and callback panic propagation, precedence, and suppression during an existing unwind.
 The host allocation counter does not establish registry revocation, retained-node memory bounds, or production scheduling.
 The lifecycle audit must cover remaining replacement paths, including `srcdoc`, parser-time resets, and cross-origin history reactivation.

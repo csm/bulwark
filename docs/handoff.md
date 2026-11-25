@@ -82,7 +82,7 @@ A new probe message unwinds the script thread of a view's pending top-level pipe
 A new view without a document rejects nine requests with `InternalError` and retains no callback.
 Its failure sends revocation and a crash notification but no crash document. The view cannot recover and can only close.
 A failed cross-site navigation revokes the healthy active document in another event loop and releases eight callbacks.
-Upstream recovery then replaces that document with a crash document.
+Upstream recovery then replaces that document with a crash document. The owner accepted this behavior.
 In multiprocess mode, a second `Active(None)` can follow the crash notification and revoke a request sent between them.
 The fixture now waits for both events. Both outcomes are terminal denials.
 These cases characterize existing behavior and have no negative control. The engine change adds only the probe.
@@ -169,7 +169,8 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
    Continue the S1 construction audit with failures during parsing, after response headers, and in `about:blank` or `srcdoc` construction.
    Content-process exit and kill before construction also remain untested.
-   Decide whether a failed pending navigation may replace a healthy active document, and how the product closes a view that failed before its first document.
+   The owner accepted crash-page replacement for a failed pending navigation.
+   A failed buffer shows a native, platform-styled error until the user kills it. The [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-24) give details. No milestone schedules that work yet.
    Extend teardown-race evidence beyond the single ordered close-then-kill case.
    Kills during JavaScript execution, IPC writes, and document construction also remain untested.
    A hung constellation, a process abort, and panics without an event-loop identity also remain untested.
