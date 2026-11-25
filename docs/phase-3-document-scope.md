@@ -80,6 +80,7 @@ The fixture requires the unwind notification, eight terminal errors, released ca
 A retained successful reply from before the unwind must also fail the host allocation check.
 
 This fixture covers a Rust unwind after document construction in both process modes.
+The [construction failure audit](#construction-failure-audit) covers unwinds before construction.
 The process audit below covers child exit without an unwind.
 Aborts, constructor failures, and failures inside the failsafe remain untested.
 The report path uses published engine APIs. Only the panic trigger and document-scope mechanisms require the experimental patch.
@@ -314,8 +315,8 @@ It rejects the retained reply before host allocation and requires an empty pendi
 It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
 An independent view keeps its scope and accepts evaluation.
 
-All thirty-eight shared cases also run in multiprocess mode, including queued cancellation and active interruption.
-The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more, for forty-four cases in total.
+All forty shared cases also run in multiprocess mode, including queued cancellation, active interruption, and construction failures.
+The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more, for forty-six cases in total.
 The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
 The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
@@ -357,6 +358,44 @@ Close has already revoked those views. The fixture requires that revocation, rel
 The negative control removes only that guard. It fails the race with the exact crash reason `Content process disconnected` on the closed view.
 The ordinary close, shared exit, and shared kill cases still pass with that control.
 This race orders close before kill at a barrier. Other orders and timing remain untested.
+
+## Construction failure audit
+
+The script thread constructs a document only after the navigation response headers arrive.
+The fixture host withholds selected navigation responses, so their pipelines exist without a document.
+A new probe message sends the existing script-thread panic to a view's newest pending top-level pipeline.
+Its acknowledgment reports whether that pipeline runs in an event loop other than the active document's.
+Both fixtures require a separate event loop and the exact unwind reason. These checks prevent a vacuous pass.
+
+The first fixture withholds a new view's first response.
+The constellation has no top browsing context for that view until activation.
+Nine identity, unscoped, and foreign-scoped requests fail with `InternalError` and retain no callback or capture.
+The host also refuses admission, because no document is active.
+After the unwind, the panic handler sends `Active(None)` and the crash notification.
+It then finds no top browsing context and returns before crash recovery. Pipeline exit sends a second `Active(None)`.
+The view then has no browsing context and no pending change.
+Evaluation still fails with `InternalError`. Load and reload also require a top browsing context, so the view cannot recover.
+Close and final release still notify the host. An independent view remains usable.
+
+The first multiprocess run found an ordering hazard in the fixture.
+The second `Active(None)` can arrive after the crash notification.
+That event revoked the next request with `StaleDocument` instead of `InternalError`.
+Both outcomes are terminal denials. A host must not assume that the crash notification is the last revocation from that failure.
+The fixture now waits for the crash notification and both events, and requires exactly that sequence.
+
+The second fixture withholds a cross-site navigation from a live view.
+The pending pipeline runs in a separate event loop, and the active document stays live.
+The host queues eight callbacks while the active document's script thread waits at a barrier.
+It unwinds the pending pipeline's thread and drives the engine inside the barrier.
+The barrier makes revocation the only path that can complete those callbacks.
+Upstream recovery treats the failure as a failure of the whole view.
+The panic handler revokes the healthy active document and releases all eight callbacks. A crash document then replaces it.
+The host rejects the retained reply, the view navigates normally, and the engine rejects the old scope.
+A product contract must decide whether a failed pending navigation should replace a healthy document.
+
+These fixtures characterize existing engine and patch behavior. The only engine change is the probe message, so they have no negative control.
+Failures during parsing or after the response headers remain untested.
+The audit also leaves out `about:blank` and `srcdoc` construction, and content-process exit or kill before construction.
 
 ## Backend loss audit
 
@@ -446,6 +485,8 @@ Fixture markers establish test order, without authentication claims.
 | Close | The engine revokes the document before the close notification. The host rejects the retained reply, and the evaluator releases a pending callback. |
 | Injected crash | The constellation's panic handler revokes the document before the crash notification. The host rejects the retained reply. |
 | Script-thread failure | An actual Rust unwind revokes scope and releases eight pending callbacks exactly once. A new document accepts evaluation after recovery. |
+| Unconstructed view failure | Requests without a top browsing context fail with `InternalError` and retain nothing. A pending pipeline unwinds with revocation and no crash document. The view can only close. |
+| Pending navigation failure | A cross-site pending pipeline unwinds before construction. Its healthy active document is revoked before eight callbacks and replaced by a crash document. The view recovers. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
 | Shared-process close (multiprocess only) | Normal close of one of three views in one child revokes only that view and releases eight callbacks. The other two views stay usable. |
 | Shared-process exit and kill (multiprocess only) | The lifeline revokes two views in one child and releases sixteen callbacks. Both views recover, and an independent view stays usable. |
@@ -466,7 +507,7 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats thirty-eight cases in single-process mode or forty-four cases in multiprocess mode.
+The runner repeats forty cases in single-process mode or forty-six cases in multiprocess mode.
 Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
 The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before and during execution.
@@ -475,8 +516,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [shared-process evidence](../experiments/phase3/document-shared-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
-Its baseline is the backend checkpoint at `4001e29`, whose three final runs in each mode passed with both Servo controls.
+The [construction evidence](../experiments/phase3/document-construction-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
+Its baseline is the shared-process checkpoint at `46eaa88`, whose three final runs in each mode passed with both Servo controls.
+The [shared-process evidence](../experiments/phase3/document-shared-evidence-2026-11-24.json) preserves the forty-four-case multiprocess checkpoint and its negative control.
 The [backend evidence](../experiments/phase3/document-backend-evidence-2026-11-24.json) preserves the forty-case multiprocess checkpoint and both backend loss controls.
 The [kill evidence](../experiments/phase3/document-kill-evidence-2026-11-24.json) preserves the first forty-case multiprocess checkpoint.
 The [process evidence](../experiments/phase3/document-process-evidence-2026-11-24.json) preserves the thirty-nine-case multiprocess checkpoint.
@@ -490,8 +532,8 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All thirty-eight shared cases passed in three single-process runs on macOS arm64 with software rendering.
-All forty-four cases passed in three multiprocess runs.
+All forty shared cases passed in three single-process runs on macOS arm64 with software rendering.
+All forty-six cases passed in three multiprocess runs.
 Both backend loss cases passed in three separate engine runs in each mode.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
@@ -538,13 +580,13 @@ Unexpected content-process exit, forced kill, queued cancellation, and active in
 Their contracts still need upstream review.
 The kill fixture covers only a child blocked at a barrier.
 Kills during JavaScript execution, IPC writes, or document construction remain untested.
+Script-thread unwinds before construction now have evidence for a new view and a pending cross-site navigation.
+Failures during parsing, after response headers, and in `about:blank` or `srcdoc` construction remain untested.
 Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
 Constellation loss now has single-process and unsandboxed multiprocess evidence. Its local shutdown contract needs upstream review.
-Callback cleanup still needs checks for failures before document construction.
-A source review found two relevant paths, but no fixture checks them yet.
-The constellation's panic handler sends `Active(None)` before it returns early for a view without a top browsing context.
-Evaluation without a top browsing context fails immediately with `InternalError`.
+A view that fails before its first document cannot recover. The product must close it.
+Upstream recovery replaces a healthy active document when its pending navigation fails. A product contract must accept or change that policy.
 Upstream review must settle delegate and callback panic propagation, precedence, and suppression during an existing unwind.
 The host allocation counter does not establish registry revocation, retained-node memory bounds, or production scheduling.
 The lifecycle audit must cover remaining replacement paths, including `srcdoc`, parser-time resets, and cross-origin history reactivation.

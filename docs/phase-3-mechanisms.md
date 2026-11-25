@@ -189,8 +189,8 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and thirty-eight shared regression cases.
-Multiprocess mode adds two cases, for unexpected content-process exit and a forced kill.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and forty shared regression cases.
+Multiprocess mode adds six cases, for unexpected content-process exit, a forced kill, and shared-process teardown.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.
 History reactivation receives a fresh incarnation before script resumes.
@@ -217,7 +217,10 @@ Its exit and kill fixtures check eight pending callbacks, retained replies, reco
 The backend loss audit found that constellation loss left host scope and callbacks live and made the engine destructor wait forever.
 The experimental patch now revokes every view and callback when the constellation channel closes, then finishes shutdown locally.
 A separate engine process checks an actual constellation unwind in both process modes.
-Failures before document construction and remaining replacement paths stay open.
+Script-thread unwinds before document construction now cover a new view and a pending cross-site navigation.
+A new view that fails before its first document cannot recover, and evaluation fails with `InternalError`.
+A failed pending navigation replaces the healthy active document with a crash document after revocation.
+Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.
 Kills outside a barrier and other teardown orders still need dedicated evidence.

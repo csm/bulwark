@@ -38,6 +38,8 @@ struct Delegate {
     panic_on_revoke: Cell<bool>,
     // Page console messages order the interruption fixtures. They grant no host authority.
     console: RefCell<Vec<String>>,
+    // Navigation responses withheld by the host. Their pipelines cannot construct a document.
+    held: RefCell<Vec<WebResourceLoad>>,
 }
 
 const DELEGATE_PANIC: &str = "S1 probe delegate panic";
@@ -139,6 +141,10 @@ impl WebViewDelegate for Delegate {
     }
     fn load_web_resource(&self, _: WebView, load: WebResourceLoad) {
         let url = load.request().url.clone();
+        if url.path().starts_with("/held") {
+            self.held.borrow_mut().push(load);
+            return;
+        }
         if url.host_str() == Some("127.0.0.1") && url.port() == Some(self.loopback_port.get()) {
             // Use the real HTTP loader for the redirect; interception bypasses that path.
             return;
@@ -239,6 +245,17 @@ fn open_popup(
         "Popup reused its opener's scope"
     );
     Ok((popup, popup_delegate, popup_document))
+}
+
+// Cancel withheld navigation responses. Their pipelines may already be gone.
+fn cancel_held(delegate: &Delegate) -> usize {
+    let held = delegate.held.take();
+    let count = held.len();
+    for load in held {
+        let url = load.request().url.clone();
+        load.intercept(WebResourceResponse::new(url)).cancel();
+    }
+    count
 }
 
 fn stale(result: Evaluation) -> Result<()> {
@@ -1547,6 +1564,238 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     )?;
     ensure!(calls.get() == 8, "Recovery delivered a duplicate callback");
     println!("S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)");
+
+    // Withhold the first navigation response. The view then has a pending pipeline, but
+    // no document and no top browsing context in the constellation.
+    let unbuilt_delegate = Rc::new(Delegate::default());
+    let unbuilt = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/held-initial"))?)
+        .delegate(unbuilt_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || {
+        !unbuilt_delegate.held.borrow().is_empty()
+    })?;
+    ensure!(
+        unbuilt_delegate.active.get().is_none() && unbuilt_delegate.ticket(recovered).is_err(),
+        "Host admitted work before document construction"
+    );
+    // Every request form must fail at the constellation without a pending callback.
+    // A foreign identity must not select another view's document.
+    let early = Rc::new(RefCell::new(Vec::new()));
+    let capture = Rc::new(());
+    let early_released = Rc::downgrade(&capture);
+    for index in 0..9 {
+        let early = early.clone();
+        let capture = capture.clone();
+        let finish = move |error: Option<JavaScriptEvaluationError>| {
+            drop(capture);
+            early.borrow_mut().push(error);
+        };
+        match index % 3 {
+            0 => unbuilt.request_document_identity(move |result| finish(result.err())),
+            1 => unbuilt
+                .evaluate_javascript("'must-not-execute'", move |result| finish(result.err())),
+            _ => unbuilt.evaluate_javascript_in_document(
+                recovered,
+                "'must-not-execute'",
+                move |result| finish(result.err()),
+            ),
+        }
+    }
+    drop(capture);
+    drive_until(&servo, deadline, || early.borrow().len() == 9)?;
+    ensure!(
+        early
+            .borrow()
+            .iter()
+            .all(|error| matches!(error, Some(JavaScriptEvaluationError::InternalError))),
+        "Evaluation without a top browsing context did not fail: {:?}",
+        early.borrow()
+    );
+    ensure!(
+        early_released.upgrade().is_none()
+            && unbuilt.pending_evaluations_for_document_scope_probe() == 0,
+        "Evaluation without a top browsing context retained callbacks"
+    );
+    ensure!(
+        unbuilt.crash_pending_script_thread_for_document_scope_probe() == Some(true),
+        "Probe did not reach a pending pipeline without an active document"
+    );
+    // The panic handler revokes before it finds no top browsing context and returns early.
+    // Pipeline exit then reports that no document is active. In multiprocess mode, the
+    // second event can follow the crash notification. A request sent between them would
+    // be revoked by it, so wait for both before the next request.
+    drive_until(&servo, deadline, || {
+        unbuilt_delegate.crashed.get() && unbuilt_delegate.events.borrow().len() >= 2
+    })?;
+    ensure!(
+        unbuilt_delegate.crash_reasons.borrow().as_slice()
+            == ["S1 probe actual script-thread panic"],
+        "Unconstructed view missed the unwind notification: {:?}",
+        unbuilt_delegate.crash_reasons.borrow()
+    );
+    // No crash document can follow, so the view never activates a document.
+    ensure!(
+        unbuilt_delegate.active.get().is_none()
+            && unbuilt_delegate.generation.get() == 0
+            && unbuilt_delegate.loads.get() == 0
+            && unbuilt_delegate.events.borrow().as_slice() == [DocumentLifecycle::Active(None); 2],
+        "Unconstructed view received a document: {:?}",
+        unbuilt_delegate.events.borrow()
+    );
+    ensure!(
+        cancel_held(&unbuilt_delegate) == 1,
+        "Expected one withheld navigation"
+    );
+    let after = Rc::new(RefCell::new(None));
+    let reply = after.clone();
+    unbuilt.request_document_identity(move |result| *reply.borrow_mut() = Some(result));
+    drive_until(&servo, deadline, || after.borrow().is_some())?;
+    let after = after.take();
+    ensure!(
+        matches!(after, Some(Err(JavaScriptEvaluationError::InternalError))),
+        "Failed unconstructed view accepted evaluation: {after:?}"
+    );
+    ensure!(
+        unbuilt.pending_evaluations_for_document_scope_probe() == 0,
+        "Failed unconstructed view retained callbacks"
+    );
+    // The view cannot navigate without a top browsing context. Close and release it.
+    unbuilt.close_for_document_scope_probe();
+    drive_until(&servo, deadline, || unbuilt_delegate.closed.get())?;
+    drop(unbuilt);
+    ensure!(
+        unbuilt_delegate.released.get(),
+        "Final release of the failed view did not notify the host"
+    );
+    text(
+        scoped(&servo, &failure, deadline, recovered, "'unbuilt-survivor'")?,
+        recovered,
+        "unbuilt-survivor",
+    )?;
+    println!(
+        "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)"
+    );
+
+    // A cross-site navigation uses another event loop. Withhold its response, then unwind
+    // that loop while eight callbacks for the active document wait at a script barrier.
+    let pending_delegate = Rc::new(Delegate::default());
+    let pending_view = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/navigation-source"))?)
+        .delegate(pending_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || pending_delegate.loads.get() > 0)?;
+    let source = identity(&servo, &pending_view, deadline)?;
+    let source_ticket = pending_delegate.ticket(source)?;
+    let source_reply = scoped(
+        &servo,
+        &pending_view,
+        deadline,
+        source,
+        "'before-pending-failure'",
+    )?;
+    ensure!(source_reply.is_ok(), "Pending navigation control failed");
+    pending_view.load(url::Url::parse("https://pending.invalid/held-navigation")?);
+    drive_until(&servo, deadline, || {
+        !pending_delegate.held.borrow().is_empty()
+    })?;
+    ensure!(
+        pending_delegate.active.get() == Some(source),
+        "A pending navigation revoked the active document before failure"
+    );
+    let mut separate = None;
+    let (audit, revoked) = pending_view.with_paused_script_for_document_scope_probe(|| {
+        let audit = CleanupAudit::queue(&pending_view, Some(source), &pending_delegate, true);
+        separate = pending_view.crash_pending_script_thread_for_document_scope_probe();
+        // The active document's script thread stays healthy. Wait inside the barrier,
+        // so only revocation can complete these callbacks.
+        let revoked = drive_until(
+            &servo,
+            deadline.min(Instant::now() + Duration::from_secs(4)),
+            || audit.calls.get() == 8,
+        );
+        (audit, revoked)
+    });
+    ensure!(
+        separate == Some(true),
+        "Probe did not reach a pending pipeline in a separate event loop: {separate:?}"
+    );
+    revoked.map_err(|error| {
+        anyhow::anyhow!(
+            "Pending pipeline failure did not revoke within the barrier: {error}; active={:?}, calls={}",
+            pending_delegate.active.get(),
+            audit.calls.get()
+        )
+    })?;
+    audit.check()?;
+    drive_until(&servo, deadline, || pending_delegate.crashed.get())?;
+    ensure!(
+        pending_delegate.crash_reasons.borrow().as_slice()
+            == ["S1 probe actual script-thread panic"],
+        "Pending pipeline failure missed the unwind notification: {:?}",
+        pending_delegate.crash_reasons.borrow()
+    );
+    ensure!(
+        pending_view.pending_evaluations_for_document_scope_probe() == 0,
+        "Pending pipeline failure retained callbacks"
+    );
+    pending_delegate.reject(source_ticket, source_reply)?;
+    ensure!(
+        cancel_held(&pending_delegate) == 1,
+        "Expected one withheld navigation"
+    );
+    // Upstream recovery replaces the healthy active document with a crash document.
+    drive_until(&servo, deadline, || {
+        pending_delegate.active.get().is_some_and(|id| id != source)
+    })?;
+    let pending_crash = identity(&servo, &pending_view, deadline)?;
+    text(
+        scoped(
+            &servo,
+            &pending_view,
+            deadline,
+            pending_crash,
+            "'crash-document'",
+        )?,
+        pending_crash,
+        "crash-document",
+    )?;
+    load(&servo, &pending_view, deadline, "/after-pending-failure")?;
+    let pending_recovered = identity(&servo, &pending_view, deadline)?;
+    ensure!(
+        pending_recovered != source,
+        "Pending failure recovery revived the old scope"
+    );
+    stale(scoped(
+        &servo,
+        &pending_view,
+        deadline,
+        source,
+        "'obsolete'",
+    )?)?;
+    text(
+        scoped(
+            &servo,
+            &pending_view,
+            deadline,
+            pending_recovered,
+            "'pending-recovered'",
+        )?,
+        pending_recovered,
+        "pending-recovered",
+    )?;
+    text(
+        scoped(&servo, &failure, deadline, recovered, "'pending-survivor'")?,
+        recovered,
+        "pending-survivor",
+    )?;
+    ensure!(
+        audit.calls.get() == 8,
+        "Pending failure recovery repeated callbacks"
+    );
+    println!(
+        "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)"
+    );
     // Releasing one clone must preserve the scope. Releasing the last handle must
     // revoke host state and callbacks without waiting for another event-loop drain.
     let release_delegate = Rc::new(Delegate::default());
@@ -2316,7 +2565,7 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     );
     println!(
         "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
-        if multiprocess { 44 } else { 38 }
+        if multiprocess { 46 } else { 40 }
     );
     Ok(())
 }
