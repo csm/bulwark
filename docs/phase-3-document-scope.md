@@ -315,7 +315,7 @@ It evaluates the crash document, navigates to a new document, and rejects the fa
 An independent view keeps its scope and accepts evaluation.
 
 All thirty-eight shared cases also run in multiprocess mode, including queued cancellation and active interruption.
-The exit and kill fixtures add two cases in that mode, for forty cases in total.
+The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more, for forty-four cases in total.
 The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
 The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
@@ -326,9 +326,37 @@ Both existing Servo controls pass with each negative control.
 The runner uses an independent process group for each case.
 It stops the group after each case, including a deadline, so child processes cannot survive a failed probe.
 Eight portable runner tests check mode admission, marker rejection, and child cleanup after a deadline.
-The marker test rejects a multiprocess run that omits either process case.
+The marker test rejects a multiprocess run that omits any multiprocess-only case.
 Two tests reject a backend loss run with a missing, reordered, or misplaced marker.
 Single-process cases retain a 35-second deadline. Multiprocess scope and backend loss cases use a 90-second deadline for child startup and recovery.
+
+## Shared-process audit
+
+The earlier process fixtures each placed one affected view in its own content process.
+These fixtures open two popups from the affected view. A popup shares its opener's content process.
+A barrier in the child reports its process id to the host. Page JavaScript cannot supply this value.
+The fixture requires the same process id for all three views, and a different id from the host.
+
+In exit mode, the third view closes normally while the shared child waits at a barrier.
+The closed view receives revocation before eight terminal callbacks, and the host rejects its retained reply.
+The opener and the other popup keep their scope and accept evaluation. No view enters crash recovery.
+
+The exit and kill fixtures then queue eight callbacks for both the opener and the popup.
+The lifeline must revoke both views, release all sixteen callbacks, and report the exact recovery reason for each view.
+Both views must evaluate their crash documents, navigate to new documents, and reject their failed identities.
+The independent view keeps its scope.
+
+The kill fixture also orders a teardown race.
+It queues eight callbacks for the third view and closes that view while the child is blocked.
+The host then kills the child before the child can acknowledge pipeline exit.
+The constellation still holds the closed view's pipeline when the lifeline closes.
+Without a guard, the panic handler created crash recovery for the closed view and sent it a crash notification.
+The experimental patch now ignores views that the constellation no longer holds in this handler.
+Close has already revoked those views. The fixture requires that revocation, released callbacks, and no crash notification.
+
+The negative control removes only that guard. It fails the race with the exact crash reason `Content process disconnected` on the closed view.
+The ordinary close, shared exit, and shared kill cases still pass with that control.
+This race orders close before kill at a barrier. Other orders and timing remain untested.
 
 ## Backend loss audit
 
@@ -419,6 +447,9 @@ Fixture markers establish test order, without authentication claims.
 | Injected crash | The constellation's panic handler revokes the document before the crash notification. The host rejects the retained reply. |
 | Script-thread failure | An actual Rust unwind revokes scope and releases eight pending callbacks exactly once. A new document accepts evaluation after recovery. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
+| Shared-process close (multiprocess only) | Normal close of one of three views in one child revokes only that view and releases eight callbacks. The other two views stay usable. |
+| Shared-process exit and kill (multiprocess only) | The lifeline revokes two views in one child and releases sixteen callbacks. Both views recover, and an independent view stays usable. |
+| Shared close-kill race (multiprocess only) | A view closes while its shared child is blocked, and then the child is killed. The closed view stays revoked without crash recovery. |
 | Content-process kill (multiprocess only) | The host sends SIGKILL to a blocked child. The same lifeline revocation, callback release, recovery, and survivor assertions apply. |
 | Backend disconnection (separate engine) | An actual constellation unwind revokes two views before eight callbacks. The host rejects the retained reply, and admission closes. |
 | Drop after backend loss (separate engine) | Shutdown completes locally with one loss report. The engine destructor returns. |
@@ -435,7 +466,7 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats thirty-eight cases in single-process mode or forty cases in multiprocess mode.
+The runner repeats thirty-eight cases in single-process mode or forty-four cases in multiprocess mode.
 Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
 The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before and during execution.
@@ -444,9 +475,10 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [backend evidence](../experiments/phase3/document-backend-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
-It also records one run of the previous checkpoint in each mode, with both Servo controls, before development.
-The [kill evidence](../experiments/phase3/document-kill-evidence-2026-11-24.json) preserves the forty-case multiprocess checkpoint.
+The [shared-process evidence](../experiments/phase3/document-shared-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
+Its baseline is the backend checkpoint at `4001e29`, whose three final runs in each mode passed with both Servo controls.
+The [backend evidence](../experiments/phase3/document-backend-evidence-2026-11-24.json) preserves the forty-case multiprocess checkpoint and both backend loss controls.
+The [kill evidence](../experiments/phase3/document-kill-evidence-2026-11-24.json) preserves the first forty-case multiprocess checkpoint.
 The [process evidence](../experiments/phase3/document-process-evidence-2026-11-24.json) preserves the thirty-nine-case multiprocess checkpoint.
 The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) preserves the first thirty-eight-case checkpoint and its earlier cancellation baseline.
 The [cancellation evidence](../experiments/phase3/document-cancellation-evidence-2026-11-24.json) preserves the thirty-four-case checkpoint.
@@ -459,7 +491,7 @@ The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
 All thirty-eight shared cases passed in three single-process runs on macOS arm64 with software rendering.
-All forty cases passed in three multiprocess runs.
+All forty-four cases passed in three multiprocess runs.
 Both backend loss cases passed in three separate engine runs in each mode.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
@@ -506,7 +538,7 @@ Unexpected content-process exit, forced kill, queued cancellation, and active in
 Their contracts still need upstream review.
 The kill fixture covers only a child blocked at a barrier.
 Kills during JavaScript execution, IPC writes, or document construction remain untested.
-Shared-process views and normal teardown races need dedicated process fixtures.
+Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
 Constellation loss now has single-process and unsandboxed multiprocess evidence. Its local shutdown contract needs upstream review.
 Callback cleanup still needs checks for failures before document construction.

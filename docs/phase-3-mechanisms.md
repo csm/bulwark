@@ -218,7 +218,9 @@ The backend loss audit found that constellation loss left host scope and callbac
 The experimental patch now revokes every view and callback when the constellation channel closes, then finishes shutdown locally.
 A separate engine process checks an actual constellation unwind in both process modes.
 Failures before document construction and remaining replacement paths stay open.
-Shared-process views, kills outside a barrier, and normal teardown races still need dedicated evidence.
+Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
+That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.
+Kills outside a barrier and other teardown orders still need dedicated evidence.
 The reset case also proves that S2 cannot bind the current incarnation through pipeline equality alone.
 Product pins and installed behavior remain unchanged.
 

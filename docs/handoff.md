@@ -14,7 +14,7 @@ The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecy
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
 Its thirty-eight shared cases cover JavaScript URLs, script-created initial documents, an actual script-thread unwind, and callback panics.
-Multiprocess mode adds two cases, for actual content-process exit and a forced kill.
+Multiprocess mode adds six cases: content-process exit and kill, and four shared-process cases.
 A separate engine process adds two backend loss cases in each mode.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
 Final handle release now revokes host scope and pending callbacks synchronously, including release before host activation.
@@ -68,6 +68,14 @@ It revokes every view before terminal callbacks, closes admission, and finishes 
 An experimental probe unwinds the actual constellation thread with eight requests held at a script-thread barrier.
 These cases run in their own process, because backend loss ends the engine.
 The review of the kill commit corrected a stale evidence reference in the scope guide.
+
+The shared-process audit opens two popups that share the affected view's content process.
+An engine-reported process id confirms the shared child. Page data cannot supply that id.
+Ordinary close of one shared view revokes only that view. Exit and kill revoke both affected views and release sixteen callbacks.
+Both views recover, and an independent view stays usable.
+A kill after a blocked close found that the panic handler sent crash recovery to the closed view.
+The experimental patch now ignores views that the constellation no longer holds in that handler.
+Another session started this audit and stopped before its final run. This checkpoint completes and verifies it.
 Failures before document construction and remaining replacement paths stay open.
 The product pins and installed natives remain unchanged.
 
@@ -85,9 +93,10 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [backend evidence](../experiments/phase3/document-backend-evidence-2026-11-24.json) records the current S1 runs, engine controls, and local checks.
-One run of the previous checkpoint in each mode and both Servo controls passed before development.
-The [kill evidence](../experiments/phase3/document-kill-evidence-2026-11-24.json) preserves the forty-case multiprocess checkpoint.
+The [shared-process evidence](../experiments/phase3/document-shared-evidence-2026-11-24.json) records the current S1 runs, engine controls, and local checks.
+Its baseline is the backend checkpoint at `4001e29`, whose three final runs in each mode passed.
+The [backend evidence](../experiments/phase3/document-backend-evidence-2026-11-24.json) preserves the forty-case checkpoint and both backend loss controls.
+The [kill evidence](../experiments/phase3/document-kill-evidence-2026-11-24.json) preserves the first forty-case multiprocess checkpoint.
 The [process evidence](../experiments/phase3/document-process-evidence-2026-11-24.json) preserves the thirty-nine-case multiprocess checkpoint.
 The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) preserves the first thirty-eight-case checkpoint and its earlier cancellation baseline.
 The [cancellation evidence](../experiments/phase3/document-cancellation-evidence-2026-11-24.json) preserves the thirty-four-case checkpoint.
@@ -99,7 +108,7 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
 The thirty-eight shared cases passed in three single-process runs.
-All forty cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
+All forty-four cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
 Both backend loss cases passed in three separate engine runs in each mode.
 Cleanup completed 1,543 to 1,627 milliseconds after the crash request. The cause of that unwind delay is not established.
 These builds retained the previous line-table debug configuration.
@@ -116,6 +125,7 @@ Python syntax checks and eight runner tests also passed, including mode admissio
 The first backend negative control reports the loss but omits revocation. It fails with eight callbacks pending and the document active.
 The second control revokes scope but omits local shutdown completion. Its watchdog reports that the destructor waited for the lost constellation.
 The ordinary scope cases and both existing Servo controls pass with each control in both modes.
+The shared-process negative control removes the closed-view guard. It fails only the race, with crash recovery on the closed view.
 The kill evidence retains its negative control, which sends no signal to the blocked child.
 The process evidence retains its negative control, which reaps the child without lifecycle recovery.
 The prior interruption evidence retains the following two negative controls.
@@ -148,7 +158,7 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
    Continue the S1 lifecycle audit with failures before document construction.
    A source review found that the panic handler revokes a view without a top browsing context, then returns early.
    Evaluation without that context fails immediately with `InternalError`. No fixture checks either path yet.
-   Extend process-failure evidence to shared-process views and normal teardown races.
+   Extend teardown-race evidence beyond the single ordered close-then-kill case.
    Kills during JavaScript execution, IPC writes, and document construction also remain untested.
    A hung constellation, a process abort, and panics without an event-loop identity also remain untested.
    Review the queued cancellation, interruption, process-lifeline, and backend loss contracts before integration.

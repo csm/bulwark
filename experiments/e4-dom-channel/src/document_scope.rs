@@ -213,6 +213,34 @@ fn scoped(
     receive(servo, deadline, queue(view, document, script))
 }
 
+fn open_popup(
+    servo: &Servo,
+    view: &WebView,
+    delegate: &Delegate,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    document: DocumentIdentity,
+) -> Result<(WebView, Rc<Delegate>, DocumentIdentity)> {
+    let opened = queue(view, document, "window.open('about:blank');'opened'");
+    drive_until(servo, deadline, || !delegate.popups.borrow().is_empty())?;
+    let popup_delegate = Rc::new(Delegate::default());
+    let popup = delegate
+        .popups
+        .borrow_mut()
+        .pop()
+        .unwrap()
+        .builder(context)
+        .delegate(popup_delegate.clone())
+        .build();
+    text(receive(servo, deadline, opened)?, document, "opened")?;
+    let popup_document = identity(servo, &popup, deadline)?;
+    ensure!(
+        popup_document != document,
+        "Popup reused its opener's scope"
+    );
+    Ok((popup, popup_delegate, popup_document))
+}
+
 fn stale(result: Evaluation) -> Result<()> {
     ensure!(
         matches!(result, Err(JavaScriptEvaluationError::StaleDocument)),
@@ -1898,29 +1926,128 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                 "'before-process-exit'",
             )?;
             ensure!(process_reply.is_ok(), "Process failure control failed");
+            let (shared, shared_delegate, shared_document) = open_popup(
+                &servo,
+                &process_view,
+                &process_delegate,
+                context.clone(),
+                deadline,
+                process_document,
+            )?;
+            let process_id = process_view.content_process_id_for_document_scope_probe();
+            ensure!(
+                process_id != std::process::id()
+                    && shared.content_process_id_for_document_scope_probe() == process_id,
+                "Popup did not share the opener's content process"
+            );
+            let shared_ticket = shared_delegate.ticket(shared_document)?;
+            let shared_reply = scoped(&servo, &shared, deadline, shared_document, "'shared'")?;
+            ensure!(shared_reply.is_ok(), "Shared process control failed");
+
+            // Retain the final host handle of a third view through ordinary close.
+            // In kill mode, close it while the child is blocked, then kill that child
+            // before it can acknowledge pipeline exit. This orders the teardown race.
+            let (closing, closing_delegate, closing_document) = open_popup(
+                &servo,
+                &process_view,
+                &process_delegate,
+                context.clone(),
+                deadline,
+                process_document,
+            )?;
+            ensure!(
+                closing.content_process_id_for_document_scope_probe() == process_id,
+                "Closing sibling did not share the content process"
+            );
+            let closing_ticket = closing_delegate.ticket(closing_document)?;
+            let mut closing_reply = Some(scoped(
+                &servo,
+                &closing,
+                deadline,
+                closing_document,
+                "'before-close'",
+            )?);
+            if !kill {
+                let closing_audit = process_view
+                    .with_paused_content_process_for_document_scope_probe(|| {
+                        let audit = CleanupAudit::queue(
+                            &closing,
+                            Some(closing_document),
+                            &closing_delegate,
+                            true,
+                        );
+                        closing.close_for_document_scope_probe();
+                        audit
+                    });
+                drive_until(&servo, deadline, || closing_delegate.closed.get())?;
+                closing_audit.check()?;
+                closing_delegate.reject(closing_ticket, closing_reply.take().unwrap())?;
+                text(
+                    scoped(&servo, &shared, deadline, shared_document, "'still-live'")?,
+                    shared_document,
+                    "still-live",
+                )?;
+                text(
+                    scoped(
+                        &servo,
+                        &process_view,
+                        deadline,
+                        process_document,
+                        "'opener-still-live'",
+                    )?,
+                    process_document,
+                    "opener-still-live",
+                )?;
+                ensure!(
+                    process_delegate.active.get() == Some(process_document)
+                        && shared_delegate.active.get() == Some(shared_document)
+                        && !closing_delegate.crashed.get()
+                        && !process_delegate.crashed.get()
+                        && !shared_delegate.crashed.get(),
+                    "Ordinary shared-process close entered crash recovery"
+                );
+                println!(
+                    "S1 shared-process-close: PASS (8 callbacks released, two siblings retain scope and remain usable)"
+                );
+            }
             let queue = || {
-                CleanupAudit::queue(
+                let process_audit = CleanupAudit::queue(
                     &process_view,
                     Some(process_document),
                     &process_delegate,
                     true,
-                )
+                );
+                let shared_audit =
+                    CleanupAudit::queue(&shared, Some(shared_document), &shared_delegate, true);
+                let closing_audit = kill.then(|| {
+                    let audit = CleanupAudit::queue(
+                        &closing,
+                        Some(closing_document),
+                        &closing_delegate,
+                        true,
+                    );
+                    assert_eq!(closing.pending_evaluations_for_document_scope_probe(), 8);
+                    closing.close_for_document_scope_probe();
+                    audit
+                });
+                (process_audit, shared_audit, closing_audit)
             };
             // Kill mode leaves the child no exit path of its own. The host sends SIGKILL.
-            let process_audit = if kill {
+            let (process_audit, shared_audit, closing_audit) = if kill {
                 process_view.with_killed_content_process_for_document_scope_probe(queue)
             } else {
                 process_view.with_terminating_content_process_for_document_scope_probe(queue)
             };
             ensure!(
-                process_view.pending_evaluations_for_document_scope_probe() == 8,
-                "Process failure fixture did not retain eight callbacks"
+                process_view.pending_evaluations_for_document_scope_probe() == 8
+                    && shared.pending_evaluations_for_document_scope_probe() == 8,
+                "Process failure fixture did not retain eight callbacks per view"
             );
             // Do not send work to the dead process. Only its lifeline can trigger recovery.
             drive_until(
                 &servo,
                 deadline.min(Instant::now() + Duration::from_secs(5)),
-                || process_delegate.crashed.get(),
+                || process_delegate.crashed.get() && shared_delegate.crashed.get(),
             )
             .map_err(|error| {
                 anyhow::anyhow!(
@@ -1937,6 +2064,15 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                 process_delegate.crash_reasons.borrow()
             );
             process_audit.check()?;
+            shared_audit.check()?;
+            ensure!(
+                shared_delegate.crash_reasons.borrow().as_slice()
+                    == ["Content process disconnected"]
+                    && shared.pending_evaluations_for_document_scope_probe() == 0,
+                "Shared view missed lifeline cleanup: {:?}",
+                shared_delegate.crash_reasons.borrow()
+            );
+            shared_delegate.reject(shared_ticket, shared_reply)?;
             ensure!(
                 process_view.pending_evaluations_for_document_scope_probe() == 0,
                 "Process failure retained callbacks"
@@ -1984,6 +2120,48 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                 process_recovered,
                 "recovered",
             )?;
+            drive_until(&servo, deadline, || {
+                shared_delegate
+                    .active
+                    .get()
+                    .is_some_and(|id| id != shared_document)
+            })?;
+            let shared_crash_document = identity(&servo, &shared, deadline)?;
+            text(
+                scoped(
+                    &servo,
+                    &shared,
+                    deadline,
+                    shared_crash_document,
+                    "'crash-document'",
+                )?,
+                shared_crash_document,
+                "crash-document",
+            )?;
+            load(&servo, &shared, deadline, &format!("/shared-after-{path}"))?;
+            let shared_recovered = identity(&servo, &shared, deadline)?;
+            ensure!(
+                shared_recovered != shared_document,
+                "Shared recovery revived old scope"
+            );
+            stale(scoped(
+                &servo,
+                &shared,
+                deadline,
+                shared_document,
+                "'obsolete'",
+            )?)?;
+            text(
+                scoped(
+                    &servo,
+                    &shared,
+                    deadline,
+                    shared_recovered,
+                    "'shared-recovered'",
+                )?,
+                shared_recovered,
+                "shared-recovered",
+            )?;
             ensure!(
                 failure_delegate.active.get() == Some(recovered),
                 "Process failure revoked an independent view"
@@ -1994,12 +2172,35 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                 "survivor",
             )?;
             ensure!(
-                process_audit.calls.get() == 8,
+                process_audit.calls.get() == 8 && shared_audit.calls.get() == 8,
                 "Process recovery repeated callbacks"
             );
             println!(
                 "S1 {name}: PASS ({how}, lifeline revocation, 8 callbacks released, recovery and independent survivor)"
             );
+            let shared_name = if kill {
+                "shared-process-kill"
+            } else {
+                "shared-process-failure"
+            };
+            println!(
+                "S1 {shared_name}: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)"
+            );
+            if let Some(audit) = closing_audit {
+                audit.check()?;
+                closing_delegate.reject(closing_ticket, closing_reply.take().unwrap())?;
+                ensure!(
+                    closing_delegate.closed.get()
+                        && !closing_delegate.crashed.get()
+                        && closing_delegate.active.get().is_none()
+                        && closing.pending_evaluations_for_document_scope_probe() == 0,
+                    "Closed sibling entered crash recovery after lifeline failure: {:?}",
+                    closing_delegate.crash_reasons.borrow()
+                );
+                println!(
+                    "S1 shared-process-close-kill-race: PASS (close precedes kill, 8 callbacks released, closed view stays revoked without crash recovery)"
+                );
+            }
         }
     }
 
@@ -2115,7 +2316,7 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     );
     println!(
         "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
-        if multiprocess { 40 } else { 38 }
+        if multiprocess { 44 } else { 38 }
     );
     Ok(())
 }

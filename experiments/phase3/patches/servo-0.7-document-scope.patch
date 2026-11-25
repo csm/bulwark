@@ -422,7 +422,7 @@
      }
  }
 
-@@ -733,8 +744,176 @@
+@@ -733,8 +744,191 @@
          script: T,
          callback: impl FnOnce(Result<JSValue, JavaScriptEvaluationError>) + 'static,
      ) {
@@ -497,6 +497,21 @@
 +    #[doc(hidden)]
 +    pub fn with_terminating_content_process_for_document_scope_probe<R>(&self, action: impl FnOnce() -> R) -> R {
 +        self.with_blocked_content_process_for_document_scope_probe(true, action, |_| {})
++    }
++
++    /// Experimental instrumentation: pause a child and flush host messages before resuming it.
++    #[doc(hidden)]
++    pub fn with_paused_content_process_for_document_scope_probe<R>(&self, action: impl FnOnce() -> R) -> R {
++        self.with_blocked_content_process_for_document_scope_probe(false, action, |_| {})
++    }
++
++    /// Experimental instrumentation: read the receiving child's OS process id at a script barrier.
++    /// Page JavaScript cannot supply this value. The child resumes without exiting.
++    #[doc(hidden)]
++    pub fn content_process_id_for_document_scope_probe(&self) -> u32 {
++        let pid = std::cell::Cell::new(0);
++        self.with_blocked_content_process_for_document_scope_probe(false, || {}, |id| pid.set(id));
++        pid.get()
 +    }
 +
 +    /// Experimental instrumentation: force-kill the content process with forwarded work pending.
@@ -914,10 +929,15 @@
      }
 
      #[servo_tracing::instrument(skip_all)]
-@@ -3058,6 +3217,17 @@
+@@ -3058,6 +3217,22 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
++        // A closed view can retain pipelines until script acknowledges their exit.
++        // Failure of a shared process must not send crash notifications to that view.
++        if !self.webviews.contains_key(&webview_id) {
++            return;
++        }
 +        if let Some(context) = self
 +            .browsing_contexts
 +            .get(&BrowsingContextId::from(webview_id))
@@ -932,7 +952,7 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3402,6 +3572,11 @@
+@@ -3402,6 +3577,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -944,7 +964,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +3646,7 @@
+@@ -3471,7 +3651,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -953,7 +973,7 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -5840,10 +6015,27 @@
+@@ -5840,10 +6020,27 @@
          }
      }
 

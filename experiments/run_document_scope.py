@@ -29,7 +29,11 @@ EXPECTED_MARKERS = {
     "release-delegate-panic", "delegate-panic-during-host-unwind", "shutdown-delegate-panics",
     "document-scope prototype",
 }
-MULTIPROCESS_MARKERS = {"content-process-failure", "content-process-kill"}
+MULTIPROCESS_MARKERS = {
+    "content-process-failure", "content-process-kill", "shared-process-close",
+    "shared-process-failure", "shared-process-kill",
+    "shared-process-close-kill-race",
+}
 # Backend loss stops the engine, so it runs in its own process after each scope case.
 BACKEND_MARKERS = {"backend-disconnection", "drop-after-backend-loss", "backend-loss prototype"}
 
@@ -67,7 +71,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--multiprocess", action="store_true",
-                        help="Run all S1 cases with IPC and the content-process failure cases")
+                        help="Run all S1 cases with IPC, shared-process teardown, exit, and kill")
     args = parser.parse_args()
     if not 1 <= args.repeat <= 20:
         parser.error("--repeat must be between 1 and 20")
@@ -103,6 +107,7 @@ def main():
         "scope": ("Experimental engine scope, host allocation gate, script-thread unwind, "
                   "final-handle release, explicit engine shutdown, queued execution cancellation, "
                   "interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, "
+                  "shared-process view revocation and ordinary sibling close, "
                   "callback and delegate unwind safety, and constellation loss in a separate engine. "
                   "Failures before document construction and remaining replacement audits remain open."),
         "cases": [],
