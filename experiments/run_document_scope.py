@@ -29,6 +29,7 @@ EXPECTED_MARKERS = {
     "release-delegate-panic", "delegate-panic-during-host-unwind", "shutdown-delegate-panics",
     "document-scope prototype",
 }
+MULTIPROCESS_MARKERS = {"content-process-failure", "content-process-kill"}
 
 
 def sha256(path):
@@ -92,14 +93,14 @@ def main():
         "multiprocess": args.multiprocess,
         "scope": ("Experimental engine scope, host allocation gate, script-thread unwind, "
                   "final-handle release, explicit engine shutdown, queued execution cancellation, "
-                  "interruption of running JavaScript, content-process failure in multiprocess mode, "
+                  "interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, "
                   "and callback and delegate unwind safety. "
                   "Backend disconnection, failures before document construction, "
                   "and remaining replacement audits remain open."),
         "cases": [],
     }
     scope_flags = ["--document-scope-multiprocess" if args.multiprocess else "--document-scope"]
-    expected_markers = EXPECTED_MARKERS | ({"content-process-failure"} if args.multiprocess else set())
+    expected_markers = EXPECTED_MARKERS | (MULTIPROCESS_MARKERS if args.multiprocess else set())
     cases = [(f"document-scope-{i + 1}", scope_flags)
              for i in range(args.repeat)]
     cases += [("servo-contracts", ["--phase3"]), ("e4-baseline", [])]

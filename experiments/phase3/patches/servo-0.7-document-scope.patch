@@ -351,7 +351,7 @@
      }
  }
 
-@@ -733,8 +744,151 @@
+@@ -733,8 +744,176 @@
          script: T,
          callback: impl FnOnce(Result<JSValue, JavaScriptEvaluationError>) + 'static,
      ) {
@@ -425,19 +425,44 @@
 +    /// Only the receiving child process exits; the host continues to drain lifecycle messages.
 +    #[doc(hidden)]
 +    pub fn with_terminating_content_process_for_document_scope_probe<R>(&self, action: impl FnOnce() -> R) -> R {
++        self.with_blocked_content_process_for_document_scope_probe(true, action, |_| {})
++    }
++
++    /// Experimental instrumentation: force-kill the content process with forwarded work pending.
++    /// The host sends SIGKILL while the child is blocked, so the child runs no exit path of its own.
++    #[doc(hidden)]
++    pub fn with_killed_content_process_for_document_scope_probe<R>(&self, action: impl FnOnce() -> R) -> R {
++        self.with_blocked_content_process_for_document_scope_probe(false, action, |pid| {
++            assert_ne!(pid, std::process::id(), "Kill probe requires a separate content process");
++            let status = std::process::Command::new("kill").args(["-KILL", &pid.to_string()]).status();
++            assert!(status.is_ok_and(|status| status.success()), "Could not kill content process {pid}");
++        })
++    }
++
++    fn with_blocked_content_process_for_document_scope_probe<R>(
++        &self,
++        exit_on_release: bool,
++        action: impl FnOnce() -> R,
++        terminate: impl FnOnce(u32),
++    ) -> R {
 +        let (entered_sender, entered) = servo_base::generic_channel::channel().unwrap();
 +        let (resume, resume_receiver) = servo_base::generic_channel::channel::<()>().unwrap();
 +        self.servo().constellation_proxy().send(
-+            EmbedderToConstellationMessage::ExitContentProcessForDocumentScopeProbe(self.id(), entered_sender, resume_receiver),
++            EmbedderToConstellationMessage::ExitContentProcessForDocumentScopeProbe(
++                self.id(), entered_sender, resume_receiver, exit_on_release,
++            ),
 +        );
-+        assert!(entered.try_recv_timeout(std::time::Duration::from_secs(5)).is_ok(), "Content exit gate was not entered");
-+        let _exit_on_drop = resume;
++        let Ok(pid) = entered.try_recv_timeout(std::time::Duration::from_secs(5)) else {
++            panic!("Content exit gate was not entered");
++        };
++        let _release_on_drop = resume;
 +        let result = action();
-+        // All preceding requests must reach the live, blocked child before it exits.
++        // All preceding requests must reach the live, blocked child before it terminates.
 +        // Otherwise a later send failure could mask a broken lifeline notification.
 +        let (ack, acknowledged) = servo_base::generic_channel::channel().unwrap();
 +        self.servo().constellation_proxy().send(EmbedderToConstellationMessage::FlushForDocumentScopeProbe(ack));
 +        assert!(acknowledged.try_recv_timeout(std::time::Duration::from_secs(5)).is_ok(), "Constellation did not flush pending work");
++        terminate(pid);
 +        result
 +    }
 +
@@ -609,14 +634,14 @@
 +            EmbedderToConstellationMessage::FlushForDocumentScopeProbe(ack) => {
 +                let _ = ack.send(());
 +            }
-+            EmbedderToConstellationMessage::ExitContentProcessForDocumentScopeProbe(webview_id, entered, resume) => {
++            EmbedderToConstellationMessage::ExitContentProcessForDocumentScopeProbe(webview_id, entered, resume, exit) => {
 +                assert!(opts::get().multiprocess, "Process exit probe requires multiprocess mode");
 +                if let Some(pipeline) = self
 +                    .browsing_contexts
 +                    .get(&BrowsingContextId::from(webview_id))
 +                    .and_then(|context| self.pipelines.get(&context.pipeline_id))
 +                {
-+                    let _ = pipeline.event_loop.send(ScriptThreadMessage::ExitProcessForDocumentScopeProbe(pipeline.id, entered, resume));
++                    let _ = pipeline.event_loop.send(ScriptThreadMessage::ExitProcessForDocumentScopeProbe(pipeline.id, entered, resume, exit));
 +                }
 +            }
 +            EmbedderToConstellationMessage::CrashScriptThreadForDocumentScopeProbe(webview_id) => {
@@ -1000,8 +1025,8 @@
 +    CrashForDocumentScopeProbe(WebViewId),
 +    /// Experimental failure injection into the actual active script thread.
 +    CrashScriptThreadForDocumentScopeProbe(WebViewId),
-+    /// Experimental process exit barrier. This never runs in single-process mode.
-+    ExitContentProcessForDocumentScopeProbe(WebViewId, GenericSender<()>, GenericReceiver<()>),
++    /// Experimental process exit or kill barrier. This never runs in single-process mode.
++    ExitContentProcessForDocumentScopeProbe(WebViewId, GenericSender<u32>, GenericReceiver<()>, bool),
 +    /// Acknowledge that preceding embedder messages reached the constellation.
 +    FlushForDocumentScopeProbe(GenericSender<()>),
 +    /// Experimental execution barrier for deterministic cancellation probes.
@@ -1422,7 +1447,7 @@
                      timer_scheduler: Default::default(),
                      js_runtime: Rc::new(runtime),
                      closed_pipelines: DomRefCell::new(FxHashSet::default()),
-@@ -1892,15 +2038,39 @@
+@@ -1892,15 +2038,42 @@
              },
              ScriptThreadMessage::SetScrollStates(pipeline_id, scroll_states) => {
                  self.handle_set_scroll_states(pipeline_id, scroll_states)
@@ -1432,12 +1457,15 @@
 +                let _ = entered.send(());
 +                let _ = resume.try_recv_timeout(Duration::from_secs(5));
 +            }
-+            ScriptThreadMessage::ExitProcessForDocumentScopeProbe(_, entered, resume) => {
++            ScriptThreadMessage::ExitProcessForDocumentScopeProbe(_, entered, resume, exit) => {
 +                assert!(opts::get().multiprocess, "Process exit probe requires multiprocess mode");
-+                let _ = entered.send(());
++                let _ = entered.send(std::process::id());
 +                let _ = resume.try_recv_timeout(Duration::from_secs(5));
 +                // No unwind, logger notification, or destructor can report this failure.
-+                std::process::exit(86);
++                // Kill mode resumes only if the host failed to kill this process.
++                if exit {
++                    std::process::exit(86);
++                }
 +            }
 +            ScriptThreadMessage::CrashForDocumentScopeProbe(_) => {
 +                panic!("S1 probe actual script-thread panic");
@@ -1465,7 +1493,7 @@
              ScriptThreadMessage::SendImageKeysBatch(pipeline_id, image_keys) => {
                  if let Some(window) = self.documents.borrow().find_window(pipeline_id) {
                      window
-@@ -3766,7 +3936,7 @@
+@@ -3766,7 +3939,7 @@
              .send((
                  webview_id,
                  incomplete.pipeline_id,
@@ -1474,7 +1502,7 @@
              ))
              .unwrap();
 
-@@ -4522,6 +4692,8 @@
+@@ -4522,6 +4695,8 @@
          webview_id: WebViewId,
          pipeline_id: PipelineId,
          evaluation_id: JavaScriptEvaluationId,
@@ -1483,7 +1511,7 @@
          script: String,
          cx: &mut js::context::JSContext,
      ) {
-@@ -4537,10 +4709,42 @@
+@@ -4537,10 +4712,42 @@
              return;
          };
 
@@ -1526,7 +1554,7 @@
          rooted!(&in(cx) let mut return_value = UndefinedValue());
          if let Err(err) = global_scope.evaluate_js_on_global(
              cx,
-@@ -4549,6 +4753,11 @@
+@@ -4549,6 +4756,11 @@
              None, // No known `introductionType` for JS code from embedder
              Some(return_value.handle_mut()),
          ) {
@@ -1538,7 +1566,7 @@
              _ = self.senders.pipeline_to_constellation_sender.send((
                  webview_id,
                  pipeline_id,
-@@ -4558,6 +4767,19 @@
+@@ -4558,6 +4770,19 @@
          };
 
          let result = jsval_to_webdriver(cx, global_scope, return_value.handle());
@@ -1600,8 +1628,8 @@
      ExitScriptThread,
 +    /// Experimental instrumentation: panic on the receiving script thread.
 +    CrashForDocumentScopeProbe(PipelineId),
-+    /// Experimental process exit after a host-controlled barrier.
-+    ExitProcessForDocumentScopeProbe(PipelineId, GenericSender<()>, GenericReceiver<()>),
++    /// Experimental barrier that reports the process id, then exits on release if requested.
++    ExitProcessForDocumentScopeProbe(PipelineId, GenericSender<u32>, GenericReceiver<()>, bool),
 +    /// Experimental execution barrier for deterministic cancellation probes.
 +    PauseForDocumentScopeProbe(PipelineId, GenericSender<()>, GenericReceiver<()>),
      /// Sends a DOM event.
@@ -1634,17 +1662,6 @@
 
          Ok(Self {
              script_chan,
-@@ -207,8 +207,8 @@
-         &self,
-         message: &BackgroundHangMonitorControlMsg,
-     ) {
--        if let Some(background_hang_monitor_sender) = &self.background_hang_monitor_sender &&
--            let Err(error) = background_hang_monitor_sender.send(message.clone())
-+        if let Some(background_hang_monitor_sender) = &self.background_hang_monitor_sender
-+            && let Err(error) = background_hang_monitor_sender.send(message.clone())
-         {
-             error!("Could not send message ({message:?}) to BHM: {error}");
-         }
 --- a/servo-constellation/process_manager.rs
 +++ b/servo-constellation/process_manager.rs
 @@ -8,6 +8,7 @@
@@ -1655,20 +1672,6 @@
 
  pub enum Process {
      Unsandboxed(Child),
-@@ -26,11 +27,11 @@
-         match self {
-             Self::Unsandboxed(child) => {
-                 let _ = child.wait();
--            },
-+            }
-             Self::Sandboxed(_pid) => {
-                 // TODO: use nix::waitpid() on supported platforms.
-                 warn!("wait() is not yet implemented for sandboxed processes.");
--            },
-+            }
-         }
-     }
- }
 @@ -38,7 +39,7 @@
  type ProcessReceiver = Receiver<Result<(), SendError>>;
 

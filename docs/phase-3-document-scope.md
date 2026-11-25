@@ -302,20 +302,30 @@ The child then calls `std::process::exit(86)` without an unwind, panic report, o
 The host sends no further work until the lifeline delivers the crash notification.
 The fixture requires that notification within five seconds and checks its exact recovery reason.
 
+A second fixture forces termination from outside the child.
+The barrier reports the child's process id, and the host checks that it differs from its own.
+After the same acknowledgment, the host runs `kill -KILL` on that id while the child is still blocked.
+In this mode the child does not exit on release, so only the signal can end it.
+The fixture then applies every assertion of the exit fixture to a new view and content process.
+
 The fixture requires host revocation before all eight terminal callbacks and release of their captures.
 It rejects the retained reply before host allocation and requires an empty pending table.
 It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
 An independent view keeps its scope and accepts evaluation.
 
 All thirty-eight shared cases also run in multiprocess mode, including queued cancellation and active interruption.
-The process-exit fixture adds a thirty-ninth case in that mode.
-The negative control disables only lifeline recovery after process reaping.
+The exit and kill fixtures add two cases in that mode, for forty cases in total.
+The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
-Both existing Servo controls pass with that negative control.
+The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
+The child then resumes and answers all eight evaluations normally, and the fixture fails at the crash deadline.
+Recovery in the passing kill case therefore depends on the signal.
+Both existing Servo controls pass with each negative control.
 
 The runner uses an independent process group for each case.
 It stops the group after each case, including a deadline, so child processes cannot survive a failed probe.
 Six portable runner tests check mode admission, marker rejection, and child cleanup after a deadline.
+The marker test rejects a multiprocess run that omits either process case.
 Single-process cases retain a 35-second deadline. Multiprocess scope cases use a 90-second deadline for child startup and recovery.
 
 ## Regression scope
@@ -356,6 +366,7 @@ Fixture markers establish test order, without authentication claims.
 | Injected crash | The constellation's panic handler revokes the document before the crash notification. The host rejects the retained reply. |
 | Script-thread failure | An actual Rust unwind revokes scope and releases eight pending callbacks exactly once. A new document accepts evaluation after recovery. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
+| Content-process kill (multiprocess only) | The host sends SIGKILL to a blocked child. The same lifeline revocation, callback release, recovery, and survivor assertions apply. |
 | Final handle release | Release revokes host scope and mixed callbacks synchronously. A callback can submit work to a surviving view. |
 | Release before activation | Release cleans eight callbacks before the host receives a document identity. |
 | Engine shutdown | Shutdown releases sixteen ordinary callbacks, breaks a retained-view cycle, rejects new evaluation, and completes the engine shutdown. |
@@ -369,7 +380,7 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats thirty-eight cases in single-process mode or thirty-nine cases in multiprocess mode.
+The runner repeats thirty-eight cases in single-process mode or forty cases in multiprocess mode.
 Both modes retain the existing Servo contract and E4 baseline results.
 The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before and during execution.
 The injected crash calls the existing constellation panic handler through an experimental probe method.
@@ -377,8 +388,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [process evidence](../experiments/phase3/document-process-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
-It also records the previous thirty-eight-case checkpoint and both Servo controls before development.
+The [kill evidence](../experiments/phase3/document-kill-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
+It also records one run of the previous checkpoint in each mode, with both Servo controls, before development.
+The [process evidence](../experiments/phase3/document-process-evidence-2026-11-24.json) preserves the thirty-nine-case multiprocess checkpoint.
 The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) preserves that checkpoint and its earlier cancellation baseline.
 The [cancellation evidence](../experiments/phase3/document-cancellation-evidence-2026-11-24.json) preserves the thirty-four-case checkpoint.
 The [delegate evidence](../experiments/phase3/document-delegate-evidence-2026-11-24.json) preserves the thirty-one-case checkpoint.
@@ -390,7 +402,7 @@ The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
 All thirty-eight shared cases passed in three single-process runs on macOS arm64 with software rendering.
-All thirty-nine cases passed in three multiprocess runs.
+All forty cases passed in three multiprocess runs.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
 Python syntax checks and six runner tests also passed.
@@ -431,9 +443,11 @@ No remote CI, physical input, Linux, or release latency result applies to this c
 ## Remaining requirements
 
 This prototype does not close S1 or permit a restricted DOM API.
-Unexpected content-process exit, queued cancellation, and active interruption now have unsandboxed multiprocess evidence.
+Unexpected content-process exit, forced kill, queued cancellation, and active interruption now have unsandboxed multiprocess evidence.
 Their contracts still need upstream review.
-Forced termination, shared-process views, and normal teardown races need dedicated process fixtures.
+The kill fixture covers only a child blocked at a barrier.
+Kills during JavaScript execution, IPC writes, or document construction remain untested.
+Shared-process views and normal teardown races need dedicated process fixtures.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
 Callback cleanup still needs checks for backend disconnection and failures before document construction.
 Upstream review must settle delegate and callback panic propagation, precedence, and suppression during an existing unwind.
@@ -451,14 +465,14 @@ Evaluator authority, redirect/rewrite mechanisms, and owner scope decisions also
 Prepare copies of the six published Servo packages and an isolated Bulwark workspace:
 
 ```sh
-python3 experiments/prepare_document_scope.py --out target/phase3-document-process
+python3 experiments/prepare_document_scope.py --out target/phase3-document-kill
 ```
 
 Build the candidate:
 
 ```sh
 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_TARGET_DIR="$PWD/target" cargo build --offline --locked \
-  --manifest-path target/phase3-document-process/candidate/Cargo.toml \
+  --manifest-path target/phase3-document-kill/candidate/Cargo.toml \
   -p bulwark-experiment-e4 --features document-scope-multiprocess
 ```
 
@@ -467,8 +481,8 @@ Run the candidate with independent 35-second process deadlines:
 ```sh
 python3 experiments/run_document_scope.py \
   --binary target/debug/bulwark-experiment-e4 \
-  --preparation target/phase3-document-process \
-  --output target/phase3-document-process-single-evidence
+  --preparation target/phase3-document-kill \
+  --output target/phase3-document-kill-single-evidence
 ```
 
 Run the multiprocess cases with independent 90-second process deadlines:
@@ -476,8 +490,8 @@ Run the multiprocess cases with independent 90-second process deadlines:
 ```sh
 python3 experiments/run_document_scope.py \
   --binary target/debug/bulwark-experiment-e4 \
-  --preparation target/phase3-document-process \
-  --output target/phase3-document-process-multiprocess-evidence --multiprocess
+  --preparation target/phase3-document-kill \
+  --output target/phase3-document-kill-multiprocess-evidence --multiprocess
 python3 -m unittest discover -s experiments -p test_document_scope_runner.py -v
 ```
 

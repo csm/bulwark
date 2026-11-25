@@ -190,7 +190,7 @@ P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depend
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
 The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and thirty-eight shared regression cases.
-Multiprocess mode adds a thirty-ninth case for unexpected content-process exit.
+Multiprocess mode adds two cases, for unexpected content-process exit and a forced kill.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.
 History reactivation receives a fresh incarnation before script resumes.
@@ -213,9 +213,9 @@ Interruption cannot undo earlier effects or revoke promise reactions and timers 
 Both process modes pass queued cancellation and active interruption.
 The process audit found that child reaping alone left host scope and callbacks live until another send failed.
 The experimental patch now connects the process lifeline to scope revocation and callback cleanup.
-Its exit fixture checks eight pending callbacks, retained replies, recovery, and an independent surviving view.
+Its exit and kill fixtures check eight pending callbacks, retained replies, recovery, and an independent surviving view.
 Backend disconnection, failures before document construction, and remaining replacement paths stay open.
-Shared-process views, forced termination, and normal teardown races still need dedicated evidence.
+Shared-process views, kills outside a barrier, and normal teardown races still need dedicated evidence.
 The reset case also proves that S2 cannot bind the current incarnation through pipeline equality alone.
 Product pins and installed behavior remain unchanged.
 

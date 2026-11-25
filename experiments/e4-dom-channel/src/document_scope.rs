@@ -1868,118 +1868,134 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     );
 
     if multiprocess {
-        let process_delegate = Rc::new(Delegate::default());
-        let process_view = WebViewBuilder::new(&servo, context.clone())
-            .url(url::Url::parse(&format!("{ORIGIN}/process-failure"))?)
-            .delegate(process_delegate.clone())
-            .build();
-        drive_until(&servo, deadline, || process_delegate.loads.get() > 0)?;
-        let process_document = identity(&servo, &process_view, deadline)?;
-        let process_ticket = process_delegate.ticket(process_document)?;
-        let process_reply = scoped(
-            &servo,
-            &process_view,
-            deadline,
-            process_document,
-            "'before-process-exit'",
-        )?;
-        ensure!(process_reply.is_ok(), "Process failure control failed");
-        let process_audit =
-            process_view.with_terminating_content_process_for_document_scope_probe(|| {
+        for (kill, name, path, how) in [
+            (
+                false,
+                "content-process-failure",
+                "process-failure",
+                "child exit",
+            ),
+            (true, "content-process-kill", "process-kill", "host SIGKILL"),
+        ] {
+            let process_delegate = Rc::new(Delegate::default());
+            let process_view = WebViewBuilder::new(&servo, context.clone())
+                .url(url::Url::parse(&format!("{ORIGIN}/{path}"))?)
+                .delegate(process_delegate.clone())
+                .build();
+            drive_until(&servo, deadline, || process_delegate.loads.get() > 0)?;
+            let process_document = identity(&servo, &process_view, deadline)?;
+            let process_ticket = process_delegate.ticket(process_document)?;
+            let process_reply = scoped(
+                &servo,
+                &process_view,
+                deadline,
+                process_document,
+                "'before-process-exit'",
+            )?;
+            ensure!(process_reply.is_ok(), "Process failure control failed");
+            let queue = || {
                 CleanupAudit::queue(
                     &process_view,
                     Some(process_document),
                     &process_delegate,
                     true,
                 )
-            });
-        ensure!(
-            process_view.pending_evaluations_for_document_scope_probe() == 8,
-            "Process failure fixture did not retain eight callbacks"
-        );
-        // Do not send work to the dead process. Only its lifeline can trigger recovery.
-        drive_until(
-            &servo,
-            deadline.min(Instant::now() + Duration::from_secs(5)),
-            || process_delegate.crashed.get(),
-        )
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "Content lifeline recovery failed: {error}; active={:?}, pending={}, calls={}",
-                process_delegate.active.get(),
-                process_view.pending_evaluations_for_document_scope_probe(),
-                process_audit.calls.get()
+            };
+            // Kill mode leaves the child no exit path of its own. The host sends SIGKILL.
+            let process_audit = if kill {
+                process_view.with_killed_content_process_for_document_scope_probe(queue)
+            } else {
+                process_view.with_terminating_content_process_for_document_scope_probe(queue)
+            };
+            ensure!(
+                process_view.pending_evaluations_for_document_scope_probe() == 8,
+                "Process failure fixture did not retain eight callbacks"
+            );
+            // Do not send work to the dead process. Only its lifeline can trigger recovery.
+            drive_until(
+                &servo,
+                deadline.min(Instant::now() + Duration::from_secs(5)),
+                || process_delegate.crashed.get(),
             )
-        })?;
-        ensure!(
-            process_delegate.crash_reasons.borrow().as_slice() == ["Content process disconnected"],
-            "Process failure did not use lifeline recovery: {:?}",
-            process_delegate.crash_reasons.borrow()
-        );
-        process_audit.check()?;
-        ensure!(
-            process_view.pending_evaluations_for_document_scope_probe() == 0,
-            "Process failure retained callbacks"
-        );
-        process_delegate.reject(process_ticket, process_reply)?;
-        drive_until(&servo, deadline, || {
-            process_delegate
-                .active
-                .get()
-                .is_some_and(|id| id != process_document)
-        })?;
-        let crash_document = identity(&servo, &process_view, deadline)?;
-        text(
-            scoped(
-                &servo,
-                &process_view,
-                deadline,
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "Content lifeline recovery failed: {error}; active={:?}, pending={}, calls={}",
+                    process_delegate.active.get(),
+                    process_view.pending_evaluations_for_document_scope_probe(),
+                    process_audit.calls.get()
+                )
+            })?;
+            ensure!(
+                process_delegate.crash_reasons.borrow().as_slice()
+                    == ["Content process disconnected"],
+                "Process failure did not use lifeline recovery: {:?}",
+                process_delegate.crash_reasons.borrow()
+            );
+            process_audit.check()?;
+            ensure!(
+                process_view.pending_evaluations_for_document_scope_probe() == 0,
+                "Process failure retained callbacks"
+            );
+            process_delegate.reject(process_ticket, process_reply)?;
+            drive_until(&servo, deadline, || {
+                process_delegate
+                    .active
+                    .get()
+                    .is_some_and(|id| id != process_document)
+            })?;
+            let crash_document = identity(&servo, &process_view, deadline)?;
+            text(
+                scoped(
+                    &servo,
+                    &process_view,
+                    deadline,
+                    crash_document,
+                    "'crash-document'",
+                )?,
                 crash_document,
-                "'crash-document'",
-            )?,
-            crash_document,
-            "crash-document",
-        )?;
-        load(&servo, &process_view, deadline, "/after-process-failure")?;
-        let process_recovered = identity(&servo, &process_view, deadline)?;
-        ensure!(
-            process_recovered != process_document,
-            "Process recovery revived old scope"
-        );
-        stale(scoped(
-            &servo,
-            &process_view,
-            deadline,
-            process_document,
-            "'obsolete'",
-        )?)?;
-        text(
-            scoped(
+                "crash-document",
+            )?;
+            load(&servo, &process_view, deadline, &format!("/after-{path}"))?;
+            let process_recovered = identity(&servo, &process_view, deadline)?;
+            ensure!(
+                process_recovered != process_document,
+                "Process recovery revived old scope"
+            );
+            stale(scoped(
                 &servo,
                 &process_view,
                 deadline,
+                process_document,
+                "'obsolete'",
+            )?)?;
+            text(
+                scoped(
+                    &servo,
+                    &process_view,
+                    deadline,
+                    process_recovered,
+                    "'recovered'",
+                )?,
                 process_recovered,
-                "'recovered'",
-            )?,
-            process_recovered,
-            "recovered",
-        )?;
-        ensure!(
-            failure_delegate.active.get() == Some(recovered),
-            "Process failure revoked an independent view"
-        );
-        text(
-            scoped(&servo, &failure, deadline, recovered, "'survivor'")?,
-            recovered,
-            "survivor",
-        )?;
-        ensure!(
-            process_audit.calls.get() == 8,
-            "Process recovery repeated callbacks"
-        );
-        println!(
-            "S1 content-process-failure: PASS (lifeline revocation, 8 callbacks released, recovery and independent survivor)"
-        );
+                "recovered",
+            )?;
+            ensure!(
+                failure_delegate.active.get() == Some(recovered),
+                "Process failure revoked an independent view"
+            );
+            text(
+                scoped(&servo, &failure, deadline, recovered, "'survivor'")?,
+                recovered,
+                "survivor",
+            )?;
+            ensure!(
+                process_audit.calls.get() == 8,
+                "Process recovery repeated callbacks"
+            );
+            println!(
+                "S1 {name}: PASS ({how}, lifeline revocation, 8 callbacks released, recovery and independent survivor)"
+            );
+        }
     }
 
     let shutdown_ticket = failure_delegate.ticket(recovered)?;
@@ -2094,7 +2110,7 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     );
     println!(
         "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
-        if multiprocess { 39 } else { 38 }
+        if multiprocess { 40 } else { 38 }
     );
     Ok(())
 }
