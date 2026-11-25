@@ -192,7 +192,55 @@
 
  use std::cell::{Cell, Ref, RefCell, RefMut};
  use std::cmp::max;
-@@ -406,6 +410,33 @@
+@@ -170,6 +174,8 @@
+     FromNet(NetToEmbedderMsg),
+     FromConstellation(ConstellationToEmbedderMsg),
+     FromUnknown(EmbedderMsg),
++    /// The constellation dropped its sender after the embedder drained every message.
++    ConstellationDisconnected,
+ }
+
+ /// Holds a prebuilt `crossbeam_channel::Select` over the crossbeam
+@@ -226,7 +232,11 @@
+             let message = operation.recv(self.receivers.1).ok()?;
+             Some(Message::FromNet(message))
+         } else if index == 2 {
+-            let message = operation.recv(self.receivers.2).ok()?;
++            let Ok(message) = operation.recv(self.receivers.2) else {
++                // A disconnected receiver is always ready. Report it once per spin.
++                self.select.remove(2);
++                return Some(Message::ConstellationDisconnected);
++            };
+             Some(Message::FromConstellation(message))
+         } else {
+             log::error!("No select operation registered for {index:?}");
+@@ -305,6 +315,7 @@
+             &self.net_embedder_receiver,
+             &self.constellation_embedder_receiver,
+         );
++        let mut constellation_disconnected = false;
+         // Only handle incoming embedder messages if `Paint` hasn't already started shutting down.
+         while let Some(message) = selector.try_recv_one_message() {
+             match message {
+@@ -313,6 +324,7 @@
+                 Message::FromConstellation(message) => {
+                     self.handle_constellation_embedder_message(message)
+                 },
++                Message::ConstellationDisconnected => constellation_disconnected = true,
+             }
+             if self.shutdown_state.get() == ShutdownState::FinishedShuttingDown {
+                 break;
+@@ -339,7 +351,8 @@
+             }
+         }
+
+-        if self.constellation_proxy.disconnected() {
++        if constellation_disconnected || self.constellation_proxy.disconnected() {
++            self.handle_backend_lost();
+             self.delegate
+                 .borrow()
+                 .notify_error(ServoError::LostConnectionWithBackend);
+@@ -406,6 +419,48 @@
              .retain(|_webview_id, webview| webview.strong_count() > 0);
      }
 
@@ -223,10 +271,25 @@
 +        crate::javascript_evaluator::deliver_revoked(first_panic, callbacks);
 +    }
 +
++    /// A lost constellation can neither reply nor complete shutdown. Revoke every view and
++    /// pending callback, then finish shutdown locally so that `Drop` cannot wait forever.
++    fn handle_backend_lost(&self) {
++        if self.shutdown_state.get() == ShutdownState::FinishedShuttingDown {
++            return;
++        }
++        let revocation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++            self.start_shutting_down()
++        }));
++        self.finish_shutting_down();
++        if let Err(payload) = revocation {
++            std::panic::resume_unwind(payload);
++        }
++    }
++
      fn finish_shutting_down(&self) {
          debug!("Servo received message that Constellation shutdown is complete");
          self.shutdown_state.set(ShutdownState::FinishedShuttingDown);
-@@ -811,15 +842,38 @@
+@@ -811,15 +866,38 @@
                      webview.request_create_new(response_sender);
                  }
              },
@@ -267,7 +330,7 @@
              },
              ConstellationToEmbedderMsg::InputEventsHandled(webview_id, event_outcomes) => {
                  let webview = self.get_webview_handle(webview_id);
-@@ -878,9 +932,7 @@
+@@ -878,9 +956,7 @@
 
  impl Drop for ServoInner {
      fn drop(&mut self) {
@@ -278,7 +341,7 @@
          while self.spin_event_loop() {
              std::thread::sleep(Duration::from_micros(500));
          }
-@@ -1078,6 +1130,37 @@
+@@ -1078,6 +1154,45 @@
          self.0.spin_event_loop();
      }
 
@@ -287,6 +350,14 @@
 +    #[doc(hidden)]
 +    pub fn start_shutdown_for_document_scope_probe(&self) {
 +        self.0.start_shutting_down();
++    }
++
++    /// Experimental instrumentation: unwind the constellation thread with views and callbacks live.
++    #[doc(hidden)]
++    pub fn crash_constellation_for_document_scope_probe(&self) {
++        self.0
++            .constellation_proxy
++            .send(EmbedderToConstellationMessage::CrashConstellationForDocumentScopeProbe);
 +    }
 +
 +    #[doc(hidden)]
@@ -607,7 +678,7 @@
              #[cfg(not(feature = "multiprocess"))]
              Request::RemoveProcess(_) => {},
          }
-@@ -1342,6 +1349,57 @@
+@@ -1342,6 +1349,61 @@
                  self.handle_new_top_level_browsing_context(url, new_webview_details);
              },
              // Close a top level browsing context.
@@ -655,6 +726,10 @@
 +                        .send(ScriptThreadMessage::CrashForDocumentScopeProbe(pipeline.id));
 +                }
 +            }
++            EmbedderToConstellationMessage::CrashConstellationForDocumentScopeProbe => {
++                // No constellation code reports this unwind. The embedder only observes disconnection.
++                panic!("S1 probe constellation panic");
++            }
 +            EmbedderToConstellationMessage::CrashForDocumentScopeProbe(webview_id) => {
 +                self.handle_panic_in_webview(
 +                    webview_id,
@@ -665,7 +740,7 @@
              EmbedderToConstellationMessage::CloseWebView(webview_id) => {
                  self.handle_close_top_level_browsing_context(webview_id);
              },
-@@ -1408,10 +1466,18 @@
+@@ -1408,10 +1470,18 @@
              EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
@@ -686,7 +761,7 @@
              EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
                  self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
              },
-@@ -1576,6 +1642,8 @@
+@@ -1576,6 +1646,8 @@
          &mut self,
          webview_id: WebViewId,
          evaluation_id: JavaScriptEvaluationId,
@@ -695,7 +770,7 @@
          script: String,
      ) {
          let browsing_context_id = BrowsingContextId::from(webview_id);
-@@ -1591,12 +1659,22 @@
+@@ -1591,12 +1663,22 @@
              return;
          };
 
@@ -718,7 +793,7 @@
                  script,
              ))
              .is_err()
-@@ -1795,8 +1873,37 @@
+@@ -1795,8 +1877,37 @@
                  self.handle_joint_session_history_length(webview_id, response_sender);
              },
              // Notification that the new document is ready to become active
@@ -757,7 +832,7 @@
              },
              // Update pipeline url after redirections
              ScriptToConstellationMessage::SetFinalUrl(final_url) => {
-@@ -2025,6 +2132,20 @@
+@@ -2025,6 +2136,20 @@
                      .send(mem::ProfilerMsg::Report(sender));
              },
              ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
@@ -778,7 +853,7 @@
                  self.handle_finish_javascript_evaluation(evaluation_id, result)
              },
              ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
-@@ -2569,7 +2690,7 @@
+@@ -2569,7 +2694,7 @@
 
                      if let Ok(process) = content.spawn_multiprocess() {
                          let crossbeam_receiver = receiver.route_preserving_errors();
@@ -787,7 +862,7 @@
                      } else {
                          return warn!("Failed to spawn process for SW manager.");
                      }
-@@ -2968,10 +3089,20 @@
+@@ -2968,10 +3093,20 @@
      fn handle_pipeline_exited(&mut self, pipeline_id: PipelineId, exit_source: PipelineExitSource) {
          debug!("{}: Exited", pipeline_id);
          self.remove_worker_animation_frame_providers_for_pipeline(pipeline_id);
@@ -808,7 +883,7 @@
 
          // Clean up any registered interests for this pipeline.
          self.pipeline_interests.retain(|_, set| {
-@@ -2987,6 +3118,30 @@
+@@ -2987,6 +3122,30 @@
              pipeline.id,
              exit_source,
          ));
@@ -839,7 +914,7 @@
      }
 
      #[servo_tracing::instrument(skip_all)]
-@@ -3058,6 +3213,17 @@
+@@ -3058,6 +3217,17 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
@@ -857,7 +932,7 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3402,6 +3568,11 @@
+@@ -3402,6 +3572,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -869,7 +944,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +3642,7 @@
+@@ -3471,7 +3646,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -878,7 +953,7 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -5840,10 +6011,27 @@
+@@ -5840,10 +6015,27 @@
          }
      }
 
@@ -933,7 +1008,7 @@
      /// Whether or not to allow a pipeline to load a url.
 --- a/servo-constellation/tracing.rs
 +++ b/servo-constellation/tracing.rs
-@@ -61,6 +61,15 @@
+@@ -61,6 +61,18 @@
                  Self::LogEntry(..) => target!("LogEntry"),
                  Self::NewWebView(..) => target!("NewWebView"),
                  Self::CloseWebView(..) => target!("CloseWebView"),
@@ -941,6 +1016,9 @@
 +                    target!("CrashScriptThreadForDocumentScopeProbe")
 +                }
 +                Self::CrashForDocumentScopeProbe(..) => target!("CrashForDocumentScopeProbe"),
++                Self::CrashConstellationForDocumentScopeProbe => {
++                    target!("CrashConstellationForDocumentScopeProbe")
++                }
 +                Self::ExitContentProcessForDocumentScopeProbe(..) => target!("ExitContentProcessForDocumentScopeProbe"),
 +                Self::FlushForDocumentScopeProbe(..) => target!("FlushForDocumentScopeProbe"),
 +                Self::PauseScriptForDocumentScopeProbe(..) => {
@@ -949,7 +1027,7 @@
                  Self::SetWebViewHasSystemFocus(..) => target!("SetWebViewHasSystemFocus"),
                  Self::ForwardInputEvent(_webview_id, event, ..) => event.log_target(),
                  Self::RefreshCursor(..) => target!("RefreshCursor"),
-@@ -181,7 +190,8 @@
+@@ -181,7 +193,8 @@
                  Self::ScriptLoadedURLInIFrame(..) => target!("ScriptLoadedURLInIFrame"),
                  Self::ScriptNewIFrame(..) => target!("ScriptNewIFrame"),
                  Self::CreateAuxiliaryWebView(..) => target!("ScriptNewAuxiliary"),
@@ -1017,7 +1095,7 @@
  use servo_base::id::{LCPCandidateID, MessagePortId, PipelineId, ScriptEventLoopId, WebViewId};
  use servo_config::prefs::PrefValue;
  use servo_url::{ImmutableOrigin, ServoUrl};
-@@ -72,6 +72,16 @@
+@@ -72,6 +72,18 @@
      NewWebView(ServoUrl, NewWebViewDetails),
      /// Close a top level browsing context.
      CloseWebView(WebViewId),
@@ -1025,6 +1103,8 @@
 +    CrashForDocumentScopeProbe(WebViewId),
 +    /// Experimental failure injection into the actual active script thread.
 +    CrashScriptThreadForDocumentScopeProbe(WebViewId),
++    /// Experimental failure injection that unwinds the constellation thread itself.
++    CrashConstellationForDocumentScopeProbe,
 +    /// Experimental process exit or kill barrier. This never runs in single-process mode.
 +    ExitContentProcessForDocumentScopeProbe(WebViewId, GenericSender<u32>, GenericReceiver<()>, bool),
 +    /// Acknowledge that preceding embedder messages reached the constellation.
@@ -1034,7 +1114,7 @@
      /// Set whether a WebView has system focus. This corresponds to the [HTML
      /// specification's] concept of "system focus" and is distinct from the browsing
      /// context or element that has focus within the WebView.
-@@ -97,7 +107,13 @@
+@@ -97,7 +109,13 @@
      PaintMetric(PipelineId, PaintMetricEvent),
      /// Evaluate a JavaScript string in the context of a `WebView`. When execution is complete or an
      /// error is encountered, a correpsonding message will be sent to the embedding layer.

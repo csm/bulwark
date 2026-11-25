@@ -30,10 +30,19 @@ EXPECTED_MARKERS = {
     "document-scope prototype",
 }
 MULTIPROCESS_MARKERS = {"content-process-failure", "content-process-kill"}
+# Backend loss stops the engine, so it runs in its own process after each scope case.
+BACKEND_MARKERS = {"backend-disconnection", "drop-after-backend-loss", "backend-loss prototype"}
 
 
 def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def assertions_complete(markers, expected, summary):
+    return (len(markers) == len(expected)
+            and {line.removeprefix("S1 ").split(": PASS", 1)[0] for line in markers} == expected
+            and all(": PASS" in line for line in markers)
+            and markers[-1].startswith(f"S1 {summary}: PASS"))
 
 
 def run_case(command, log, timeout):
@@ -58,7 +67,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--multiprocess", action="store_true",
-                        help="Run all S1 cases with IPC and the content-process failure case")
+                        help="Run all S1 cases with IPC and the content-process failure cases")
     args = parser.parse_args()
     if not 1 <= args.repeat <= 20:
         parser.error("--repeat must be between 1 and 20")
@@ -94,40 +103,43 @@ def main():
         "scope": ("Experimental engine scope, host allocation gate, script-thread unwind, "
                   "final-handle release, explicit engine shutdown, queued execution cancellation, "
                   "interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, "
-                  "and callback and delegate unwind safety. "
-                  "Backend disconnection, failures before document construction, "
-                  "and remaining replacement audits remain open."),
+                  "callback and delegate unwind safety, and constellation loss in a separate engine. "
+                  "Failures before document construction and remaining replacement audits remain open."),
         "cases": [],
     }
-    scope_flags = ["--document-scope-multiprocess" if args.multiprocess else "--document-scope"]
-    expected_markers = EXPECTED_MARKERS | (MULTIPROCESS_MARKERS if args.multiprocess else set())
-    cases = [(f"document-scope-{i + 1}", scope_flags)
-             for i in range(args.repeat)]
+    suffix = "-multiprocess" if args.multiprocess else ""
+    # Each S1 mode must print exactly its own markers, ending with its summary marker.
+    s1_modes = {
+        f"--document-scope{suffix}": (
+            EXPECTED_MARKERS | (MULTIPROCESS_MARKERS if args.multiprocess else set()),
+            "document-scope prototype"),
+        f"--document-scope-backend{suffix}": (BACKEND_MARKERS, "backend-loss prototype"),
+    }
+    cases = []
+    for i in range(args.repeat):
+        cases += [(f"document-scope-{i + 1}", [f"--document-scope{suffix}"]),
+                  (f"backend-loss-{i + 1}", [f"--document-scope-backend{suffix}"])]
     cases += [("servo-contracts", ["--phase3"]), ("e4-baseline", [])]
     for name, flags in cases:
         started = time.monotonic()
         command = [str(binary), *flags]
         log_path = args.output / f"{name}.log"
+        mode = s1_modes.get(flags[0]) if flags else None
         with log_path.open("w") as log:
             status = run_case(command, log, timeout=(
-                90 if args.multiprocess and flags == scope_flags else 35))
+                90 if args.multiprocess and mode else 35))
         log = log_path.read_text(errors="replace")
         markers = [line for line in log.splitlines() if line.startswith("S1 ")]
         # An unpatched E4 binary must not pass by silently running its baseline path.
-        assertions_complete = flags != scope_flags or (
-            len(markers) == len(expected_markers)
-            and {line.removeprefix("S1 ").split(": PASS", 1)[0] for line in markers}
-            == expected_markers
-            and all(": PASS" in line for line in markers)
-            and markers[-1].startswith("S1 document-scope prototype: PASS"))
+        complete = mode is None or assertions_complete(markers, *mode)
         report["cases"].append({
             "name": name, "command": command, "status": status,
             "elapsed_seconds": time.monotonic() - started,
-            "assertions_complete": assertions_complete, "markers": markers,
+            "assertions_complete": complete, "markers": markers,
             "log_sha256": sha256(log_path),
         })
         (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(f"{name}: {status}, assertions_complete={assertions_complete}", flush=True)
+        print(f"{name}: {status}, assertions_complete={complete}", flush=True)
     if any(case["status"] != 0 or not case["assertions_complete"] for case in report["cases"]):
         raise SystemExit(1)
 

@@ -11,14 +11,17 @@ import run_document_scope as runner
 
 
 class DocumentScopeRunnerTests(unittest.TestCase):
-    def run_markers(self, multiprocess, markers, expected_flag):
+    def run_markers(self, multiprocess, markers, expected_flag, backend=None):
+        suffix = "-multiprocess" if multiprocess else ""
+        if backend is None:
+            backend = self.backend_markers()
+        outputs = {expected_flag: markers, f"--document-scope-backend{suffix}": backend}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             binary = root / "probe"
             binary.write_text(
                 f"#!{sys.executable}\nimport sys\n"
-                f"if sys.argv[1:] == [{expected_flag!r}]:\n"
-                f"    print({chr(10).join(markers)!r})\n"
+                f"print(chr(10).join({outputs!r}.get(sys.argv[1] if sys.argv[1:] else '', [])))\n"
             )
             binary.chmod(0o755)
             probe = "experiments/e4-dom-channel/src/main.rs"
@@ -47,6 +50,12 @@ class DocumentScopeRunnerTests(unittest.TestCase):
         return [f"S1 {name}: PASS" for name in sorted(names)] + [
             "S1 document-scope prototype: PASS"]
 
+    @staticmethod
+    def backend_markers():
+        return [f"S1 {name}: PASS" for name in sorted(
+            runner.BACKEND_MARKERS - {"backend-loss prototype"})] + [
+            "S1 backend-loss prototype: PASS"]
+
     def test_single_process_mode(self):
         status, report = self.run_markers(False, self.markers(), "--document-scope")
         self.assertEqual(status, 0)
@@ -57,6 +66,25 @@ class DocumentScopeRunnerTests(unittest.TestCase):
             True, self.markers(True), "--document-scope-multiprocess")
         self.assertEqual(status, 0)
         self.assertTrue(report["multiprocess"])
+        self.assertEqual(report["cases"][1]["command"][1:], ["--document-scope-backend-multiprocess"])
+
+    def test_backend_loss_requires_each_marker_and_summary(self):
+        complete = self.backend_markers()
+        for markers in (complete[:-1], complete[1:], complete[1:] + complete[:1], []):
+            for multiprocess in (False, True):
+                with self.subTest(markers=markers, multiprocess=multiprocess):
+                    flag = "--document-scope-multiprocess" if multiprocess else "--document-scope"
+                    status, report = self.run_markers(
+                        multiprocess, self.markers(multiprocess), flag, backend=markers)
+                    self.assertEqual(status, 1)
+                    self.assertTrue(report["cases"][0]["assertions_complete"])
+                    self.assertFalse(report["cases"][1]["assertions_complete"])
+
+    def test_backend_markers_cannot_satisfy_scope_case(self):
+        status, report = self.run_markers(False, self.backend_markers(), "--document-scope")
+        self.assertEqual(status, 1)
+        self.assertFalse(report["cases"][0]["assertions_complete"])
+        self.assertTrue(report["cases"][1]["assertions_complete"])
 
     def test_multiprocess_requires_each_process_failure_mode(self):
         modes = sorted(runner.MULTIPROCESS_MARKERS)

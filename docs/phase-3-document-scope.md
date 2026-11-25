@@ -118,7 +118,8 @@ The explicit experimental shutdown entry point handles this cycle.
 Destructor cleanup alone cannot handle a destructor that ownership prevents from starting.
 This entry point is probe instrumentation, not an installed product API.
 The prototype closes execution permits for queued and running embedder evaluations.
-Unresponsive page tasks outside embedder evaluation and backend disconnection remain outside these cleanup checks.
+Unresponsive page tasks outside embedder evaluation remain outside these cleanup checks.
+The [backend loss audit](#backend-loss-audit) covers constellation loss in a separate engine.
 
 ## Callback unwind audit
 
@@ -324,9 +325,61 @@ Both existing Servo controls pass with each negative control.
 
 The runner uses an independent process group for each case.
 It stops the group after each case, including a deadline, so child processes cannot survive a failed probe.
-Six portable runner tests check mode admission, marker rejection, and child cleanup after a deadline.
+Eight portable runner tests check mode admission, marker rejection, and child cleanup after a deadline.
 The marker test rejects a multiprocess run that omits either process case.
-Single-process cases retain a 35-second deadline. Multiprocess scope cases use a 90-second deadline for child startup and recovery.
+Two tests reject a backend loss run with a missing, reordered, or misplaced marker.
+Single-process cases retain a 35-second deadline. Multiprocess scope and backend loss cases use a 90-second deadline for child startup and recovery.
+
+## Backend loss audit
+
+Servo reports `LostConnectionWithBackend` only after an embedder send to the constellation fails.
+The source audit found three defects after constellation loss:
+
+- Pending callbacks and host scope stayed live, because no reply or lifecycle event could arrive.
+- A request after a failed send entered the pending table without a terminal path.
+- `ServoInner::drop` waited for a shutdown completion message that only the constellation sends.
+  The destructor could therefore never return.
+
+The experimental patch now detects closure of the constellation-to-embedder channel.
+The constellation owns the only sender, so this channel closes when the constellation thread ends.
+The embedder first handles every message that the constellation sent before the loss.
+A failed send to the constellation is a second signal.
+Either signal starts the existing shutdown revocation without a constellation reply.
+Every retained view receives `Active(None)` before any terminal callback, and admission closes.
+The embedder then finishes shutdown locally and reports `LostConnectionWithBackend` once.
+If a delegate or callback panics, local shutdown completes before the panic propagates. No fixture checks this panic path yet.
+A request between the loss and its detection stays pending until the next event-loop spin, which revokes it.
+
+An experimental probe message unwinds the actual constellation thread.
+Backend loss ends the engine, so these cases run in their own process after each scope run.
+The fixture opens two views. A script-thread barrier holds eight scoped and legacy requests for the first view.
+The constellation forwards those requests before it reads the crash message.
+The host sends no further work until cleanup.
+
+The first case requires cleanup within five seconds and revocation of both views before any callback.
+It requires release of all callback captures and an empty pending table.
+It rejects a retained reply before host allocation. New scoped and legacy requests fail synchronously.
+The second case requires local shutdown completion, exactly one loss report, and destructor return.
+A watchdog thread ends the process if the destructor does not return within five seconds.
+
+In these debug builds, cleanup completed 1,543 to 1,627 milliseconds after the crash request.
+The panic hook logs immediately, so the delay occurs during the constellation unwind.
+The debug linker reports that the unwind tables exceed its compact-unwind limit. The cause of the delay is not established.
+The destructor then returned in 13 to 18 milliseconds.
+
+Two negative controls each override one line of the embedder handler in a separate preparation.
+The first control keeps detection and the loss report but omits revocation and local completion.
+It fails at the five-second cleanup deadline with eight pending callbacks and the document still active.
+The loss report then repeats on every event-loop spin, more than 1,100 times in each mode.
+The second control revokes views and callbacks but omits local completion.
+The first case passes, and then the watchdog reports that the destructor waited for the lost constellation.
+The ordinary scope cases and both existing Servo controls pass with each override in both modes.
+
+This audit covers an unwind of the constellation thread only.
+A hung constellation, a process abort, and loss of other engine threads remain untested.
+The fixture does not check content-process exit after backend loss. The runner stops any remaining process.
+The source review also found that the constellation ignores panic reports without an event-loop identity.
+Such a report causes no revocation. Failures of threads without that identity remain untested.
 
 ## Regression scope
 
@@ -367,6 +420,8 @@ Fixture markers establish test order, without authentication claims.
 | Script-thread failure | An actual Rust unwind revokes scope and releases eight pending callbacks exactly once. A new document accepts evaluation after recovery. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
 | Content-process kill (multiprocess only) | The host sends SIGKILL to a blocked child. The same lifeline revocation, callback release, recovery, and survivor assertions apply. |
+| Backend disconnection (separate engine) | An actual constellation unwind revokes two views before eight callbacks. The host rejects the retained reply, and admission closes. |
+| Drop after backend loss (separate engine) | Shutdown completes locally with one loss report. The engine destructor returns. |
 | Final handle release | Release revokes host scope and mixed callbacks synchronously. A callback can submit work to a surviving view. |
 | Release before activation | Release cleans eight callbacks before the host receives a document identity. |
 | Engine shutdown | Shutdown releases sixteen ordinary callbacks, breaks a retained-view cycle, rejects new evaluation, and completes the engine shutdown. |
@@ -381,6 +436,7 @@ Fixture markers establish test order, without authentication claims.
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
 The runner repeats thirty-eight cases in single-process mode or forty cases in multiprocess mode.
+Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
 The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before and during execution.
 The injected crash calls the existing constellation panic handler through an experimental probe method.
@@ -388,10 +444,11 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [kill evidence](../experiments/phase3/document-kill-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
+The [backend evidence](../experiments/phase3/document-backend-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, and local checks.
 It also records one run of the previous checkpoint in each mode, with both Servo controls, before development.
+The [kill evidence](../experiments/phase3/document-kill-evidence-2026-11-24.json) preserves the forty-case multiprocess checkpoint.
 The [process evidence](../experiments/phase3/document-process-evidence-2026-11-24.json) preserves the thirty-nine-case multiprocess checkpoint.
-The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) preserves that checkpoint and its earlier cancellation baseline.
+The [interruption evidence](../experiments/phase3/document-interruption-evidence-2026-11-24.json) preserves the first thirty-eight-case checkpoint and its earlier cancellation baseline.
 The [cancellation evidence](../experiments/phase3/document-cancellation-evidence-2026-11-24.json) preserves the thirty-four-case checkpoint.
 The [delegate evidence](../experiments/phase3/document-delegate-evidence-2026-11-24.json) preserves the thirty-one-case checkpoint.
 The [callback evidence](../experiments/phase3/document-callback-evidence-2026-11-24.json) preserves the twenty-seven-case checkpoint.
@@ -403,9 +460,10 @@ That earlier checkpoint retained identities across history activation. The curre
 
 All thirty-eight shared cases passed in three single-process runs on macOS arm64 with software rendering.
 All forty cases passed in three multiprocess runs.
+Both backend loss cases passed in three separate engine runs in each mode.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
-Python syntax checks and six runner tests also passed.
+Python syntax checks and eight runner tests also passed.
 These builds retained the previous line-table debug configuration.
 
 The prior interruption checkpoint records the following preliminary fixture defects and negative controls.
@@ -436,6 +494,7 @@ The copied engine packages also emit warnings from published code under disabled
 The panic hook logs the intentional script-thread panic, callback and delegate panics, and host unwinds. Recovery also logs pipeline teardown warnings.
 Explicit shutdown logs script termination, profiler disconnection, and timer warnings.
 Release of retained handles after shutdown also logs constellation disconnection warnings.
+The backend loss fixture logs the intentional constellation panic. Single-process runs also log a hang monitor disconnection.
 All assertions and process exit checks passed despite these warnings.
 The experiment adds an optional dependency on the already locked `log` crate. No dependency version changes.
 No remote CI, physical input, Linux, or release latency result applies to this checkpoint.
@@ -449,7 +508,11 @@ The kill fixture covers only a child blocked at a barrier.
 Kills during JavaScript execution, IPC writes, or document construction remain untested.
 Shared-process views and normal teardown races need dedicated process fixtures.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
-Callback cleanup still needs checks for backend disconnection and failures before document construction.
+Constellation loss now has single-process and unsandboxed multiprocess evidence. Its local shutdown contract needs upstream review.
+Callback cleanup still needs checks for failures before document construction.
+A source review found two relevant paths, but no fixture checks them yet.
+The constellation's panic handler sends `Active(None)` before it returns early for a view without a top browsing context.
+Evaluation without a top browsing context fails immediately with `InternalError`.
 Upstream review must settle delegate and callback panic propagation, precedence, and suppression during an existing unwind.
 The host allocation counter does not establish registry revocation, retained-node memory bounds, or production scheduling.
 The lifecycle audit must cover remaining replacement paths, including `srcdoc`, parser-time resets, and cross-origin history reactivation.
@@ -465,24 +528,24 @@ Evaluator authority, redirect/rewrite mechanisms, and owner scope decisions also
 Prepare copies of the six published Servo packages and an isolated Bulwark workspace:
 
 ```sh
-python3 experiments/prepare_document_scope.py --out target/phase3-document-kill
+python3 experiments/prepare_document_scope.py --out target/phase3-document-backend
 ```
 
 Build the candidate:
 
 ```sh
 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_TARGET_DIR="$PWD/target" cargo build --offline --locked \
-  --manifest-path target/phase3-document-kill/candidate/Cargo.toml \
+  --manifest-path target/phase3-document-backend/candidate/Cargo.toml \
   -p bulwark-experiment-e4 --features document-scope-multiprocess
 ```
 
-Run the candidate with independent 35-second process deadlines:
+Run the candidate and the separate backend loss cases with independent 35-second process deadlines:
 
 ```sh
 python3 experiments/run_document_scope.py \
   --binary target/debug/bulwark-experiment-e4 \
-  --preparation target/phase3-document-kill \
-  --output target/phase3-document-kill-single-evidence
+  --preparation target/phase3-document-backend \
+  --output target/phase3-document-backend-single-evidence
 ```
 
 Run the multiprocess cases with independent 90-second process deadlines:
@@ -490,8 +553,8 @@ Run the multiprocess cases with independent 90-second process deadlines:
 ```sh
 python3 experiments/run_document_scope.py \
   --binary target/debug/bulwark-experiment-e4 \
-  --preparation target/phase3-document-kill \
-  --output target/phase3-document-kill-multiprocess-evidence --multiprocess
+  --preparation target/phase3-document-backend \
+  --output target/phase3-document-backend-multiprocess-evidence --multiprocess
 python3 -m unittest discover -s experiments -p test_document_scope_runner.py -v
 ```
 

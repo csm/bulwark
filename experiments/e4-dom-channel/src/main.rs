@@ -152,18 +152,31 @@ fn main() -> Result<()> {
         servo::run_content_process(token);
         return Ok(());
     }
+    let mode = std::env::args().nth(1);
     #[cfg(feature = "document-scope")]
-    if std::env::args().nth(1).as_deref() == Some("--document-scope") {
-        return document_scope::run(false);
+    match mode.as_deref() {
+        Some("--document-scope") => return document_scope::run(false),
+        Some("--document-scope-backend") => return document_scope::run_backend(false),
+        _ => {}
     }
-    if std::env::args().nth(1).as_deref() == Some("--document-scope-multiprocess") {
+    if let Some(
+        mode @ ("--document-scope-multiprocess" | "--document-scope-backend-multiprocess"),
+    ) = mode.as_deref()
+    {
         #[cfg(feature = "document-scope-multiprocess")]
-        return document_scope::run(true);
+        return if mode == "--document-scope-multiprocess" {
+            document_scope::run(true)
+        } else {
+            document_scope::run_backend(true)
+        };
         #[cfg(not(feature = "document-scope-multiprocess"))]
-        bail!("Build the isolated document-scope-multiprocess candidate before running this probe");
+        bail!("Build the isolated document-scope-multiprocess candidate before running {mode}");
     }
     #[cfg(not(feature = "document-scope"))]
-    if std::env::args().nth(1).as_deref() == Some("--document-scope") {
+    if matches!(
+        mode.as_deref(),
+        Some("--document-scope" | "--document-scope-backend")
+    ) {
         bail!("Build the isolated document-scope candidate before running this probe");
     }
     if std::env::args().nth(1).as_deref() == Some("--phase3") {

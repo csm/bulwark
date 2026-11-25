@@ -4,8 +4,8 @@ use anyhow::{Result, ensure};
 use servo::{
     ConsoleLogLevel, CreateNewWebViewRequest, DocumentIdentity, DocumentJavaScriptResult,
     DocumentLifecycle, JSValue, JavaScriptEvaluationError, LoadStatus, Opts, RenderingContext,
-    Servo, ServoBuilder, SoftwareRenderingContext, TraversalId, WebResourceLoad,
-    WebResourceResponse, WebView, WebViewBuilder, WebViewDelegate,
+    Servo, ServoBuilder, ServoDelegate, ServoError, SoftwareRenderingContext, TraversalId,
+    WebResourceLoad, WebResourceResponse, WebView, WebViewBuilder, WebViewDelegate,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -441,9 +441,8 @@ pub(super) fn install_panic_hook() {
     }));
 }
 
-pub(super) fn run(multiprocess: bool) -> Result<()> {
+fn start(multiprocess: bool) -> Result<(Rc<SoftwareRenderingContext>, Servo)> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    let deadline = Instant::now() + Duration::from_secs(if multiprocess { 80 } else { 30 });
     let context = Rc::new(
         SoftwareRenderingContext::new((640, 480).into())
             .map_err(|error| anyhow::anyhow!("Software context: {error:?}"))?,
@@ -462,6 +461,12 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     // Servo's own crash tests use this public logging path to report thread panics.
     servo.setup_logging();
     install_panic_hook();
+    Ok((context, servo))
+}
+
+pub(super) fn run(multiprocess: bool) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(if multiprocess { 80 } else { 30 });
+    let (context, servo) = start(multiprocess)?;
     let delegate = Rc::new(Delegate::default());
     let view = WebViewBuilder::new(&servo, context.clone())
         .url(url::Url::parse("about:blank")?)
@@ -2112,5 +2117,140 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
         "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
         if multiprocess { 40 } else { 38 }
     );
+    Ok(())
+}
+
+#[derive(Default)]
+struct BackendErrors(RefCell<Vec<String>>);
+impl ServoDelegate for BackendErrors {
+    fn notify_error(&self, error: ServoError) {
+        self.0.borrow_mut().push(format!("{error:?}"));
+    }
+}
+
+// Backend loss ends the engine, so this audit needs its own process and engine.
+pub(super) fn run_backend(multiprocess: bool) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(if multiprocess { 60 } else { 25 });
+    let (context, servo) = start(multiprocess)?;
+    let errors = Rc::new(BackendErrors::default());
+    servo.set_delegate(errors.clone());
+    let delegate = Rc::new(Delegate::default());
+    let view = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/backend"))?)
+        .delegate(delegate.clone())
+        .build();
+    let other_delegate = Rc::new(Delegate::default());
+    let other = WebViewBuilder::new(&servo, context)
+        .url(url::Url::parse(&format!("{ORIGIN}/backend-other"))?)
+        .delegate(other_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || {
+        delegate.loads.get() > 0 && other_delegate.loads.get() > 0
+    })?;
+    let document = identity(&servo, &view, deadline)?;
+    let other_document = identity(&servo, &other, deadline)?;
+    ensure!(
+        other_delegate.active.get() == Some(other_document),
+        "Second view activation missing"
+    );
+    let ticket = delegate.ticket(document)?;
+    let reply = scoped(&servo, &view, deadline, document, "'before-backend-loss'")?;
+    ensure!(reply.is_ok(), "Backend loss control failed");
+    // The paused script thread cannot answer before the constellation unwinds.
+    // The constellation forwards all eight requests before it reads the crash message.
+    let mut crashed = Instant::now();
+    let audit = view.with_paused_script_for_document_scope_probe(|| {
+        let audit = CleanupAudit::queue(&view, Some(document), &delegate, true);
+        crashed = Instant::now();
+        servo.crash_constellation_for_document_scope_probe();
+        audit
+    });
+    ensure!(
+        view.pending_evaluations_for_document_scope_probe() == 8,
+        "Backend loss fixture did not retain eight callbacks"
+    );
+    // Send no further work. Only the closed constellation channel can trigger cleanup.
+    drive_until(
+        &servo,
+        deadline.min(Instant::now() + Duration::from_secs(5)),
+        || audit.calls.get() == 8,
+    )
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "Backend loss cleanup failed: {error}; active={:?}, pending={}, calls={}, errors={:?}",
+            delegate.active.get(),
+            view.pending_evaluations_for_document_scope_probe(),
+            audit.calls.get(),
+            errors.0.borrow()
+        )
+    })?;
+    let cleanup = crashed.elapsed();
+    audit.check()?;
+    ensure!(
+        other_delegate.active.get().is_none(),
+        "Backend loss left another view active"
+    );
+    ensure!(
+        view.pending_evaluations_for_document_scope_probe() == 0,
+        "Backend loss retained callbacks"
+    );
+    delegate.reject(ticket, reply)?;
+    // Admission after loss fails synchronously and retains no callback.
+    let (sender, after) = mpsc::channel();
+    view.evaluate_javascript_in_document(document, "'after-backend-loss'", move |result| {
+        let _ = sender.send(result);
+    });
+    stale(after.try_recv()?)?;
+    let (sender, legacy) = mpsc::channel();
+    other.evaluate_javascript("'after-backend-loss'", move |result| {
+        let _ = sender.send(result);
+    });
+    ensure!(
+        matches!(
+            legacy.try_recv()?,
+            Err(JavaScriptEvaluationError::StaleDocument)
+        ),
+        "Legacy evaluator admitted work after backend loss"
+    );
+    ensure!(
+        view.pending_evaluations_for_document_scope_probe() == 0
+            && other.pending_evaluations_for_document_scope_probe() == 0
+            && audit.calls.get() == 8,
+        "Backend loss admitted or repeated callbacks"
+    );
+    println!(
+        "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after {} ms)",
+        cleanup.as_millis()
+    );
+
+    // The destructor previously waited for a completion message that a lost constellation cannot send.
+    // Check completion after the destructor so that the watchdog reports that wait directly.
+    for _ in 0..10 {
+        servo.spin_event_loop();
+    }
+    let complete = servo.shutdown_complete_for_document_scope_probe();
+    let (finished, watchdog) = mpsc::channel::<()>();
+    let watchdog = thread::spawn(move || {
+        if watchdog.recv_timeout(Duration::from_secs(5)) == Err(mpsc::RecvTimeoutError::Timeout) {
+            eprintln!("Engine drop waited for the lost constellation");
+            std::process::exit(1);
+        }
+    });
+    let dropping = Instant::now();
+    drop((view, other));
+    drop(servo);
+    let _ = finished.send(());
+    let _ = watchdog.join();
+    ensure!(complete, "Backend loss left engine shutdown incomplete");
+    ensure!(
+        errors.0.borrow().as_slice() == ["LostConnectionWithBackend"],
+        "Expected one backend loss report: {:?}",
+        errors.0.borrow()
+    );
+    println!(
+        "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after {} ms)",
+        dropping.elapsed().as_millis()
+    );
+    println!("S1 backend-loss prototype: PASS (2 cases; constellation unwind)");
     Ok(())
 }

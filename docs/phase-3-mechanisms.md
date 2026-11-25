@@ -214,7 +214,10 @@ Both process modes pass queued cancellation and active interruption.
 The process audit found that child reaping alone left host scope and callbacks live until another send failed.
 The experimental patch now connects the process lifeline to scope revocation and callback cleanup.
 Its exit and kill fixtures check eight pending callbacks, retained replies, recovery, and an independent surviving view.
-Backend disconnection, failures before document construction, and remaining replacement paths stay open.
+The backend loss audit found that constellation loss left host scope and callbacks live and made the engine destructor wait forever.
+The experimental patch now revokes every view and callback when the constellation channel closes, then finishes shutdown locally.
+A separate engine process checks an actual constellation unwind in both process modes.
+Failures before document construction and remaining replacement paths stay open.
 Shared-process views, kills outside a barrier, and normal teardown races still need dedicated evidence.
 The reset case also proves that S2 cannot bind the current incarnation through pipeline equality alone.
 Product pins and installed behavior remain unchanged.
