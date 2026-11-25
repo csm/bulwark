@@ -20,7 +20,7 @@ EXPECTED_MARKERS = {
     "failed-load", "cross-view", "subframe-isolation", "close", "injected-crash",
     "script-created-initial-document", "javascript-url-replacement",
     "script-thread-failure-and-callback-cleanup", "unconstructed-view-failure",
-    "pending-navigation-failure",
+    "pending-navigation-failure", "crash-recovery-history",
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
     "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
     "queued-engine-cancellation", "completed-engine-cancellation",
@@ -33,7 +33,8 @@ EXPECTED_MARKERS = {
 MULTIPROCESS_MARKERS = {
     "content-process-failure", "content-process-kill", "shared-process-close",
     "shared-process-failure", "shared-process-kill",
-    "shared-process-close-kill-race",
+    "shared-process-close-kill-race", "unconstructed-process-exit", "unconstructed-process-kill",
+    "pending-navigation-process-exit", "pending-navigation-process-kill",
 }
 # Backend loss stops the engine, so it runs in its own process after each scope case.
 BACKEND_MARKERS = {"backend-disconnection", "drop-after-backend-loss", "backend-loss prototype"}
@@ -109,7 +110,8 @@ def main():
                   "final-handle release, explicit engine shutdown, queued execution cancellation, "
                   "interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, "
                   "shared-process view revocation and ordinary sibling close, "
-                  "script-thread failure before document construction, "
+                  "script-thread failure and content-process exit or kill before document construction, "
+                  "crash recovery through reload and history, "
                   "callback and delegate unwind safety, and constellation loss in a separate engine. "
                   "Remaining replacement audits remain open."),
         "cases": [],

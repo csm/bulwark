@@ -1681,10 +1681,12 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     // that loop while eight callbacks for the active document wait at a script barrier.
     let pending_delegate = Rc::new(Delegate::default());
     let pending_view = WebViewBuilder::new(&servo, context.clone())
-        .url(url::Url::parse(&format!("{ORIGIN}/navigation-source"))?)
+        .url(url::Url::parse(&format!("{ORIGIN}/navigation-first"))?)
         .delegate(pending_delegate.clone())
         .build();
     drive_until(&servo, deadline, || pending_delegate.loads.get() > 0)?;
+    let first = identity(&servo, &pending_view, deadline)?;
+    load(&servo, &pending_view, deadline, "/navigation-source")?;
     let source = identity(&servo, &pending_view, deadline)?;
     let source_ticket = pending_delegate.ticket(source)?;
     let source_reply = scoped(
@@ -1760,6 +1762,53 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
         pending_crash,
         "crash-document",
     )?;
+    // An error page must recover through reload, back, forward, and a new URL.
+    // Recovery closes every history pipeline in the view, so no entry may keep one.
+    // The fixture interceptor serves the crash load, so reload shows the source again.
+    pending_view.reload();
+    drive_until(&servo, deadline, || {
+        pending_delegate
+            .active
+            .get()
+            .is_some_and(|id| id != pending_crash)
+    })?;
+    wait_marker(&servo, &pending_view, deadline, "/navigation-source")?;
+    let reloaded = identity(&servo, &pending_view, deadline)?;
+    let traversal = pending_view.go_back(1);
+    drive_until(&servo, deadline, || {
+        pending_delegate.traversals.borrow().contains(&traversal)
+    })?;
+    wait_marker(&servo, &pending_view, deadline, "/navigation-first")?;
+    let back = identity(&servo, &pending_view, deadline)?;
+    ensure!(
+        back != first,
+        "Back after crash recovery revived a closed pipeline's scope"
+    );
+    stale(scoped(
+        &servo,
+        &pending_view,
+        deadline,
+        first,
+        "'obsolete'",
+    )?)?;
+    let traversal = pending_view.go_forward(1);
+    drive_until(&servo, deadline, || {
+        pending_delegate.traversals.borrow().contains(&traversal)
+    })?;
+    wait_marker(&servo, &pending_view, deadline, "/navigation-source")?;
+    let forward = identity(&servo, &pending_view, deadline)?;
+    ensure!(
+        forward != reloaded,
+        "Forward after crash recovery revived the old scope"
+    );
+    text(
+        scoped(&servo, &pending_view, deadline, forward, "'forward'")?,
+        forward,
+        "forward",
+    )?;
+    println!(
+        "S1 crash-recovery-history: PASS (reload, back to a closed history entry, and forward recover)"
+    );
     load(&servo, &pending_view, deadline, "/after-pending-failure")?;
     let pending_recovered = identity(&servo, &pending_view, deadline)?;
     ensure!(
@@ -2451,6 +2500,157 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                 );
             }
         }
+
+        // A child that hosts only a pending pipeline fails before any document exists.
+        for (kill, kind) in [(false, "exit"), (true, "kill")] {
+            let terminate = |view: &WebView| {
+                if kill {
+                    view.with_killed_pending_content_process_for_document_scope_probe(|| ());
+                } else {
+                    view.with_terminating_pending_content_process_for_document_scope_probe(|| ());
+                }
+            };
+            let lifeline = || deadline.min(Instant::now() + Duration::from_secs(5));
+
+            let unbuilt_delegate = Rc::new(Delegate::default());
+            let unbuilt = WebViewBuilder::new(&servo, context.clone())
+                .url(url::Url::parse(&format!("{ORIGIN}/held-process-{kind}"))?)
+                .delegate(unbuilt_delegate.clone())
+                .build();
+            drive_until(&servo, deadline, || {
+                !unbuilt_delegate.held.borrow().is_empty()
+            })?;
+            terminate(&unbuilt);
+            // Send no further work. Only the lifeline can report this failure.
+            drive_until(&servo, lifeline(), || {
+                unbuilt_delegate.crashed.get() && unbuilt_delegate.events.borrow().len() >= 2
+            })
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "Unconstructed process {kind} missed lifeline recovery: {error}; events={:?}, crashes={:?}",
+                    unbuilt_delegate.events.borrow(),
+                    unbuilt_delegate.crash_reasons.borrow()
+                )
+            })?;
+            ensure!(
+                unbuilt_delegate.crash_reasons.borrow().as_slice()
+                    == ["Content process disconnected"]
+                    && unbuilt_delegate.events.borrow().as_slice()
+                        == [DocumentLifecycle::Active(None); 2]
+                    && unbuilt_delegate.active.get().is_none(),
+                "Unconstructed process {kind} reported the wrong failure: events={:?}, crashes={:?}",
+                unbuilt_delegate.events.borrow(),
+                unbuilt_delegate.crash_reasons.borrow()
+            );
+            ensure!(
+                cancel_held(&unbuilt_delegate) == 1,
+                "Expected one withheld navigation"
+            );
+            unbuilt.close_for_document_scope_probe();
+            drive_until(&servo, deadline, || unbuilt_delegate.closed.get())?;
+            drop(unbuilt);
+            ensure!(
+                unbuilt_delegate.released.get(),
+                "Final release of the failed view did not notify the host"
+            );
+            println!(
+                "S1 unconstructed-process-{kind}: PASS (lifeline crash notification, revocation, view closed)"
+            );
+
+            // The active document lives in another child. The barrier holds its callbacks.
+            let pending_delegate = Rc::new(Delegate::default());
+            let pending_view = WebViewBuilder::new(&servo, context.clone())
+                .url(url::Url::parse(&format!("{ORIGIN}/process-source-{kind}"))?)
+                .delegate(pending_delegate.clone())
+                .build();
+            drive_until(&servo, deadline, || pending_delegate.loads.get() > 0)?;
+            let source = identity(&servo, &pending_view, deadline)?;
+            let source_ticket = pending_delegate.ticket(source)?;
+            let source_reply = scoped(&servo, &pending_view, deadline, source, "'before'")?;
+            ensure!(source_reply.is_ok(), "Pending process control failed");
+            pending_view.load(url::Url::parse(&format!(
+                "https://pending.invalid/held-process-navigation-{kind}"
+            ))?);
+            drive_until(&servo, deadline, || {
+                !pending_delegate.held.borrow().is_empty()
+            })?;
+            let (audit, revoked) = pending_view.with_paused_script_for_document_scope_probe(|| {
+                let audit =
+                    CleanupAudit::queue(&pending_view, Some(source), &pending_delegate, true);
+                terminate(&pending_view);
+                let revoked = drive_until(
+                    &servo,
+                    deadline.min(Instant::now() + Duration::from_secs(4)),
+                    || audit.calls.get() == 8,
+                );
+                (audit, revoked)
+            });
+            revoked.map_err(|error| {
+                anyhow::anyhow!(
+                    "Pending process {kind} did not revoke within the barrier: {error}; active={:?}, crashes={:?}, calls={}",
+                    pending_delegate.active.get(),
+                    pending_delegate.crash_reasons.borrow(),
+                    audit.calls.get()
+                )
+            })?;
+            audit.check()?;
+            ensure!(
+                pending_delegate.crash_reasons.borrow().as_slice()
+                    == ["Content process disconnected"]
+                    && pending_view.pending_evaluations_for_document_scope_probe() == 0,
+                "Pending process {kind} reported the wrong failure: {:?}",
+                pending_delegate.crash_reasons.borrow()
+            );
+            pending_delegate.reject(source_ticket, source_reply)?;
+            ensure!(
+                cancel_held(&pending_delegate) == 1,
+                "Expected one withheld navigation"
+            );
+            drive_until(&servo, deadline, || {
+                pending_delegate.active.get().is_some_and(|id| id != source)
+            })?;
+            let crash_document = identity(&servo, &pending_view, deadline)?;
+            text(
+                scoped(
+                    &servo,
+                    &pending_view,
+                    deadline,
+                    crash_document,
+                    "'crash-document'",
+                )?,
+                crash_document,
+                "crash-document",
+            )?;
+            // The failed navigation must not block a new one.
+            load(
+                &servo,
+                &pending_view,
+                deadline,
+                &format!("/after-process-{kind}"),
+            )?;
+            let recovered_view = identity(&servo, &pending_view, deadline)?;
+            stale(scoped(
+                &servo,
+                &pending_view,
+                deadline,
+                source,
+                "'obsolete'",
+            )?)?;
+            text(
+                scoped(
+                    &servo,
+                    &pending_view,
+                    deadline,
+                    recovered_view,
+                    "'recovered'",
+                )?,
+                recovered_view,
+                "recovered",
+            )?;
+            println!(
+                "S1 pending-navigation-process-{kind}: PASS (lifeline revocation, 8 callbacks released, crash document, navigation recovers)"
+            );
+        }
     }
 
     let shutdown_ticket = failure_delegate.ticket(recovered)?;
@@ -2565,7 +2765,7 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     );
     println!(
         "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
-        if multiprocess { 46 } else { 40 }
+        if multiprocess { 51 } else { 41 }
     );
     Ok(())
 }

@@ -1,0 +1,1170 @@
+{
+  "recorded_utc": "2026-11-25T07:35:25.209567+00:00",
+  "scope": "Isolated S1 content-process exit and kill before document construction, and recovery from an error page through reload, back, forward, and a new URL. No product dependency or runtime configuration changes.",
+  "baseline": {
+    "head": "1b916d0",
+    "engine_checkpoint": "dde097c",
+    "note": "The construction evidence records three passing runs in each mode at dde097c. 1b916d0 changed only documentation."
+  },
+  "owner_requirement": "An error page is recoverable by navigating back, reloading, or editing the target URL and trying again (recorded 2026-11-24 in docs/phase-3-plan.md).",
+  "configuration": {
+    "cargo_features": [
+      "document-scope-multiprocess"
+    ],
+    "content_sandbox": false,
+    "hard_fail": false,
+    "build_environment": {
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "line-tables-only"
+    },
+    "deadlines_seconds": {
+      "single_process_case": 35,
+      "multiprocess_scope_and_backend_case": 90,
+      "lifeline_recovery": 5,
+      "pending_revocation_barrier": 4
+    },
+    "pending_process_probe": "The existing exit and kill barrier now accepts the content process of a view's newest pending top-level pipeline. The host withholds that pipeline's navigation response, so it has no document.",
+    "history_fixture": "The pending-navigation view loads a first page and then the source page before its pending navigation fails. After recovery the fixture reloads, goes back, goes forward, and loads a new URL."
+  },
+  "defects": [
+    {
+      "name": "Pending pipeline treated as ordinary teardown",
+      "observed": "The lifeline handler counted a pipeline as live only if its browsing context held it. A pending pipeline joins its browsing context only at activation. When the only child of a new view died, the host received the pipeline-exit Active(None) but no crash notification. When the child of a live view's pending navigation died, the view sent no notification, kept a stale pending change, and could no longer navigate: a load of a new URL did not complete within 8 seconds.",
+      "fix": "A pipeline is also live while its view holds it as a pending change. Lifeline loss then enters the existing panic handler.",
+      "diagnostic_log_sha256": "4bc943b6413aeb954f0d978caa1e3e5610ff3c1861fdf1a92fbed6c9038bb753",
+      "diagnostic_note": "Diagnostic run before the fix, in both exit and kill modes. Its fixture variant is not retained."
+    },
+    {
+      "name": "Crash recovery left history entries on closed pipelines",
+      "observed": "Upstream crash recovery closes every pipeline in the top browsing context, including inactive history entries, without marking those entries for reload. Its crash-document change replaces NeedsToReload::Yes(active), which never matches the stored NeedsToReload::No(active). Back after recovery activated a closed pipeline. The view then had no active document, and every later evaluation and load failed with InternalError. Forward failed the same way on the replaced entry.",
+      "fix": "Before recovery, the panic handler converts every pipeline of the top browsing context to NeedsToReload::Yes with its refreshed load data, as history eviction and document discard already do.",
+      "scope_note": "This applies to every crash path that reaches the panic handler, not only pending navigation failure. Nested browsing-context history entries remain unchecked."
+    }
+  ],
+  "findings": [
+    "Reload, back, forward, and a new URL all recover from the error page in both modes. Each restored document receives a fresh identity, and the engine rejects the departed scopes.",
+    "Servo sends the crash load through embedder request interception after it sets the crash network error, and an intercepted response replaces that error. The fixture intercepts every page, so every recovery document in this probe is the source page served by the fixture, not Servo's error page. The product does not intercept top-level loads today. P3.5 request hooks and P3.7 bulwark:// delivery must not override crash loads.",
+    "Because of that interception, reload in this fixture reloads the source page. Reload of a real Servo error page remains unverified."
+  ],
+  "single_process": {
+    "started_utc": "2026-11-25T07:30:06.633801+00:00",
+    "binary_sha256": "e4032948748d102ae1594c7ec6ca76095921c55e3647c1df24afd11ce160fb3b",
+    "preparation": {
+      "servo": "0.7.0",
+      "patch_sha256": "b06630aa9201d2fad92474286b1dff0fc00122c85cc584cbc59af12f27f43d60",
+      "source_hashes": {
+        "servo/javascript_evaluator.rs": "61fbbb07f18804b02350f412bd627f782347fcdfcf03e6ade64b75a1d8c9986a",
+        "servo/servo.rs": "4d221039ebb370ce254e2987342bcd3b5535b3e51716386e499041d6d687a073",
+        "servo/webview.rs": "ab37f1503585706e5275d78ddd1f11b76a6c5bed0a1a3b11c03507fa1f117a8a",
+        "servo/webview_delegate.rs": "2347f86f6466b249f31c35787aae8e4976b68da869c4c684383ebe2d1d573a62",
+        "servo-constellation/constellation.rs": "179ba65976d941f83670411bd92dbab603ac7180ffaacd1d81d13ed41e4efb43",
+        "servo-constellation/embedder.rs": "b0cfe993db3ea601adcea19bfca09ccb5ae6ce1c3c4d7b3541751ccefb0d7614",
+        "servo-constellation/tracing.rs": "08ebd810c0ba38496ec30552de7bafdeb41df7c8b9aee32afee434db86a00145",
+        "servo-constellation-traits/from_script_message.rs": "e003e99fa57a3e8fa9dba17bae12c3189ffad30cbbabd51cee960af73dcaf31e",
+        "servo-constellation-traits/lib.rs": "ef2f0a0728c95d747b6dcba47888691b709107a9fd4be83604df55a1d0b8fafa",
+        "servo-embedder-traits/lib.rs": "23cd7e914fad955519cd88cd3ae3c99f055f669ef3db377c21d9c5273ae2dc61",
+        "servo-script/dom/document/document.rs": "01f12b46c59a4a5be54a42a12f9fd35bd68a33efc42dcb619cb672064203ca05",
+        "servo-script/event_loop/script_thread.rs": "ee6a861fd8416f174e425a0ae3d0d049074015fe4cbdb7fd581fc400bf51f162",
+        "servo-script/messaging.rs": "123e066ae57d783c5a83ee61ef6ef52a19cf622514c3a15459dcf9db626dcda8",
+        "servo-script-traits/lib.rs": "8138a73b6e544c3f7113ae0b0563a8c88053d33950885ca6d950212683e01f91",
+        "servo-constellation/event_loop.rs": "127ff3d903d7181f79fb63e7d9540b4a4307cad504f54de880e4a58318a207b7",
+        "servo-constellation/process_manager.rs": "8c3f07a9c197c13c4cddfec14f6051a51ca77f13ea29da3699c51451f371e676"
+      },
+      "product_hashes": {
+        "Cargo.toml": "7b5b598976d830e481ff8fbb7a2695face27633fabb49d5bb41bf4caaf52cf41",
+        "Cargo.lock": "54362b7600ddb3da94785a826689746d72528d76b15e752569486d48aa55f31c"
+      },
+      "candidate": "/Users/csm/src/bulwark/target/phase3-pending-final/candidate",
+      "probe_hashes": {
+        "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+        "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+        "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+        "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+        "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+        "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee"
+      }
+    },
+    "platform": {
+      "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64"
+    },
+    "source_hashes": {
+      "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+      "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+      "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee",
+      "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+      "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+      "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+      "experiments/prepare_document_scope.py": "38b340f5fce74f474078db4c02d06d422ba8725ecd683019162b3727136923a2",
+      "experiments/run_document_scope.py": "6bfbff1af85008fe34b161fd78e740b1356793d0204bf14c79826595f65bb5ba"
+    },
+    "multiprocess": false,
+    "scope": "Experimental engine scope, host allocation gate, script-thread unwind, final-handle release, explicit engine shutdown, queued execution cancellation, interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, shared-process view revocation and ordinary sibling close, script-thread failure and content-process exit or kill before document construction, crash recovery through reload and history, callback and delegate unwind safety, and constellation loss in a separate engine. Remaining replacement audits remain open.",
+    "cases": [
+      {
+        "name": "document-scope-1",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope"
+        ],
+        "status": 0,
+        "elapsed_seconds": 5.291773584205657,
+        "assertions_complete": true,
+        "markers": [
+          "S1 initial-blank-and-tagged-result: PASS",
+          "S1 lifecycle-readiness-and-current-delivery: PASS",
+          "S1 same-document-navigation: PASS",
+          "S1 script-created-initial-document: PASS",
+          "S1 held-A-after-B-and-unscoped-control: PASS",
+          "S1 queued-reset-race-and-pipeline-collision: PASS",
+          "S1 serialization-reset: PASS",
+          "S1 delayed-host-delivery: PASS (revoked before allocation)",
+          "S1 host-cancellation: PASS",
+          "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+          "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+          "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+          "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 133 us to next result)",
+          "S1 serialization-interruption: PASS (getter terminated, 142 us to next result)",
+          "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+          "S1 uninterrupted-long-evaluation: PASS (299 ms loop completed with an open permit)",
+          "S1 javascript-url-replacement: PASS",
+          "S1 reload: PASS",
+          "S1 history: PASS (retained_identity=false)",
+          "S1 redirect: PASS",
+          "S1 failed-load: PASS (error document replaces departed document)",
+          "S1 cross-view: PASS",
+          "S1 subframe-isolation: PASS",
+          "S1 close: PASS",
+          "S1 injected-crash: PASS (constellation panic handler)",
+          "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+          "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)",
+          "S1 crash-recovery-history: PASS (reload, back to a closed history entry, and forward recover)",
+          "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)",
+          "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+          "S1 release-before-document-activation: PASS (8 callbacks released)",
+          "S1 result-callback-panic: PASS (unwind propagated, captures released, evaluation resumed)",
+          "S1 lifecycle-callback-panics: PASS (8 terminal callbacks, host revoked, unwind propagated)",
+          "S1 release-callback-panics: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 release-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 lifecycle-delegate-panic: PASS (8 terminal callbacks, delegate panic preferred, close delivered)",
+          "S1 release-delegate-panic: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 delegate-panic-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+          "S1 shutdown-callback-panics: PASS (all terminal callbacks delivered, admission closed, shutdown complete)",
+          "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)",
+          "S1 document-scope prototype: PASS (41 cases; experimental lifecycle and host gate)"
+        ],
+        "log_sha256": "67d1335bb42b03d8dca84ee9b9e0aac3dc10e61f42408acb2eddc9250e1220d3"
+      },
+      {
+        "name": "backend-loss-1",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-backend"
+        ],
+        "status": 0,
+        "elapsed_seconds": 1.6879342906177044,
+        "assertions_complete": true,
+        "markers": [
+          "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1568 ms)",
+          "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 12 ms)",
+          "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+        ],
+        "log_sha256": "58a51e6942ea241a1ded1ac9fa339f28f340e39f1b5e396569abaa3721c22d17"
+      },
+      {
+        "name": "document-scope-2",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope"
+        ],
+        "status": 0,
+        "elapsed_seconds": 2.672898415941745,
+        "assertions_complete": true,
+        "markers": [
+          "S1 initial-blank-and-tagged-result: PASS",
+          "S1 lifecycle-readiness-and-current-delivery: PASS",
+          "S1 same-document-navigation: PASS",
+          "S1 script-created-initial-document: PASS",
+          "S1 held-A-after-B-and-unscoped-control: PASS",
+          "S1 queued-reset-race-and-pipeline-collision: PASS",
+          "S1 serialization-reset: PASS",
+          "S1 delayed-host-delivery: PASS (revoked before allocation)",
+          "S1 host-cancellation: PASS",
+          "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+          "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+          "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+          "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 112 us to next result)",
+          "S1 serialization-interruption: PASS (getter terminated, 125 us to next result)",
+          "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+          "S1 uninterrupted-long-evaluation: PASS (299 ms loop completed with an open permit)",
+          "S1 javascript-url-replacement: PASS",
+          "S1 reload: PASS",
+          "S1 history: PASS (retained_identity=false)",
+          "S1 redirect: PASS",
+          "S1 failed-load: PASS (error document replaces departed document)",
+          "S1 cross-view: PASS",
+          "S1 subframe-isolation: PASS",
+          "S1 close: PASS",
+          "S1 injected-crash: PASS (constellation panic handler)",
+          "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+          "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)",
+          "S1 crash-recovery-history: PASS (reload, back to a closed history entry, and forward recover)",
+          "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)",
+          "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+          "S1 release-before-document-activation: PASS (8 callbacks released)",
+          "S1 result-callback-panic: PASS (unwind propagated, captures released, evaluation resumed)",
+          "S1 lifecycle-callback-panics: PASS (8 terminal callbacks, host revoked, unwind propagated)",
+          "S1 release-callback-panics: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 release-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 lifecycle-delegate-panic: PASS (8 terminal callbacks, delegate panic preferred, close delivered)",
+          "S1 release-delegate-panic: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 delegate-panic-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+          "S1 shutdown-callback-panics: PASS (all terminal callbacks delivered, admission closed, shutdown complete)",
+          "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)",
+          "S1 document-scope prototype: PASS (41 cases; experimental lifecycle and host gate)"
+        ],
+        "log_sha256": "08cfd40c79ad536443bfe5cdc9cdaf6fe5d0d37a204c805ac17ce8ca58c344bb"
+      },
+      {
+        "name": "backend-loss-2",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-backend"
+        ],
+        "status": 0,
+        "elapsed_seconds": 1.7193666663952172,
+        "assertions_complete": true,
+        "markers": [
+          "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1560 ms)",
+          "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 12 ms)",
+          "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+        ],
+        "log_sha256": "b20e6b67ca197aab685469de22a9f97b8bd72ac9fd69dbde3e8a550aeeac4f47"
+      },
+      {
+        "name": "document-scope-3",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope"
+        ],
+        "status": 0,
+        "elapsed_seconds": 2.682040332816541,
+        "assertions_complete": true,
+        "markers": [
+          "S1 initial-blank-and-tagged-result: PASS",
+          "S1 lifecycle-readiness-and-current-delivery: PASS",
+          "S1 same-document-navigation: PASS",
+          "S1 script-created-initial-document: PASS",
+          "S1 held-A-after-B-and-unscoped-control: PASS",
+          "S1 queued-reset-race-and-pipeline-collision: PASS",
+          "S1 serialization-reset: PASS",
+          "S1 delayed-host-delivery: PASS (revoked before allocation)",
+          "S1 host-cancellation: PASS",
+          "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+          "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+          "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+          "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 138 us to next result)",
+          "S1 serialization-interruption: PASS (getter terminated, 171 us to next result)",
+          "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+          "S1 uninterrupted-long-evaluation: PASS (300 ms loop completed with an open permit)",
+          "S1 javascript-url-replacement: PASS",
+          "S1 reload: PASS",
+          "S1 history: PASS (retained_identity=false)",
+          "S1 redirect: PASS",
+          "S1 failed-load: PASS (error document replaces departed document)",
+          "S1 cross-view: PASS",
+          "S1 subframe-isolation: PASS",
+          "S1 close: PASS",
+          "S1 injected-crash: PASS (constellation panic handler)",
+          "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+          "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)",
+          "S1 crash-recovery-history: PASS (reload, back to a closed history entry, and forward recover)",
+          "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)",
+          "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+          "S1 release-before-document-activation: PASS (8 callbacks released)",
+          "S1 result-callback-panic: PASS (unwind propagated, captures released, evaluation resumed)",
+          "S1 lifecycle-callback-panics: PASS (8 terminal callbacks, host revoked, unwind propagated)",
+          "S1 release-callback-panics: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 release-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 lifecycle-delegate-panic: PASS (8 terminal callbacks, delegate panic preferred, close delivered)",
+          "S1 release-delegate-panic: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 delegate-panic-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+          "S1 shutdown-callback-panics: PASS (all terminal callbacks delivered, admission closed, shutdown complete)",
+          "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)",
+          "S1 document-scope prototype: PASS (41 cases; experimental lifecycle and host gate)"
+        ],
+        "log_sha256": "565bd937740236c9ded3cd9c2cb31046df3964383f976b660bd6c35119297cb7"
+      },
+      {
+        "name": "backend-loss-3",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-backend"
+        ],
+        "status": 0,
+        "elapsed_seconds": 1.6880067503079772,
+        "assertions_complete": true,
+        "markers": [
+          "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1543 ms)",
+          "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 12 ms)",
+          "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+        ],
+        "log_sha256": "d2ee9857285163bfd961b172fddac52a5bb6c7700e8e2f8bbc76f5f13f707223"
+      },
+      {
+        "name": "servo-contracts",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--phase3"
+        ],
+        "status": 0,
+        "elapsed_seconds": 0.4142143330536783,
+        "assertions_complete": true,
+        "markers": [],
+        "log_sha256": "81e7482b133b9a3e23be6ece5ad3cccfdd5acbf3c990c1cf11fc46af519464ef"
+      },
+      {
+        "name": "e4-baseline",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4"
+        ],
+        "status": 0,
+        "elapsed_seconds": 2.0615086248144507,
+        "assertions_complete": true,
+        "markers": [],
+        "log_sha256": "87525616d5f62b9ac832b16300cd4ba517bdcfd9d8c4c3790fed1befe3b019af"
+      }
+    ]
+  },
+  "multiprocess": {
+    "started_utc": "2026-11-25T07:30:25.135577+00:00",
+    "binary_sha256": "e4032948748d102ae1594c7ec6ca76095921c55e3647c1df24afd11ce160fb3b",
+    "preparation": {
+      "servo": "0.7.0",
+      "patch_sha256": "b06630aa9201d2fad92474286b1dff0fc00122c85cc584cbc59af12f27f43d60",
+      "source_hashes": {
+        "servo/javascript_evaluator.rs": "61fbbb07f18804b02350f412bd627f782347fcdfcf03e6ade64b75a1d8c9986a",
+        "servo/servo.rs": "4d221039ebb370ce254e2987342bcd3b5535b3e51716386e499041d6d687a073",
+        "servo/webview.rs": "ab37f1503585706e5275d78ddd1f11b76a6c5bed0a1a3b11c03507fa1f117a8a",
+        "servo/webview_delegate.rs": "2347f86f6466b249f31c35787aae8e4976b68da869c4c684383ebe2d1d573a62",
+        "servo-constellation/constellation.rs": "179ba65976d941f83670411bd92dbab603ac7180ffaacd1d81d13ed41e4efb43",
+        "servo-constellation/embedder.rs": "b0cfe993db3ea601adcea19bfca09ccb5ae6ce1c3c4d7b3541751ccefb0d7614",
+        "servo-constellation/tracing.rs": "08ebd810c0ba38496ec30552de7bafdeb41df7c8b9aee32afee434db86a00145",
+        "servo-constellation-traits/from_script_message.rs": "e003e99fa57a3e8fa9dba17bae12c3189ffad30cbbabd51cee960af73dcaf31e",
+        "servo-constellation-traits/lib.rs": "ef2f0a0728c95d747b6dcba47888691b709107a9fd4be83604df55a1d0b8fafa",
+        "servo-embedder-traits/lib.rs": "23cd7e914fad955519cd88cd3ae3c99f055f669ef3db377c21d9c5273ae2dc61",
+        "servo-script/dom/document/document.rs": "01f12b46c59a4a5be54a42a12f9fd35bd68a33efc42dcb619cb672064203ca05",
+        "servo-script/event_loop/script_thread.rs": "ee6a861fd8416f174e425a0ae3d0d049074015fe4cbdb7fd581fc400bf51f162",
+        "servo-script/messaging.rs": "123e066ae57d783c5a83ee61ef6ef52a19cf622514c3a15459dcf9db626dcda8",
+        "servo-script-traits/lib.rs": "8138a73b6e544c3f7113ae0b0563a8c88053d33950885ca6d950212683e01f91",
+        "servo-constellation/event_loop.rs": "127ff3d903d7181f79fb63e7d9540b4a4307cad504f54de880e4a58318a207b7",
+        "servo-constellation/process_manager.rs": "8c3f07a9c197c13c4cddfec14f6051a51ca77f13ea29da3699c51451f371e676"
+      },
+      "product_hashes": {
+        "Cargo.toml": "7b5b598976d830e481ff8fbb7a2695face27633fabb49d5bb41bf4caaf52cf41",
+        "Cargo.lock": "54362b7600ddb3da94785a826689746d72528d76b15e752569486d48aa55f31c"
+      },
+      "candidate": "/Users/csm/src/bulwark/target/phase3-pending-final/candidate",
+      "probe_hashes": {
+        "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+        "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+        "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+        "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+        "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+        "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee"
+      }
+    },
+    "platform": {
+      "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64"
+    },
+    "source_hashes": {
+      "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+      "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+      "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee",
+      "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+      "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+      "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+      "experiments/prepare_document_scope.py": "38b340f5fce74f474078db4c02d06d422ba8725ecd683019162b3727136923a2",
+      "experiments/run_document_scope.py": "6bfbff1af85008fe34b161fd78e740b1356793d0204bf14c79826595f65bb5ba"
+    },
+    "multiprocess": true,
+    "scope": "Experimental engine scope, host allocation gate, script-thread unwind, final-handle release, explicit engine shutdown, queued execution cancellation, interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, shared-process view revocation and ordinary sibling close, script-thread failure and content-process exit or kill before document construction, crash recovery through reload and history, callback and delegate unwind safety, and constellation loss in a separate engine. Remaining replacement audits remain open.",
+    "cases": [
+      {
+        "name": "document-scope-1",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-multiprocess"
+        ],
+        "status": 0,
+        "elapsed_seconds": 9.889883332885802,
+        "assertions_complete": true,
+        "markers": [
+          "S1 initial-blank-and-tagged-result: PASS",
+          "S1 lifecycle-readiness-and-current-delivery: PASS",
+          "S1 same-document-navigation: PASS",
+          "S1 script-created-initial-document: PASS",
+          "S1 held-A-after-B-and-unscoped-control: PASS",
+          "S1 queued-reset-race-and-pipeline-collision: PASS",
+          "S1 serialization-reset: PASS",
+          "S1 delayed-host-delivery: PASS (revoked before allocation)",
+          "S1 host-cancellation: PASS",
+          "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+          "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+          "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+          "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 272 us to next result)",
+          "S1 serialization-interruption: PASS (getter terminated, 210 us to next result)",
+          "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+          "S1 uninterrupted-long-evaluation: PASS (299 ms loop completed with an open permit)",
+          "S1 javascript-url-replacement: PASS",
+          "S1 reload: PASS",
+          "S1 history: PASS (retained_identity=false)",
+          "S1 redirect: PASS",
+          "S1 failed-load: PASS (error document replaces departed document)",
+          "S1 cross-view: PASS",
+          "S1 subframe-isolation: PASS",
+          "S1 close: PASS",
+          "S1 injected-crash: PASS (constellation panic handler)",
+          "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+          "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)",
+          "S1 crash-recovery-history: PASS (reload, back to a closed history entry, and forward recover)",
+          "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)",
+          "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+          "S1 release-before-document-activation: PASS (8 callbacks released)",
+          "S1 result-callback-panic: PASS (unwind propagated, captures released, evaluation resumed)",
+          "S1 lifecycle-callback-panics: PASS (8 terminal callbacks, host revoked, unwind propagated)",
+          "S1 release-callback-panics: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 release-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 lifecycle-delegate-panic: PASS (8 terminal callbacks, delegate panic preferred, close delivered)",
+          "S1 release-delegate-panic: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 delegate-panic-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 shared-process-close: PASS (8 callbacks released, two siblings retain scope and remain usable)",
+          "S1 content-process-failure: PASS (child exit, lifeline revocation, 8 callbacks released, recovery and independent survivor)",
+          "S1 shared-process-failure: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)",
+          "S1 content-process-kill: PASS (host SIGKILL, lifeline revocation, 8 callbacks released, recovery and independent survivor)",
+          "S1 shared-process-kill: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)",
+          "S1 shared-process-close-kill-race: PASS (close precedes kill, 8 callbacks released, closed view stays revoked without crash recovery)",
+          "S1 unconstructed-process-exit: PASS (lifeline crash notification, revocation, view closed)",
+          "S1 pending-navigation-process-exit: PASS (lifeline revocation, 8 callbacks released, crash document, navigation recovers)",
+          "S1 unconstructed-process-kill: PASS (lifeline crash notification, revocation, view closed)",
+          "S1 pending-navigation-process-kill: PASS (lifeline revocation, 8 callbacks released, crash document, navigation recovers)",
+          "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+          "S1 shutdown-callback-panics: PASS (all terminal callbacks delivered, admission closed, shutdown complete)",
+          "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)",
+          "S1 document-scope prototype: PASS (51 cases; experimental lifecycle and host gate)"
+        ],
+        "log_sha256": "18ac0554549b003a10063349a52bf43c11c50caf5e027d64d93adb992d70b1e5"
+      },
+      {
+        "name": "backend-loss-1",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-backend-multiprocess"
+        ],
+        "status": 0,
+        "elapsed_seconds": 1.7652912917546928,
+        "assertions_complete": true,
+        "markers": [
+          "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1581 ms)",
+          "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 12 ms)",
+          "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+        ],
+        "log_sha256": "d346d446c91dfc742b22faa6389093825d8c980c97a9ddea186979b507ba841f"
+      },
+      {
+        "name": "document-scope-2",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-multiprocess"
+        ],
+        "status": 0,
+        "elapsed_seconds": 9.800638417247683,
+        "assertions_complete": true,
+        "markers": [
+          "S1 initial-blank-and-tagged-result: PASS",
+          "S1 lifecycle-readiness-and-current-delivery: PASS",
+          "S1 same-document-navigation: PASS",
+          "S1 script-created-initial-document: PASS",
+          "S1 held-A-after-B-and-unscoped-control: PASS",
+          "S1 queued-reset-race-and-pipeline-collision: PASS",
+          "S1 serialization-reset: PASS",
+          "S1 delayed-host-delivery: PASS (revoked before allocation)",
+          "S1 host-cancellation: PASS",
+          "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+          "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+          "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+          "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 215 us to next result)",
+          "S1 serialization-interruption: PASS (getter terminated, 149 us to next result)",
+          "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+          "S1 uninterrupted-long-evaluation: PASS (299 ms loop completed with an open permit)",
+          "S1 javascript-url-replacement: PASS",
+          "S1 reload: PASS",
+          "S1 history: PASS (retained_identity=false)",
+          "S1 redirect: PASS",
+          "S1 failed-load: PASS (error document replaces departed document)",
+          "S1 cross-view: PASS",
+          "S1 subframe-isolation: PASS",
+          "S1 close: PASS",
+          "S1 injected-crash: PASS (constellation panic handler)",
+          "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+          "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)",
+          "S1 crash-recovery-history: PASS (reload, back to a closed history entry, and forward recover)",
+          "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)",
+          "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+          "S1 release-before-document-activation: PASS (8 callbacks released)",
+          "S1 result-callback-panic: PASS (unwind propagated, captures released, evaluation resumed)",
+          "S1 lifecycle-callback-panics: PASS (8 terminal callbacks, host revoked, unwind propagated)",
+          "S1 release-callback-panics: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 release-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 lifecycle-delegate-panic: PASS (8 terminal callbacks, delegate panic preferred, close delivered)",
+          "S1 release-delegate-panic: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 delegate-panic-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 shared-process-close: PASS (8 callbacks released, two siblings retain scope and remain usable)",
+          "S1 content-process-failure: PASS (child exit, lifeline revocation, 8 callbacks released, recovery and independent survivor)",
+          "S1 shared-process-failure: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)",
+          "S1 content-process-kill: PASS (host SIGKILL, lifeline revocation, 8 callbacks released, recovery and independent survivor)",
+          "S1 shared-process-kill: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)",
+          "S1 shared-process-close-kill-race: PASS (close precedes kill, 8 callbacks released, closed view stays revoked without crash recovery)",
+          "S1 unconstructed-process-exit: PASS (lifeline crash notification, revocation, view closed)",
+          "S1 pending-navigation-process-exit: PASS (lifeline revocation, 8 callbacks released, crash document, navigation recovers)",
+          "S1 unconstructed-process-kill: PASS (lifeline crash notification, revocation, view closed)",
+          "S1 pending-navigation-process-kill: PASS (lifeline revocation, 8 callbacks released, crash document, navigation recovers)",
+          "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+          "S1 shutdown-callback-panics: PASS (all terminal callbacks delivered, admission closed, shutdown complete)",
+          "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)",
+          "S1 document-scope prototype: PASS (51 cases; experimental lifecycle and host gate)"
+        ],
+        "log_sha256": "4ffc79d113aa799b2adc768c800bd056e06aaa5375c0a5417f869885b431ef47"
+      },
+      {
+        "name": "backend-loss-2",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-backend-multiprocess"
+        ],
+        "status": 0,
+        "elapsed_seconds": 1.7505078329704702,
+        "assertions_complete": true,
+        "markers": [
+          "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1541 ms)",
+          "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 12 ms)",
+          "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+        ],
+        "log_sha256": "61f81e473c4e1e2e49bd1ad2e4884aac6d554e7fac93c8e647b3c77107f8a885"
+      },
+      {
+        "name": "document-scope-3",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-multiprocess"
+        ],
+        "status": 0,
+        "elapsed_seconds": 9.850811542011797,
+        "assertions_complete": true,
+        "markers": [
+          "S1 initial-blank-and-tagged-result: PASS",
+          "S1 lifecycle-readiness-and-current-delivery: PASS",
+          "S1 same-document-navigation: PASS",
+          "S1 script-created-initial-document: PASS",
+          "S1 held-A-after-B-and-unscoped-control: PASS",
+          "S1 queued-reset-race-and-pipeline-collision: PASS",
+          "S1 serialization-reset: PASS",
+          "S1 delayed-host-delivery: PASS (revoked before allocation)",
+          "S1 host-cancellation: PASS",
+          "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+          "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+          "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+          "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 212 us to next result)",
+          "S1 serialization-interruption: PASS (getter terminated, 157 us to next result)",
+          "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+          "S1 uninterrupted-long-evaluation: PASS (300 ms loop completed with an open permit)",
+          "S1 javascript-url-replacement: PASS",
+          "S1 reload: PASS",
+          "S1 history: PASS (retained_identity=false)",
+          "S1 redirect: PASS",
+          "S1 failed-load: PASS (error document replaces departed document)",
+          "S1 cross-view: PASS",
+          "S1 subframe-isolation: PASS",
+          "S1 close: PASS",
+          "S1 injected-crash: PASS (constellation panic handler)",
+          "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+          "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)",
+          "S1 crash-recovery-history: PASS (reload, back to a closed history entry, and forward recover)",
+          "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)",
+          "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+          "S1 release-before-document-activation: PASS (8 callbacks released)",
+          "S1 result-callback-panic: PASS (unwind propagated, captures released, evaluation resumed)",
+          "S1 lifecycle-callback-panics: PASS (8 terminal callbacks, host revoked, unwind propagated)",
+          "S1 release-callback-panics: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 release-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 lifecycle-delegate-panic: PASS (8 terminal callbacks, delegate panic preferred, close delivered)",
+          "S1 release-delegate-panic: PASS (8 terminal callbacks, captures released, survivor usable)",
+          "S1 delegate-panic-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+          "S1 shared-process-close: PASS (8 callbacks released, two siblings retain scope and remain usable)",
+          "S1 content-process-failure: PASS (child exit, lifeline revocation, 8 callbacks released, recovery and independent survivor)",
+          "S1 shared-process-failure: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)",
+          "S1 content-process-kill: PASS (host SIGKILL, lifeline revocation, 8 callbacks released, recovery and independent survivor)",
+          "S1 shared-process-kill: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)",
+          "S1 shared-process-close-kill-race: PASS (close precedes kill, 8 callbacks released, closed view stays revoked without crash recovery)",
+          "S1 unconstructed-process-exit: PASS (lifeline crash notification, revocation, view closed)",
+          "S1 pending-navigation-process-exit: PASS (lifeline revocation, 8 callbacks released, crash document, navigation recovers)",
+          "S1 unconstructed-process-kill: PASS (lifeline crash notification, revocation, view closed)",
+          "S1 pending-navigation-process-kill: PASS (lifeline revocation, 8 callbacks released, crash document, navigation recovers)",
+          "S1 engine-shutdown-cleanup: PASS (16 callbacks, retained views, admission closed, shutdown complete)",
+          "S1 shutdown-callback-panics: PASS (all terminal callbacks delivered, admission closed, shutdown complete)",
+          "S1 shutdown-delegate-panics: PASS (both views revoked, delegate panic preferred, shutdown complete)",
+          "S1 document-scope prototype: PASS (51 cases; experimental lifecycle and host gate)"
+        ],
+        "log_sha256": "1608ff0097ef550142f1b9ad021035bb86c5abba635e9e98de3fd64b76b503e2"
+      },
+      {
+        "name": "backend-loss-3",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--document-scope-backend-multiprocess"
+        ],
+        "status": 0,
+        "elapsed_seconds": 1.754647208377719,
+        "assertions_complete": true,
+        "markers": [
+          "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1564 ms)",
+          "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 13 ms)",
+          "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+        ],
+        "log_sha256": "a46e18c0207f64c0cf7122ee47a9c2e0563877d663fcc890a1b2fd4a76b1f976"
+      },
+      {
+        "name": "servo-contracts",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4",
+          "--phase3"
+        ],
+        "status": 0,
+        "elapsed_seconds": 0.4222025419585407,
+        "assertions_complete": true,
+        "markers": [],
+        "log_sha256": "9b0aaaa97c4be290fd59bd96dae9b99331fa191329ce47cf14de09f3a9ed7f3e"
+      },
+      {
+        "name": "e4-baseline",
+        "command": [
+          "/Users/csm/src/bulwark/target/phase3-pending-final/bulwark-experiment-e4"
+        ],
+        "status": 0,
+        "elapsed_seconds": 2.0640518330037594,
+        "assertions_complete": true,
+        "markers": [],
+        "log_sha256": "9b7e0097c0033af26c8fe6f475d01f8101ff3c4f094a90f8978a8af944b0ef71"
+      }
+    ]
+  },
+  "patched_source_hashes": {
+    "servo/javascript_evaluator.rs": "734c8a58a6e2d8cb22b3944747ead9e68cb199a691f3f34cbc976287fde0af0f",
+    "servo/servo.rs": "cd5ec8856c7e5514bf0a275619acbd1f1e3ca72fba029a23499ce5496440a304",
+    "servo/webview.rs": "7892434ed50da6f6d624251fe7892c726921c920adbbf870ed9b9ababa82940e",
+    "servo/webview_delegate.rs": "68cc5d761b912eb6a3ae9f45a7dc05c9d521f17bcee3fd1177e42c2842e8be38",
+    "servo-constellation/constellation.rs": "b36df556b4d5909c719899ea3c152d6fe5d9799836044313a43f92d1074b48f5",
+    "servo-constellation/embedder.rs": "630f21185e8365788a06e55fd638a4a7b6a99b3b6a9c6f5a687c43921645d5d4",
+    "servo-constellation/tracing.rs": "b81f2e65ae9f04df963eb749e87af4261ca4627a817eb3cdf4a84d205ef10dd2",
+    "servo-constellation-traits/from_script_message.rs": "1ceafa8899aaa130779493b57262117f4c43c9f09abb136535144de161d5d3c3",
+    "servo-constellation-traits/lib.rs": "c82128d9f48a47d59a48935e3b2e17920b93086c8f0b1eb1fad3dd69b7d41a4c",
+    "servo-embedder-traits/lib.rs": "b91497bd9c2f0cf4aae9f6ddae8cb03606e9243207aa26b695727a093379e717",
+    "servo-script/dom/document/document.rs": "ca73d7e9ffdb7fb36b8fa384429952b6b16e9168f8d5519ede6c5ca0e8718ffc",
+    "servo-script/event_loop/script_thread.rs": "a7095be05f5b4a97e2817d5c0496da92b165d3ae4b0b1bdc59cb8e114ea936cb",
+    "servo-script/messaging.rs": "a051c1572dcbf37bb852d2956acc1ab5cb822f84fe877db11726d588c579e2d5",
+    "servo-script-traits/lib.rs": "a985906ecde6c10e54d8b9fa25011c28583c2ffe1bf5b9a187f5c98ef2197877",
+    "servo-constellation/event_loop.rs": "01bdeb5060dd0c77dc922d9968e16c14d898504bd58bb6ed2d28afd638f8f345",
+    "servo-constellation/process_manager.rs": "f9c9ec813d62e0d8e6e5d1244af0af8a5e9b5d2bd9faa2894fe14d8c6be9c5e5"
+  },
+  "negative_controls": [
+    {
+      "variation": "Removes only the pending-pipeline clause from the lifeline liveness check.",
+      "engine_overrides": {
+        "servo-constellation/constellation.rs": "eaa3a5e48137cd85fede54123bb25c7029ad0f41f8b5c72d67ffc8f0aba5851b"
+      },
+      "observed_failure": "Error: Unconstructed process exit missed lifeline recovery: E4 process deadline exceeded; events=[Active(None)], crashes=[]",
+      "interpretation": "All 44 earlier multiprocess cases pass. The first pending-process case then fails without a crash notification. Later cases do not run.",
+      "results": {
+        "started_utc": "2026-11-25T07:32:54.315359+00:00",
+        "binary_sha256": "4f8ec2aeacbf2e93aa0e97e01a597a95749beda010afcb76cd9013f2701b2a11",
+        "preparation": {
+          "servo": "0.7.0",
+          "patch_sha256": "b06630aa9201d2fad92474286b1dff0fc00122c85cc584cbc59af12f27f43d60",
+          "source_hashes": {
+            "servo/javascript_evaluator.rs": "61fbbb07f18804b02350f412bd627f782347fcdfcf03e6ade64b75a1d8c9986a",
+            "servo/servo.rs": "4d221039ebb370ce254e2987342bcd3b5535b3e51716386e499041d6d687a073",
+            "servo/webview.rs": "ab37f1503585706e5275d78ddd1f11b76a6c5bed0a1a3b11c03507fa1f117a8a",
+            "servo/webview_delegate.rs": "2347f86f6466b249f31c35787aae8e4976b68da869c4c684383ebe2d1d573a62",
+            "servo-constellation/constellation.rs": "179ba65976d941f83670411bd92dbab603ac7180ffaacd1d81d13ed41e4efb43",
+            "servo-constellation/embedder.rs": "b0cfe993db3ea601adcea19bfca09ccb5ae6ce1c3c4d7b3541751ccefb0d7614",
+            "servo-constellation/tracing.rs": "08ebd810c0ba38496ec30552de7bafdeb41df7c8b9aee32afee434db86a00145",
+            "servo-constellation-traits/from_script_message.rs": "e003e99fa57a3e8fa9dba17bae12c3189ffad30cbbabd51cee960af73dcaf31e",
+            "servo-constellation-traits/lib.rs": "ef2f0a0728c95d747b6dcba47888691b709107a9fd4be83604df55a1d0b8fafa",
+            "servo-embedder-traits/lib.rs": "23cd7e914fad955519cd88cd3ae3c99f055f669ef3db377c21d9c5273ae2dc61",
+            "servo-script/dom/document/document.rs": "01f12b46c59a4a5be54a42a12f9fd35bd68a33efc42dcb619cb672064203ca05",
+            "servo-script/event_loop/script_thread.rs": "ee6a861fd8416f174e425a0ae3d0d049074015fe4cbdb7fd581fc400bf51f162",
+            "servo-script/messaging.rs": "123e066ae57d783c5a83ee61ef6ef52a19cf622514c3a15459dcf9db626dcda8",
+            "servo-script-traits/lib.rs": "8138a73b6e544c3f7113ae0b0563a8c88053d33950885ca6d950212683e01f91",
+            "servo-constellation/event_loop.rs": "127ff3d903d7181f79fb63e7d9540b4a4307cad504f54de880e4a58318a207b7",
+            "servo-constellation/process_manager.rs": "8c3f07a9c197c13c4cddfec14f6051a51ca77f13ea29da3699c51451f371e676"
+          },
+          "product_hashes": {
+            "Cargo.toml": "7b5b598976d830e481ff8fbb7a2695face27633fabb49d5bb41bf4caaf52cf41",
+            "Cargo.lock": "54362b7600ddb3da94785a826689746d72528d76b15e752569486d48aa55f31c"
+          },
+          "candidate": "/Users/csm/src/bulwark/target/phase3-pending-final/candidate",
+          "probe_hashes": {
+            "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+            "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+            "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+            "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+            "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+            "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee"
+          }
+        },
+        "platform": {
+          "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+          "machine": "arm64"
+        },
+        "source_hashes": {
+          "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+          "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+          "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee",
+          "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+          "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+          "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+          "experiments/prepare_document_scope.py": "38b340f5fce74f474078db4c02d06d422ba8725ecd683019162b3727136923a2",
+          "experiments/run_document_scope.py": "6bfbff1af85008fe34b161fd78e740b1356793d0204bf14c79826595f65bb5ba"
+        },
+        "multiprocess": true,
+        "scope": "Experimental engine scope, host allocation gate, script-thread unwind, final-handle release, explicit engine shutdown, queued execution cancellation, interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, shared-process view revocation and ordinary sibling close, script-thread failure and content-process exit or kill before document construction, crash recovery through reload and history, callback and delegate unwind safety, and constellation loss in a separate engine. Remaining replacement audits remain open.",
+        "cases": [
+          {
+            "name": "document-scope-1",
+            "command": [
+              "/Users/csm/src/bulwark/target/phase3-pending-nc-lifeline/bulwark-experiment-e4",
+              "--document-scope-multiprocess"
+            ],
+            "status": 1,
+            "elapsed_seconds": 17.630627957638353,
+            "assertions_complete": false,
+            "markers": [
+              "S1 initial-blank-and-tagged-result: PASS",
+              "S1 lifecycle-readiness-and-current-delivery: PASS",
+              "S1 same-document-navigation: PASS",
+              "S1 script-created-initial-document: PASS",
+              "S1 held-A-after-B-and-unscoped-control: PASS",
+              "S1 queued-reset-race-and-pipeline-collision: PASS",
+              "S1 serialization-reset: PASS",
+              "S1 delayed-host-delivery: PASS (revoked before allocation)",
+              "S1 host-cancellation: PASS",
+              "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+              "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+              "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+              "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 118 us to next result)",
+              "S1 serialization-interruption: PASS (getter terminated, 94 us to next result)",
+              "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+              "S1 uninterrupted-long-evaluation: PASS (299 ms loop completed with an open permit)",
+              "S1 javascript-url-replacement: PASS",
+              "S1 reload: PASS",
+              "S1 history: PASS (retained_identity=false)",
+              "S1 redirect: PASS",
+              "S1 failed-load: PASS (error document replaces departed document)",
+              "S1 cross-view: PASS",
+              "S1 subframe-isolation: PASS",
+              "S1 close: PASS",
+              "S1 injected-crash: PASS (constellation panic handler)",
+              "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+              "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)",
+              "S1 crash-recovery-history: PASS (reload, back to a closed history entry, and forward recover)",
+              "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)",
+              "S1 final-handle-release: PASS (mixed callbacks, host revocation, reentrant survivor)",
+              "S1 release-before-document-activation: PASS (8 callbacks released)",
+              "S1 result-callback-panic: PASS (unwind propagated, captures released, evaluation resumed)",
+              "S1 lifecycle-callback-panics: PASS (8 terminal callbacks, host revoked, unwind propagated)",
+              "S1 release-callback-panics: PASS (8 terminal callbacks, captures released, survivor usable)",
+              "S1 release-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+              "S1 lifecycle-delegate-panic: PASS (8 terminal callbacks, delegate panic preferred, close delivered)",
+              "S1 release-delegate-panic: PASS (8 terminal callbacks, captures released, survivor usable)",
+              "S1 delegate-panic-during-host-unwind: PASS (8 terminal callbacks, original panic preserved)",
+              "S1 shared-process-close: PASS (8 callbacks released, two siblings retain scope and remain usable)",
+              "S1 content-process-failure: PASS (child exit, lifeline revocation, 8 callbacks released, recovery and independent survivor)",
+              "S1 shared-process-failure: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)",
+              "S1 content-process-kill: PASS (host SIGKILL, lifeline revocation, 8 callbacks released, recovery and independent survivor)",
+              "S1 shared-process-kill: PASS (engine-reported shared PID, 16 callbacks released, both views recovered, independent survivor)",
+              "S1 shared-process-close-kill-race: PASS (close precedes kill, 8 callbacks released, closed view stays revoked without crash recovery)"
+            ],
+            "log_sha256": "04670a1cd5a2478d5a447ecf6a6d3f18c8d7c99f99aebc1e244def2ebad4157b"
+          },
+          {
+            "name": "backend-loss-1",
+            "command": [
+              "/Users/csm/src/bulwark/target/phase3-pending-nc-lifeline/bulwark-experiment-e4",
+              "--document-scope-backend-multiprocess"
+            ],
+            "status": 0,
+            "elapsed_seconds": 1.798024875111878,
+            "assertions_complete": true,
+            "markers": [
+              "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1560 ms)",
+              "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 13 ms)",
+              "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+            ],
+            "log_sha256": "bfb596437bca7b3e7ef3fc694629460b208dfd51945a0d76801fe9d050b5f696"
+          },
+          {
+            "name": "servo-contracts",
+            "command": [
+              "/Users/csm/src/bulwark/target/phase3-pending-nc-lifeline/bulwark-experiment-e4",
+              "--phase3"
+            ],
+            "status": 0,
+            "elapsed_seconds": 0.4201072081923485,
+            "assertions_complete": true,
+            "markers": [],
+            "log_sha256": "446c72ce37c79c0b73479f5fb1c8ff7e8f55300b7ea4c68855100a766d6a819c"
+          },
+          {
+            "name": "e4-baseline",
+            "command": [
+              "/Users/csm/src/bulwark/target/phase3-pending-nc-lifeline/bulwark-experiment-e4"
+            ],
+            "status": 0,
+            "elapsed_seconds": 2.1048956247977912,
+            "assertions_complete": true,
+            "markers": [],
+            "log_sha256": "b26c0db1cf64eae774471e5e2dd5fd13e06487badfe62cb5aa95ff6b003a0b7a"
+          }
+        ]
+      }
+    },
+    {
+      "variation": "Removes only the history marking from Constellation::handle_panic_in_webview.",
+      "engine_overrides": {
+        "servo-constellation/constellation.rs": "21ae053ac90cc8400a90c9291b4a260e921c806c91f20322503883cb3c30a0b5"
+      },
+      "observed_failure": "Error: Unexpected navigation marker result: Err(InternalError)",
+      "interpretation": "In both modes, the 26 earlier cases pass. The history recovery steps then fail with a wedged view. Later cases do not run, so this control does not show that the fix is required only there.",
+      "results": {
+        "single_process": {
+          "started_utc": "2026-11-25T07:33:16.526656+00:00",
+          "binary_sha256": "132b6a38578c6601a9f0a922559cf016bd54d1814f68a25f3e8f696c9850c31b",
+          "preparation": {
+            "servo": "0.7.0",
+            "patch_sha256": "b06630aa9201d2fad92474286b1dff0fc00122c85cc584cbc59af12f27f43d60",
+            "source_hashes": {
+              "servo/javascript_evaluator.rs": "61fbbb07f18804b02350f412bd627f782347fcdfcf03e6ade64b75a1d8c9986a",
+              "servo/servo.rs": "4d221039ebb370ce254e2987342bcd3b5535b3e51716386e499041d6d687a073",
+              "servo/webview.rs": "ab37f1503585706e5275d78ddd1f11b76a6c5bed0a1a3b11c03507fa1f117a8a",
+              "servo/webview_delegate.rs": "2347f86f6466b249f31c35787aae8e4976b68da869c4c684383ebe2d1d573a62",
+              "servo-constellation/constellation.rs": "179ba65976d941f83670411bd92dbab603ac7180ffaacd1d81d13ed41e4efb43",
+              "servo-constellation/embedder.rs": "b0cfe993db3ea601adcea19bfca09ccb5ae6ce1c3c4d7b3541751ccefb0d7614",
+              "servo-constellation/tracing.rs": "08ebd810c0ba38496ec30552de7bafdeb41df7c8b9aee32afee434db86a00145",
+              "servo-constellation-traits/from_script_message.rs": "e003e99fa57a3e8fa9dba17bae12c3189ffad30cbbabd51cee960af73dcaf31e",
+              "servo-constellation-traits/lib.rs": "ef2f0a0728c95d747b6dcba47888691b709107a9fd4be83604df55a1d0b8fafa",
+              "servo-embedder-traits/lib.rs": "23cd7e914fad955519cd88cd3ae3c99f055f669ef3db377c21d9c5273ae2dc61",
+              "servo-script/dom/document/document.rs": "01f12b46c59a4a5be54a42a12f9fd35bd68a33efc42dcb619cb672064203ca05",
+              "servo-script/event_loop/script_thread.rs": "ee6a861fd8416f174e425a0ae3d0d049074015fe4cbdb7fd581fc400bf51f162",
+              "servo-script/messaging.rs": "123e066ae57d783c5a83ee61ef6ef52a19cf622514c3a15459dcf9db626dcda8",
+              "servo-script-traits/lib.rs": "8138a73b6e544c3f7113ae0b0563a8c88053d33950885ca6d950212683e01f91",
+              "servo-constellation/event_loop.rs": "127ff3d903d7181f79fb63e7d9540b4a4307cad504f54de880e4a58318a207b7",
+              "servo-constellation/process_manager.rs": "8c3f07a9c197c13c4cddfec14f6051a51ca77f13ea29da3699c51451f371e676"
+            },
+            "product_hashes": {
+              "Cargo.toml": "7b5b598976d830e481ff8fbb7a2695face27633fabb49d5bb41bf4caaf52cf41",
+              "Cargo.lock": "54362b7600ddb3da94785a826689746d72528d76b15e752569486d48aa55f31c"
+            },
+            "candidate": "/Users/csm/src/bulwark/target/phase3-pending-final/candidate",
+            "probe_hashes": {
+              "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+              "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+              "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+              "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+              "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+              "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee"
+            }
+          },
+          "platform": {
+            "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+            "machine": "arm64"
+          },
+          "source_hashes": {
+            "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+            "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+            "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee",
+            "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+            "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+            "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+            "experiments/prepare_document_scope.py": "38b340f5fce74f474078db4c02d06d422ba8725ecd683019162b3727136923a2",
+            "experiments/run_document_scope.py": "6bfbff1af85008fe34b161fd78e740b1356793d0204bf14c79826595f65bb5ba"
+          },
+          "multiprocess": false,
+          "scope": "Experimental engine scope, host allocation gate, script-thread unwind, final-handle release, explicit engine shutdown, queued execution cancellation, interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, shared-process view revocation and ordinary sibling close, script-thread failure and content-process exit or kill before document construction, crash recovery through reload and history, callback and delegate unwind safety, and constellation loss in a separate engine. Remaining replacement audits remain open.",
+          "cases": [
+            {
+              "name": "document-scope-1",
+              "command": [
+                "/Users/csm/src/bulwark/target/phase3-pending-nc-history/bulwark-experiment-e4",
+                "--document-scope"
+              ],
+              "status": 1,
+              "elapsed_seconds": 5.3625792497769,
+              "assertions_complete": false,
+              "markers": [
+                "S1 initial-blank-and-tagged-result: PASS",
+                "S1 lifecycle-readiness-and-current-delivery: PASS",
+                "S1 same-document-navigation: PASS",
+                "S1 script-created-initial-document: PASS",
+                "S1 held-A-after-B-and-unscoped-control: PASS",
+                "S1 queued-reset-race-and-pipeline-collision: PASS",
+                "S1 serialization-reset: PASS",
+                "S1 delayed-host-delivery: PASS (revoked before allocation)",
+                "S1 host-cancellation: PASS",
+                "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+                "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+                "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+                "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 134 us to next result)",
+                "S1 serialization-interruption: PASS (getter terminated, 127 us to next result)",
+                "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+                "S1 uninterrupted-long-evaluation: PASS (299 ms loop completed with an open permit)",
+                "S1 javascript-url-replacement: PASS",
+                "S1 reload: PASS",
+                "S1 history: PASS (retained_identity=false)",
+                "S1 redirect: PASS",
+                "S1 failed-load: PASS (error document replaces departed document)",
+                "S1 cross-view: PASS",
+                "S1 subframe-isolation: PASS",
+                "S1 close: PASS",
+                "S1 injected-crash: PASS (constellation panic handler)",
+                "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+                "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)"
+              ],
+              "log_sha256": "81874dbdd1690bd68277a2102cbb27c676b41a55e6605ae6ca8fa50bca4be30c"
+            },
+            {
+              "name": "backend-loss-1",
+              "command": [
+                "/Users/csm/src/bulwark/target/phase3-pending-nc-history/bulwark-experiment-e4",
+                "--document-scope-backend"
+              ],
+              "status": 0,
+              "elapsed_seconds": 1.7256304170005023,
+              "assertions_complete": true,
+              "markers": [
+                "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1566 ms)",
+                "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 12 ms)",
+                "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+              ],
+              "log_sha256": "b8d3ab819edf5739ecbd485ce5d171741f4a9d7360f446098cd05fcba5cbabfe"
+            },
+            {
+              "name": "servo-contracts",
+              "command": [
+                "/Users/csm/src/bulwark/target/phase3-pending-nc-history/bulwark-experiment-e4",
+                "--phase3"
+              ],
+              "status": 0,
+              "elapsed_seconds": 0.4177471250295639,
+              "assertions_complete": true,
+              "markers": [],
+              "log_sha256": "07b4187e4bda67e21390ac305d31b75e2eaa986953c0c2f24c89af7dee7dd274"
+            },
+            {
+              "name": "e4-baseline",
+              "command": [
+                "/Users/csm/src/bulwark/target/phase3-pending-nc-history/bulwark-experiment-e4"
+              ],
+              "status": 0,
+              "elapsed_seconds": 2.068793165963143,
+              "assertions_complete": true,
+              "markers": [],
+              "log_sha256": "a7dbded4b0b5be64458d60244a5466a3463802e57ff85b115b418f9cb26d3793"
+            }
+          ]
+        },
+        "multiprocess": {
+          "started_utc": "2026-11-25T07:33:26.355531+00:00",
+          "binary_sha256": "132b6a38578c6601a9f0a922559cf016bd54d1814f68a25f3e8f696c9850c31b",
+          "preparation": {
+            "servo": "0.7.0",
+            "patch_sha256": "b06630aa9201d2fad92474286b1dff0fc00122c85cc584cbc59af12f27f43d60",
+            "source_hashes": {
+              "servo/javascript_evaluator.rs": "61fbbb07f18804b02350f412bd627f782347fcdfcf03e6ade64b75a1d8c9986a",
+              "servo/servo.rs": "4d221039ebb370ce254e2987342bcd3b5535b3e51716386e499041d6d687a073",
+              "servo/webview.rs": "ab37f1503585706e5275d78ddd1f11b76a6c5bed0a1a3b11c03507fa1f117a8a",
+              "servo/webview_delegate.rs": "2347f86f6466b249f31c35787aae8e4976b68da869c4c684383ebe2d1d573a62",
+              "servo-constellation/constellation.rs": "179ba65976d941f83670411bd92dbab603ac7180ffaacd1d81d13ed41e4efb43",
+              "servo-constellation/embedder.rs": "b0cfe993db3ea601adcea19bfca09ccb5ae6ce1c3c4d7b3541751ccefb0d7614",
+              "servo-constellation/tracing.rs": "08ebd810c0ba38496ec30552de7bafdeb41df7c8b9aee32afee434db86a00145",
+              "servo-constellation-traits/from_script_message.rs": "e003e99fa57a3e8fa9dba17bae12c3189ffad30cbbabd51cee960af73dcaf31e",
+              "servo-constellation-traits/lib.rs": "ef2f0a0728c95d747b6dcba47888691b709107a9fd4be83604df55a1d0b8fafa",
+              "servo-embedder-traits/lib.rs": "23cd7e914fad955519cd88cd3ae3c99f055f669ef3db377c21d9c5273ae2dc61",
+              "servo-script/dom/document/document.rs": "01f12b46c59a4a5be54a42a12f9fd35bd68a33efc42dcb619cb672064203ca05",
+              "servo-script/event_loop/script_thread.rs": "ee6a861fd8416f174e425a0ae3d0d049074015fe4cbdb7fd581fc400bf51f162",
+              "servo-script/messaging.rs": "123e066ae57d783c5a83ee61ef6ef52a19cf622514c3a15459dcf9db626dcda8",
+              "servo-script-traits/lib.rs": "8138a73b6e544c3f7113ae0b0563a8c88053d33950885ca6d950212683e01f91",
+              "servo-constellation/event_loop.rs": "127ff3d903d7181f79fb63e7d9540b4a4307cad504f54de880e4a58318a207b7",
+              "servo-constellation/process_manager.rs": "8c3f07a9c197c13c4cddfec14f6051a51ca77f13ea29da3699c51451f371e676"
+            },
+            "product_hashes": {
+              "Cargo.toml": "7b5b598976d830e481ff8fbb7a2695face27633fabb49d5bb41bf4caaf52cf41",
+              "Cargo.lock": "54362b7600ddb3da94785a826689746d72528d76b15e752569486d48aa55f31c"
+            },
+            "candidate": "/Users/csm/src/bulwark/target/phase3-pending-final/candidate",
+            "probe_hashes": {
+              "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+              "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+              "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+              "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+              "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+              "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee"
+            }
+          },
+          "platform": {
+            "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+            "machine": "arm64"
+          },
+          "source_hashes": {
+            "experiments/e4-dom-channel/Cargo.toml": "7d5f7280b9b08fb5ce7dc9c26ba5c6cd6bca4b5e4ae09c520000a3d194951ca3",
+            "experiments/e4-dom-channel/src/document_scope.rs": "e2dbf643518e615ed66ddd245531b1536eccfb67409e6e1ddbff2f514f19e2fc",
+            "experiments/e4-dom-channel/src/main.rs": "2df34788b4caa31eda310f3f9a46ee7a7113da1dd3f6ec903ec20e30cb0396ee",
+            "experiments/e4-dom-channel/src/contracts.rs": "22fb19098607b2a3d3b253c94798fc7841d40ac260c55ec346ef8d6364d5fa12",
+            "experiments/e4-dom-channel/agent.js": "097737f5c44b6d741497ff680c4b84e44f4775919ca4ebe8a3b8d3934b91aaa9",
+            "experiments/e4-dom-channel/phase3-agent.js": "5210c0731278e316ed6ca69d5c267c40451fccfaea4bbdad87df29b5158cf7c7",
+            "experiments/prepare_document_scope.py": "38b340f5fce74f474078db4c02d06d422ba8725ecd683019162b3727136923a2",
+            "experiments/run_document_scope.py": "6bfbff1af85008fe34b161fd78e740b1356793d0204bf14c79826595f65bb5ba"
+          },
+          "multiprocess": true,
+          "scope": "Experimental engine scope, host allocation gate, script-thread unwind, final-handle release, explicit engine shutdown, queued execution cancellation, interruption of running JavaScript, content-process exit and forced kill in multiprocess mode, shared-process view revocation and ordinary sibling close, script-thread failure and content-process exit or kill before document construction, crash recovery through reload and history, callback and delegate unwind safety, and constellation loss in a separate engine. Remaining replacement audits remain open.",
+          "cases": [
+            {
+              "name": "document-scope-1",
+              "command": [
+                "/Users/csm/src/bulwark/target/phase3-pending-nc-history/bulwark-experiment-e4",
+                "--document-scope-multiprocess"
+              ],
+              "status": 1,
+              "elapsed_seconds": 8.678638915996999,
+              "assertions_complete": false,
+              "markers": [
+                "S1 initial-blank-and-tagged-result: PASS",
+                "S1 lifecycle-readiness-and-current-delivery: PASS",
+                "S1 same-document-navigation: PASS",
+                "S1 script-created-initial-document: PASS",
+                "S1 held-A-after-B-and-unscoped-control: PASS",
+                "S1 queued-reset-race-and-pipeline-collision: PASS",
+                "S1 serialization-reset: PASS",
+                "S1 delayed-host-delivery: PASS (revoked before allocation)",
+                "S1 host-cancellation: PASS",
+                "S1 queued-engine-cancellation: PASS (mutation prevented, one callback, reentrant survivor)",
+                "S1 completed-engine-cancellation: PASS (delivery suppressed, existing mutation preserved)",
+                "S1 engine-cancellation-callback-panic: PASS (permit closed before unwind, mutation prevented)",
+                "S1 active-engine-interruption: PASS (loop and finally terminated, one callback, 203 us to next result)",
+                "S1 serialization-interruption: PASS (getter terminated, 146 us to next result)",
+                "S1 interrupted-scheduled-work: PASS (prior microtask and timer survived interruption)",
+                "S1 uninterrupted-long-evaluation: PASS (299 ms loop completed with an open permit)",
+                "S1 javascript-url-replacement: PASS",
+                "S1 reload: PASS",
+                "S1 history: PASS (retained_identity=false)",
+                "S1 redirect: PASS",
+                "S1 failed-load: PASS (error document replaces departed document)",
+                "S1 cross-view: PASS",
+                "S1 subframe-isolation: PASS",
+                "S1 close: PASS",
+                "S1 injected-crash: PASS (constellation panic handler)",
+                "S1 script-thread-failure-and-callback-cleanup: PASS (8 callbacks released)",
+                "S1 unconstructed-view-failure: PASS (9 early requests failed without retention, pending pipeline unwound, no crash document)"
+              ],
+              "log_sha256": "606d1fd88ffe20e96e78077bf373e5118efff9fb84e9f7cd339d2eea8de6e2ba"
+            },
+            {
+              "name": "backend-loss-1",
+              "command": [
+                "/Users/csm/src/bulwark/target/phase3-pending-nc-history/bulwark-experiment-e4",
+                "--document-scope-backend-multiprocess"
+              ],
+              "status": 0,
+              "elapsed_seconds": 1.786991958040744,
+              "assertions_complete": true,
+              "markers": [
+                "S1 backend-disconnection: PASS (constellation unwind, 2 views revoked, 8 callbacks released, admission closed; cleanup after 1556 ms)",
+                "S1 drop-after-backend-loss: PASS (local shutdown completion, one loss report, destructor returned after 12 ms)",
+                "S1 backend-loss prototype: PASS (2 cases; constellation unwind)"
+              ],
+              "log_sha256": "7e05cd533090c44e35ee3a6929e34721b58bc11ec665b566d4be9d2b9ead2db4"
+            },
+            {
+              "name": "servo-contracts",
+              "command": [
+                "/Users/csm/src/bulwark/target/phase3-pending-nc-history/bulwark-experiment-e4",
+                "--phase3"
+              ],
+              "status": 0,
+              "elapsed_seconds": 0.43063254188746214,
+              "assertions_complete": true,
+              "markers": [],
+              "log_sha256": "a8bfb7eb22517e81a40aadc96f06872846c6c20449161d3837c80c8d6c323bf8"
+            },
+            {
+              "name": "e4-baseline",
+              "command": [
+                "/Users/csm/src/bulwark/target/phase3-pending-nc-history/bulwark-experiment-e4"
+              ],
+              "status": 0,
+              "elapsed_seconds": 2.0736537501215935,
+              "assertions_complete": true,
+              "markers": [],
+              "log_sha256": "7c89e20b83d7bbe1ef92f16e95190b5543becb03e0737435e0ffaec773ebde93"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "local_validation": {
+    "candidate_build": {
+      "status": 0,
+      "command": "CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_TARGET_DIR=\"$PWD/target\" cargo build --offline --locked --manifest-path target/phase3-pending-final/candidate/Cargo.toml -p bulwark-experiment-e4 --features document-scope-multiprocess",
+      "log_sha256": "f33f3420793f7c920de9c169487321331ca0b3a9f7911ab5d620a8762108c9bb"
+    },
+    "portable_tests": {
+      "status": 0,
+      "passed_tests": 61,
+      "command": "cargo test --offline --locked --workspace --no-default-features",
+      "log_sha256": "7fcaa7db4a1728b6f0202e9255347bfe0a07fb0ba896af0ab08d8ce432220bd9"
+    },
+    "portable_clippy": {
+      "status": 0,
+      "command": "cargo clippy --offline --locked --workspace --all-targets --no-default-features -- -D warnings",
+      "log_sha256": "c2ccae29be8ebbd8973f3201e5f6646ec32bdad22fe9c3866ff8d1618ed74896"
+    },
+    "probe_clippy": {
+      "status": 0,
+      "command": "cargo clippy --offline --locked --manifest-path target/phase3-pending-final/candidate/Cargo.toml -p bulwark-experiment-e4 --features document-scope-multiprocess --all-targets -- -D warnings",
+      "log_sha256": "8e40504648bb9b3e9c678409262fe7fbdc9a0e2d58023803017d69a3a1572df4"
+    },
+    "runner_tests": {
+      "status": 0,
+      "passed_tests": 8,
+      "command": "python3 -m unittest discover -s experiments -p test_document_scope_runner.py -v",
+      "log_sha256": "8ed538d372b3b037c291c74c5a650f271d880d1e0ff73dbf66deb67d5d5f9bf6"
+    },
+    "formatting": "cargo fmt --all -- --check; passed",
+    "python_syntax": "python3 -m py_compile experiments/*.py; passed",
+    "patch_reproduction": "The patch applies to the published packages with patch -F 0 and no offsets. A fresh preparation reproduces the development sources byte for byte.",
+    "binary_isolation": "Each run used a private copy of its binary. The final build was rebuilt after the negative controls and matches the SHA-256 of both passing final reports.",
+    "product_changes": "None. Cargo.toml, Cargo.lock, product crates, and installed natives are unchanged."
+  },
+  "limitations": [
+    "Multiprocess evidence uses unsandboxed children on macOS arm64 with software rendering.",
+    "Exit and kill happen at a barrier in the pending child. Failures during parsing, after headers, and in about:blank or srcdoc construction remain untested.",
+    "History recovery is checked for top-level entries after one failure path. Nested browsing-context history and other crash paths rely on the same handler but have no dedicated fixture.",
+    "Fixture interception replaces every crash document, so no case observes Servo's real error page.",
+    "The host allocation counter is not a production registry or handle revocation mechanism.",
+    "No new Linux, native-input, release-performance, or remote CI evidence is claimed."
+  ]
+}

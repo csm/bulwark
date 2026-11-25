@@ -189,8 +189,8 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and forty shared regression cases.
-Multiprocess mode adds six cases, for unexpected content-process exit, a forced kill, and shared-process teardown.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and forty-one shared regression cases.
+Multiprocess mode adds ten cases, for unexpected content-process exit, a forced kill, shared-process teardown, and pending-process failure.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.
 History reactivation receives a fresh incarnation before script resumes.
@@ -220,6 +220,11 @@ A separate engine process checks an actual constellation unwind in both process 
 Script-thread unwinds before document construction now cover a new view and a pending cross-site navigation.
 A new view that fails before its first document cannot recover, and evaluation fails with `InternalError`.
 A failed pending navigation replaces the healthy active document with a crash document after revocation.
+Child exit and kill before construction were silent, because the lifeline did not treat pending pipelines as live.
+A live view also kept a stale pending change and could not navigate again. The patch now treats pending pipelines as live.
+Crash recovery left history entries on closed pipelines, so back and forward wedged the view.
+The patch now marks those entries for reload before recovery closes them. Reload, back, forward, and a new URL recover.
+Embedder interception replaces Servo's crash error page. Product request hooks must not override crash loads.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.

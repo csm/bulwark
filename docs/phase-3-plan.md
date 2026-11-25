@@ -271,9 +271,13 @@ The review needs these decisions:
 ### Recorded decisions, 2026-11-24
 
 - A failed pending navigation replaces the healthy active document with an error page.
-  The existing Servo recovery already does this after it revokes the old document. No engine change is needed.
-- A failed buffer stays visibly failed until the user kills it, by key or by command. Retry in place is not required.
+  The existing Servo recovery does this after it revokes the old document.
+  Back and forward after recovery needed an engine fix, recorded in the [recovery audit](phase-3-document-scope.md#pending-process-and-recovery-audit).
+- An error page is recoverable. The user can navigate back, reload, or edit the target URL and try again.
+  The user can also kill the buffer, by key or by command.
+- A failed buffer shows a visible error state until the user recovers or kills it.
   The product renders this state natively from `:page/crashed`, without an engine crash page.
+  Where the engine view cannot navigate again, recovery replaces it with a fresh view in the same buffer.
   This covers failure before the first document, where Servo creates no crash page, and backend loss, where no engine page can render.
   The error view shows the engine's failure reason.
   The presentation follows the platform for fun: a classic sad Mac on macOS, a kernel panic screen on Linux, and a blue screen on Windows.
