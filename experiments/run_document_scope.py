@@ -26,6 +26,8 @@ EXPECTED_MARKERS = {
     "document-write-parser-blocked-failure", "document-open-write-failure",
     "javascript-url-crash-recovery", "cross-site-parser-blocked-failure",
     "cross-site-subframe-parser-blocked-failure", "sandboxed-srcdoc-parser-blocked-failure",
+    "same-site-frame-pending-navigation-failure", "cross-site-frame-pending-navigation-failure",
+    "cross-site-lone-frame-pending-navigation-failure",
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
     "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
     "queued-engine-cancellation", "completed-engine-cancellation",
@@ -42,6 +44,10 @@ MULTIPROCESS_MARKERS = {
     "pending-navigation-process-exit", "pending-navigation-process-kill",
     "cross-site-parser-blocked-process-exit", "cross-site-parser-blocked-process-kill",
     "cross-site-subframe-process-exit", "cross-site-subframe-process-kill",
+    "sandboxed-srcdoc-process-exit", "sandboxed-srcdoc-process-kill",
+    "same-site-frame-pending-process-exit", "same-site-frame-pending-process-kill",
+    "cross-site-frame-pending-process-exit", "cross-site-frame-pending-process-kill",
+    "cross-site-lone-frame-pending-process-exit", "cross-site-lone-frame-pending-process-kill",
 }
 # Backend loss stops the engine, so it runs in its own process after each scope case.
 BACKEND_MARKERS = {"backend-disconnection", "drop-after-backend-loss", "backend-loss prototype"}
@@ -125,7 +131,10 @@ def main():
                   "crash recovery of a javascript: URL document, "
                   "script-thread failure while a cross-site navigation, a cross-site subframe, "
                   "or a sandboxed srcdoc child parses in its own event loop, "
-                  "content-process exit or kill while a cross-site document or subframe parses, "
+                  "content-process exit or kill while a cross-site document, a cross-site subframe, "
+                  "or a sandboxed srcdoc child parses, "
+                  "script-thread failure and content-process exit or kill while a same-site or "
+                  "cross-site child frame's navigation waits for its response headers, "
                   "callback and delegate unwind safety, and constellation loss in a separate engine. "
                   "Remaining replacement audits remain open."),
         "cases": [],

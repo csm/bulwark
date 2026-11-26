@@ -189,8 +189,8 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and fifty-three shared regression cases.
-Multiprocess mode adds fourteen cases, for unexpected content-process exit, a forced kill, shared-process teardown, pending-process failure, and process loss during parsing.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and fifty-six shared regression cases.
+Multiprocess mode adds twenty-two cases, for unexpected content-process exit, a forced kill, shared-process teardown, pending-process failure, process loss during parsing, and process loss of a child frame's pending pipeline.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.
 History reactivation receives a fresh incarnation before script resumes.
@@ -237,6 +237,10 @@ A script-thread unwind also covers a parsing sandboxed `srcdoc` child, which Ser
 Servo activates a top-level document at its response headers, so no pending top-level document parses.
 A child frame's failure replaces the whole view, including a healthy parent in another event loop, and revokes other views in the child's event loop.
 Views whose pipelines all run in other event loops keep their scope. The engine change adds only frame probes.
+Child exit and kill also cover the parsing sandboxed `srcdoc` child, with the same scope results as its unwind.
+Script-thread unwinds, child exit, and child kill now cover a child frame's pending navigation before its response headers.
+The pending pipeline shares the parent's event loop, joins a child-site popup's event loop, or runs alone in a new event loop.
+The failure of its event loop replaces the whole view in each layout. Other views in that event loop also lose scope.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.

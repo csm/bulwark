@@ -317,10 +317,11 @@ It rejects the retained reply before host allocation and requires an empty pendi
 It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
 An independent view keeps its scope and accepts evaluation.
 
-All fifty-three shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
+All fifty-six shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
 The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more.
 The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases.
-The [cross-site parsing audit](#cross-site-parsing-audit) adds four parsing-process cases, for sixty-seven cases in total.
+The [cross-site parsing audit](#cross-site-parsing-audit) adds four parsing-process cases.
+The [pending frame audit](#pending-frame-audit) adds eight cases, for seventy-eight cases in total.
 The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
 The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
@@ -551,7 +552,94 @@ For the frames, reload restores the parent with the fixture origin, and the pare
 A new URL recovers each revoked view, and the independent view stays usable.
 
 These cases characterize existing behavior. The engine change adds only probes, so they have no negative control.
-A pending navigation in a child frame, history traversal inside a frame after recovery, and process loss of the sandboxed `srcdoc` child remain unchecked.
+The [pending frame audit](#pending-frame-audit) covers a pending navigation in a child frame and process loss of the sandboxed `srcdoc` child.
+History traversal inside a frame after recovery remains unchecked.
+
+## Pending frame audit
+
+This audit fails a child frame whose navigation waits for its response headers.
+It also ends the process of the sandboxed `srcdoc` child while its parser waits.
+
+A parent at the fixture origin loads a same-site child frame and completes its load.
+A host evaluation then sets the frame's `src` attribute.
+The constellation creates a new pipeline for the frame's browsing context. That pipeline stays a pending change until its document activates.
+The host withholds the navigation response, so the pending pipeline has no document.
+The old child document stays active, and the parent still reads its marker.
+The parent keeps its identity and reports no further readiness.
+The probe for a pending top-level pipeline finds none.
+
+The engine patch adds one probe message and four probe methods. They select the view's newest pending change for a child browsing context.
+One method unwinds the script thread of that pending pipeline and reports whether its event loop differs from the top-level document's.
+The other three use the existing barrier on that pipeline's content process to exit it, kill it, or read its process id.
+The script thread accepts the unwind and the barrier for a pipeline without a document.
+The probes do not change engine behavior outside the fixture.
+
+Three shared cases unwind the event loop of the pending pipeline:
+
+- `same-site-frame-pending-navigation-failure`: The frame navigates within the fixture origin.
+  The pending pipeline shares the parent's event loop, so the parent's script thread unwinds.
+  One popup stays at `about:blank` in the parent's event loop.
+- `cross-site-frame-pending-navigation-failure`: The frame navigates to the loopback site.
+  A popup loaded that site before the navigation, so the pending pipeline joins the popup's event loop.
+  A second popup stays at `about:blank` in the parent's event loop.
+- `cross-site-lone-frame-pending-navigation-failure`: The frame navigates to a site that no other document uses.
+  The pending pipeline is the only pipeline in a new event loop.
+  One popup stays at `about:blank` in the parent's event loop.
+
+The probe reports the parent's event loop for the same-site case and a separate event loop for both cross-site cases.
+The host withholds the cross-site navigations before they reach a network. The loopback server receives only the popup's request.
+
+Six multiprocess cases end the process of the pending pipeline at the barrier instead:
+
+- `same-site-frame-pending-process-exit` and `same-site-frame-pending-process-kill`.
+- `cross-site-frame-pending-process-exit` and `cross-site-frame-pending-process-kill`.
+- `cross-site-lone-frame-pending-process-exit` and `cross-site-lone-frame-pending-process-kill`.
+
+In multiprocess mode, every case checks the engine-reported process ids.
+The parent, its active child, and the parent-loop popup share one process. The same-site pending pipeline also runs in that process.
+The cross-site pending pipeline runs in another process, which it shares with the child-site popup.
+The lone pending pipeline runs in a process that differs from the host's, the parent's, and the independent view's.
+
+The panic handler and the lifeline handler select every pipeline in the failed event loop, including pending pipelines.
+Each view that owns one of those pipelines is revoked and recovered.
+The cases assert these scope results:
+
+- Same-site: The parent and the parent-loop popup lose scope. Both run in the failed event loop.
+  The popup's crash document is blank, because the popup was at `about:blank`.
+- Cross-site: The healthy parent loses scope. Its only pipeline in the failed event loop is the pending pipeline.
+  The child-site popup loses scope. The parent-loop popup keeps its scope and its retained reply.
+- Cross-site, alone: The healthy parent loses scope. The parent-loop popup keeps its scope and its retained reply.
+- An independent view keeps its scope in every case.
+
+The host holds eight callbacks for the parent and for each popup that loses scope.
+In the cross-site cases, a barrier on the healthy parent's script thread holds the parent's callbacks, so only revocation can complete them.
+In the process cases, the barrier holds the callbacks of each view in the failed process before that process ends.
+Each revoked view receives revocation before its terminal callbacks and the exact reason.
+Captures release, the pending tables are empty, and each revoked view's retained reply fails the host allocation check.
+The parent's crash document is Servo's error page with the failure reason. So is the child-site popup's crash document.
+
+The host then answers the withheld navigation with a document that sets a marker and posts a message to its parent.
+After 300 milliseconds each crash document keeps its identity, no other failure occurs, and the engine reports no error.
+The failed parent reports no further readiness. The engine rejects each failed identity.
+Reload restores the parent with the fixture origin, and its frame loads the original child document.
+A new URL recovers the parent and each revoked popup. The independent view stays usable.
+
+In the lone process cases, no active document shares the failed process.
+The source shows that the lifeline handler then treats the process as live only through the pending-change clause of the [recovery audit](#pending-process-and-recovery-audit).
+In the other process cases, an active document in the failed process also makes it live.
+That clause's negative control stops at the first pending-process case, so no control shows the dependence of these cases.
+
+Two more multiprocess cases end the process of the sandboxed `srcdoc` child from the [cross-site parsing audit](#cross-site-parsing-audit):
+`sandboxed-srcdoc-process-exit` and `sandboxed-srcdoc-process-kill`.
+The child's process differs from the host's and from the parent's process. The parent-loop popup shares the parent's process.
+The lifeline revokes the healthy parent before eight callbacks that a barrier holds on the parent's script thread.
+The reason is `Content process disconnected`. The parent-loop popup keeps its scope and its retained reply.
+The crash page, late-data, reload, new URL, and survivor checks of the unwind case also pass.
+
+These cases characterize existing behavior. The engine change adds only probes, so they have no negative control.
+Each case navigates a loaded frame through its `src` attribute.
+A frame's initial navigation, a navigation that the child starts, and a pending traversal inside a frame remain unchecked.
+History traversal inside a frame after recovery also remains unchecked.
 
 ## Pending process and recovery audit
 
@@ -730,6 +818,11 @@ Fixture markers establish test order, without authentication claims.
 | Sandboxed `srcdoc` parse failure | A sandboxed `srcdoc` child in a new event loop unwinds while it parses. The healthy parent releases eight callbacks and gets a crash document. A popup in the parent's event loop keeps scope. |
 | Cross-site parse process exit and kill (multiprocess only) | The process of a parsing cross-site document exits or is killed. The lifeline releases eight callbacks. The source-loop popup keeps scope, and reload, back, and a new URL recover. |
 | Cross-site subframe process exit and kill (multiprocess only) | The process of a parsing cross-site child exits or is killed. The parent and the child-site popup each release eight callbacks. The parent-loop popup keeps scope. |
+| Sandboxed `srcdoc` process exit and kill (multiprocess only) | The process of a parsing sandboxed `srcdoc` child exits or is killed. The healthy parent releases eight callbacks and gets a crash document. The parent-loop popup keeps scope. |
+| Same-site pending frame failure | A frame's same-site navigation waits for its response headers, and the parent's event loop unwinds. The parent and a popup in that loop each release eight callbacks and get crash documents. Late data is ignored. Reload and a new URL recover. |
+| Cross-site pending frame failure | A frame's pending pipeline joins a child-site popup's event loop, which unwinds. The healthy parent and that popup each release eight callbacks and get crash pages. A popup in the parent's event loop keeps scope. |
+| Lone cross-site pending frame failure | A frame's pending pipeline is alone in a new event loop, which unwinds. The healthy parent releases eight callbacks and gets a crash page. A popup in the parent's event loop keeps scope. |
+| Pending frame process exit and kill (multiprocess only) | The process of a frame's pending pipeline exits or is killed in each of the three layouts. The same scope results, callback release, late-data, and recovery checks pass. |
 | Unconstructed process exit and kill (multiprocess only) | The child of a new view's pending pipeline exits or is killed. The host receives revocation and a crash notification, and the view closes. |
 | Pending navigation process exit and kill (multiprocess only) | The child of a live view's pending navigation exits or is killed. Eight callbacks are released, and the view navigates again. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
@@ -752,7 +845,7 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats fifty-three cases in single-process mode or sixty-seven cases in multiprocess mode.
+The runner repeats fifty-six cases in single-process mode or seventy-eight cases in multiprocess mode.
 The summary marker must report the same case count.
 Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
@@ -762,8 +855,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [cross-site parsing evidence](../experiments/phase3/document-cross-site-parse-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, and local checks.
-Its baseline is the synchronous construction checkpoint at `69201f4`, whose three final runs in each mode passed with both Servo controls.
+The [pending frame evidence](../experiments/phase3/document-pending-frame-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, and local checks.
+Its baseline is the cross-site parsing checkpoint at `ffac748`, whose three final runs in each mode passed with both Servo controls.
+The [cross-site parsing evidence](../experiments/phase3/document-cross-site-parse-evidence-2026-11-26.json) preserves the fifty-three-case checkpoint.
 The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) preserves the fifty-case checkpoint and its fixture race.
 The [partial response evidence](../experiments/phase3/document-partial-evidence-2026-11-26.json) preserves the forty-four-case checkpoint.
 The [crash history evidence](../experiments/phase3/document-crash-history-evidence-2026-11-26.json) preserves the fifty-two-case checkpoint and its negative control.
@@ -785,16 +879,17 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All fifty-three shared cases passed in three single-process runs on macOS arm64 with software rendering.
-Each single-process run took 7.0 to 9.7 seconds.
-All sixty-seven cases passed in three multiprocess runs. Each multiprocess run took 40.9 to 41.0 seconds, within the 80-second fixture deadline.
-The seven new cases added about 8.3 seconds to each multiprocess run.
-One development build and one development run in each mode passed before the final preparation. No final run failed.
+All fifty-six shared cases passed in three single-process runs on macOS arm64 with software rendering.
+Each single-process run took 8.3 to 11.1 seconds.
+All seventy-eight cases passed in three multiprocess runs. Each multiprocess run took 54.0 to 54.1 seconds, within the 80-second fixture deadline.
+The eleven new cases added about 13.1 seconds to each multiprocess run. The margin to the fixture deadline is now about 26 seconds.
+This checkpoint keeps both deadlines. A later checkpoint that adds cases at the same rate must split the run or raise the deadline.
+Two development runs in each mode passed before the final preparation. The first run preceded the lone pending-frame cases. No final run failed.
 A fresh preparation produced the final binary. Its sources matched the development sources exactly.
-Both backend loss cases passed in three separate engine runs in each mode. Cleanup completed 1,467 to 1,495 milliseconds after the crash request.
+Both backend loss cases passed in three separate engine runs in each mode. Cleanup completed 1,483 to 1,504 milliseconds after the crash request.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
-Python syntax checks and ten runner tests also passed. The new runner test pins the documented case counts.
+Python syntax checks and ten runner tests also passed. The runner test pins the documented case counts.
 These builds retained the previous line-table debug configuration.
 
 The synchronous construction checkpoint records the following development failures.
@@ -846,11 +941,15 @@ The kill fixture covers only a child blocked at a barrier.
 Kills during JavaScript execution or IPC writes remain untested.
 Script-thread unwinds, child exit, and child kill before construction now have evidence for a new view and a pending cross-site navigation.
 Script-thread unwinds, child exit, and child kill now also cover a parsing cross-site document and a parsing cross-site subframe.
-A script-thread unwind also covers a parsing sandboxed `srcdoc` child in its own event loop. Its process loss remains untested.
+Script-thread unwinds, child exit, and child kill also cover a parsing sandboxed `srcdoc` child in its own event loop.
 Servo has no pending top-level document that parses, because it activates the document at the response headers.
 A failure of a child frame's event loop replaces the whole view, including a healthy parent in another event loop.
 It also revokes every other view with a pipeline in that event loop. A product contract must accept or change this.
-A pending navigation in a child frame remains untested.
+Script-thread unwinds, child exit, and child kill now cover a child frame's pending navigation before its response headers.
+The pending pipeline shares the parent's event loop, joins a child-site popup's event loop, or runs alone in a new event loop.
+In each layout, the failure replaces the whole view in the same way as a failure of an active frame.
+The source shows that, for a lone pending pipeline, only the lifeline's pending-change clause makes the process live. No negative control isolates this dependence yet.
+A frame's initial navigation, a navigation that the child starts, and a pending traversal inside a frame remain untested.
 Error-page recovery through reload, back, forward, and a new URL has evidence for top-level history only.
 Embedder interception no longer replaces crash error pages. Crash pages for `about:blank` documents remain blank. They have the origin `null` and run inserted scripts.
 Script-thread unwinds after response headers now cover a top-level document before its DOM exists and while its parser is blocked.

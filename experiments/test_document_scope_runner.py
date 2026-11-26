@@ -120,11 +120,14 @@ class DocumentScopeRunnerTests(unittest.TestCase):
 
     def test_parse_failure_cases_and_documented_counts(self):
         # The scope guide and handoff state these counts. Keep them in step with the markers.
-        self.assertEqual(len(runner.EXPECTED_MARKERS) - 1, 53)
-        self.assertEqual(len(runner.EXPECTED_MARKERS | runner.MULTIPROCESS_MARKERS) - 1, 67)
+        self.assertEqual(len(runner.EXPECTED_MARKERS) - 1, 56)
+        self.assertEqual(len(runner.EXPECTED_MARKERS | runner.MULTIPROCESS_MARKERS) - 1, 78)
         shared = ("cross-site-parser-blocked-failure",
                   "cross-site-subframe-parser-blocked-failure",
-                  "sandboxed-srcdoc-parser-blocked-failure")
+                  "sandboxed-srcdoc-parser-blocked-failure",
+                  "same-site-frame-pending-navigation-failure",
+                  "cross-site-frame-pending-navigation-failure",
+                  "cross-site-lone-frame-pending-navigation-failure")
         for name in shared:
             with self.subTest(missing=name):
                 markers = [line for line in self.markers()

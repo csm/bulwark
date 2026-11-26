@@ -13,8 +13,8 @@ These measurements exclude the future node registry and JSON schema conversion. 
 The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its fifty-three shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before construction, after response headers, during `about:blank`, `srcdoc`, `document.write`, and `javascript:` URL construction, while cross-site documents and frames parse, and after construction, crash recovery history, and callback panics.
-Multiprocess mode adds fourteen cases: content-process exit and kill, four shared-process cases, four pending-process cases, and four parsing-process cases.
+Its fifty-six shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before construction, after response headers, during `about:blank`, `srcdoc`, `document.write`, and `javascript:` URL construction, while cross-site documents and frames parse, before a child frame's pending navigation receives its response headers, and after construction, crash recovery history, and callback panics.
+Multiprocess mode adds twenty-two cases: content-process exit and kill, four shared-process cases, four pending-process cases, six parsing-process cases, and six pending-frame process cases.
 A separate engine process adds two backend loss cases in each mode.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
 Final handle release now revokes host scope and pending callbacks synchronously, including release before host activation.
@@ -148,6 +148,20 @@ Reload and a new URL recover. After the navigation failure, back also rebuilds t
 These cases characterize existing behavior, so they have no negative control.
 The product pins and installed natives remain unchanged.
 
+The pending frame audit fails a child frame whose navigation waits for its response headers.
+A host evaluation sets the frame's `src`, and the host withholds the response. The old child document stays active.
+The engine patch adds only pending-frame probes: an unwind of the pending pipeline's event loop, and the exit, kill, and process-id barrier for its process.
+Three shared cases unwind that event loop. Six multiprocess cases exit or kill its process.
+The pending pipeline shares the parent's event loop, joins a child-site popup's event loop, or runs alone in a new event loop.
+The probe and engine-reported process ids confirm each layout.
+The failure revokes every view that has a pipeline in that event loop, including the healthy parent through its pending pipeline.
+Each revoked view receives revocation before eight terminal callbacks, and upstream recovery replaces it with a crash page.
+A popup at `about:blank` in the parent's event loop keeps its scope in both cross-site layouts. It loses scope in the same-site layout.
+A late navigation response reaches no live document and raises no engine error. Reload and a new URL recover.
+The source shows that, for a lone pending pipeline, only the lifeline's pending-change clause makes the process live. No negative control isolates this dependence yet.
+Two more multiprocess cases exit or kill the sandboxed `srcdoc` child's process while it parses. The scope results match its unwind.
+These cases characterize existing behavior, so they have no negative control.
+
 P3.1 remains open on these requirements:
 
 - Engine document identity and protocol-source binding to the current privileged document.
@@ -162,8 +176,9 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [cross-site parsing evidence](../experiments/phase3/document-cross-site-parse-evidence-2026-11-26.json) records the current S1 runs, engine controls, and local checks.
-Its baseline is the synchronous construction checkpoint at `69201f4`, whose three final runs in each mode passed.
+The [pending frame evidence](../experiments/phase3/document-pending-frame-evidence-2026-11-26.json) records the current S1 runs, engine controls, and local checks.
+Its baseline is the cross-site parsing checkpoint at `ffac748`, whose three final runs in each mode passed.
+The [cross-site parsing evidence](../experiments/phase3/document-cross-site-parse-evidence-2026-11-26.json) preserves the fifty-three-case checkpoint.
 The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) preserves the fifty-case checkpoint and its fixture race.
 The [partial response evidence](../experiments/phase3/document-partial-evidence-2026-11-26.json) preserves the forty-four-case checkpoint.
 The [crash history evidence](../experiments/phase3/document-crash-history-evidence-2026-11-26.json) preserves the fifty-two-case checkpoint and its negative control.
@@ -183,12 +198,13 @@ The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.js
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The fifty-three shared cases passed in three single-process runs.
-All sixty-seven cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
-Each multiprocess run took 40.9 to 41.0 seconds. The seven new cases added about 8.3 seconds to each run in that mode.
+The fifty-six shared cases passed in three single-process runs.
+All seventy-eight cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
+Each multiprocess run took 54.0 to 54.1 seconds. The eleven new cases added about 13.1 seconds to each run in that mode.
+The margin to the 80-second fixture deadline is now about 26 seconds. This checkpoint keeps both deadlines.
 Development runs in each mode passed before a fresh final preparation. No final run failed.
 Both backend loss cases passed in three separate engine runs in each mode.
-Cleanup completed 1,467 to 1,495 milliseconds after the crash request. The cause of that unwind delay is not established.
+Cleanup completed 1,483 to 1,504 milliseconds after the crash request. The cause of that unwind delay is not established.
 These builds retained the previous line-table debug configuration.
 Multiprocess evidence uses unsandboxed content processes on macOS arm64.
 The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
@@ -211,7 +227,7 @@ The interrupt negative control ignores closed permits in the interrupt callback.
 The interrupted loop then completes, runs its `finally` block, and records `1003` mutations.
 The execution-check negative control keeps the watcher but lets the cancelled queued mutation run.
 Both existing Servo controls pass with each negative control.
-This session started from `origin/main` at `69201f4`.
+This session started from `origin/main` at `ffac748`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
@@ -234,8 +250,10 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
    Decide whether a child frame's failure may replace a healthy parent and revoke other views in the child's event loop.
-   Upstream recovery does both. The host must also expect crash notifications for several views from one failure.
-   Check a pending navigation in a child frame before its response headers, and process loss of a sandboxed `srcdoc` child.
+   Upstream recovery does both, also while the frame's navigation is pending. The host must also expect crash notifications for several views from one failure.
+   The source shows that process loss of a lone pending frame pipeline depends on the lifeline's pending-change clause. Add a control that isolates this clause for frames.
+   A frame's initial navigation, a navigation that the child starts, and a pending traversal inside a frame remain unchecked.
+   The multiprocess scope run now uses about 54 of its 80 seconds. Split that run or raise its deadline before the next large set of cases.
    Decide whether crash pages for `about:blank` views should fetch Servo's error page, or rely on the product's native error state.
    These pages are blank, have the origin `null`, and run inserted scripts.
    Crash recovery renders a `javascript:` URL document's result again as page content. Decide whether the patch should drop that result from the crash load.
