@@ -13,7 +13,7 @@ These measurements exclude the future node registry and JSON schema conversion. 
 The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its forty-four shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before construction, after response headers, and after construction, crash recovery history, and callback panics.
+Its fifty shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before construction, after response headers, during `about:blank`, `srcdoc`, `document.write`, and `javascript:` URL construction, and after construction, crash recovery history, and callback panics.
 Multiprocess mode adds ten cases: content-process exit and kill, four shared-process cases, and four pending-process cases.
 A separate engine process adds two backend loss cases in each mode.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
@@ -120,6 +120,18 @@ Both revoke host scope before eight terminal callbacks and show the crash page.
 Late scripts and body data then reach no live document and raise no engine error. Reload and a new URL recover.
 These cases characterize existing behavior, so they have no negative control.
 The review also found that the summary marker still reported the old case count. The runner now rejects a stale count.
+
+The synchronous construction audit covers documents that Servo builds without a navigation fetch, and parsers that `document.write` feeds.
+Servo builds `about:blank` and `srcdoc` documents in the task that receives the load, so no unwind can precede construction.
+Five shared cases unwind a complete initial `about:blank` document, or a document whose parser waits for a withheld script.
+The blocked parsers are a script-created parser in `about:blank`, a same-thread `srcdoc` child, a written external script, and a `document.open()` reset.
+Each case revokes host scope before eight terminal callbacks and rejects the retained reply before allocation.
+Late script data reaches no live document. Reload and a new URL recover, and an independent view stays usable.
+A crash document at `about:blank` is blank. It has the origin `null`, and it runs inserted scripts.
+Servo's synchronous load ignores the crash details, and it takes its sandboxing flags from the default snapshot parameters.
+A sixth case unwinds a document that a `javascript:` URL created. Revocation and callback release pass in the same way.
+Crash recovery renders the JavaScript result again, with the page's real origin and running scripts. Reload renders it again.
+These cases characterize existing behavior, so they have no negative control.
 Remaining construction failures and replacement paths stay open.
 The product pins and installed natives remain unchanged.
 
@@ -137,8 +149,9 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [partial response evidence](../experiments/phase3/document-partial-evidence-2026-11-26.json) records the current S1 runs, engine controls, and local checks.
-Its baseline is the crash history checkpoint at `7affa0a`, whose three final runs in each mode passed.
+The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) records the current S1 runs, engine controls, and local checks.
+Its baseline is the partial response checkpoint at `a8b9887`, whose three final runs in each mode passed.
+The [partial response evidence](../experiments/phase3/document-partial-evidence-2026-11-26.json) preserves the forty-four-case checkpoint.
 The [crash history evidence](../experiments/phase3/document-crash-history-evidence-2026-11-26.json) preserves the fifty-two-case checkpoint and its negative control.
 The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) preserves the fifty-one-case crash page checkpoint and its two negative controls.
 The [recovery evidence](../experiments/phase3/document-recovery-evidence-2026-11-24.json) preserves the first fifty-one-case checkpoint and its negative controls.
@@ -156,10 +169,13 @@ The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.js
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The forty-four shared cases passed in three single-process runs.
-All fifty-four cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
+The fifty shared cases passed in three single-process runs.
+All sixty cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
+Each multiprocess run took 32.6 to 32.7 seconds. The six new cases took 2 to 3 seconds each in that mode.
+The first final preparation failed one single-process repeat, because a reload state check ran before the parser created its element.
+The fixture now waits for the page's marker first. A fresh preparation passed every final run and ten further single-process repeats.
 Both backend loss cases passed in three separate engine runs in each mode.
-Cleanup completed 1,543 to 1,627 milliseconds after the crash request. The cause of that unwind delay is not established.
+Cleanup completed 1,474 to 1,499 milliseconds after the crash request. The cause of that unwind delay is not established.
 These builds retained the previous line-table debug configuration.
 Multiprocess evidence uses unsandboxed content processes on macOS arm64.
 The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
@@ -182,7 +198,7 @@ The interrupt negative control ignores closed permits in the interrupt callback.
 The interrupted loop then completes, runs its `finally` block, and records `1003` mutations.
 The execution-check negative control keeps the watcher but lets the cancelled queued mutation run.
 Both existing Servo controls pass with each negative control.
-This session started from freshly fetched `origin/main` at `b2cacaf`.
+This session started from `origin/main` at `a8b9887`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
@@ -204,9 +220,11 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Continue the S1 construction audit with `about:blank`, `srcdoc`, and `document.write` construction.
-   Extend parsing failures to a pending cross-site document, a subframe, and content-process exit or kill.
+   Extend parsing failures to a pending cross-site document, a cross-site subframe, and content-process exit or kill.
+   Also check a sandboxed `srcdoc` child, which can run in another event loop.
    Decide whether crash pages for `about:blank` views should fetch Servo's error page, or rely on the product's native error state.
+   These pages are blank, have the origin `null`, and run inserted scripts.
+   Crash recovery renders a `javascript:` URL document's result again as page content. Decide whether the patch should drop that result from the crash load.
    Reload from a crash page uses default target snapshot parameters. Check views that started with inherited sandboxing.
    Nested browsing-context history after crash recovery remains unchecked.
    The owner accepted crash-page replacement for a failed pending navigation.

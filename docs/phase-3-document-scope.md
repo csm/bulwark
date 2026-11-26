@@ -317,9 +317,9 @@ It rejects the retained reply before host allocation and requires an empty pendi
 It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
 An independent view keeps its scope and accepts evaluation.
 
-All forty-four shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
+All fifty shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
 The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more.
-The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases, for fifty-four cases in total.
+The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases, for sixty cases in total.
 The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
 The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
@@ -398,7 +398,7 @@ The owner accepted this replacement as product behavior.
 
 These fixtures characterize existing engine and patch behavior. The only engine change is the probe message, so they have no negative control.
 The [partial response audit](#partial-response-audit) covers failures after the response headers.
-The audit leaves out `about:blank` and `srcdoc` construction.
+The [synchronous construction audit](#synchronous-construction-audit) covers `about:blank`, `srcdoc`, and `document.write` documents.
 The recovery audit below covers content-process exit and kill before construction.
 
 ## Partial response audit
@@ -426,8 +426,58 @@ The fixture cannot tell whether Servo cancels or drains the failed document's op
 
 These cases characterize existing behavior. The engine patch is unchanged, so they have no negative control.
 Both use a top-level navigation from a new view and a script-thread unwind.
-Parsing failures in a pending cross-site document, a subframe, `about:blank`, `srcdoc`, or `document.write` remain unchecked.
+The [synchronous construction audit](#synchronous-construction-audit) covers `about:blank`, `srcdoc`, and `document.write`.
+Parsing failures in a pending cross-site document and a cross-site subframe remain unchecked.
 Process exit and kill during parsing also remain unchecked.
+
+## Synchronous construction audit
+
+Servo constructs `about:blank` and `srcdoc` documents in the script thread without a navigation fetch.
+The task that receives the load builds the document, so a script-thread unwind cannot reach such a pipeline before construction.
+These fixtures therefore unwind the script thread of a complete `about:blank` document or of a document whose parser waits for a withheld script.
+Five shared cases use a new view and the existing script-thread panic:
+
+- `about-blank-failure`: The view's initial `about:blank` document unwinds after it reports DOM readiness and load completion.
+- `about-blank-write-failure`: `document.write` into that document opens a script-created parser. The written script stays withheld.
+- `srcdoc-parser-blocked-failure`: A `srcdoc` child waits for a withheld script.
+  The parent reads the child's `loading` state synchronously, so both documents run in one script thread.
+  The parent reports DOM readiness, but its load event waits for the child.
+- `document-write-parser-blocked-failure`: An inline script writes an external script during the initial parse.
+  The parser waits for that script, and the document reports no readiness.
+- `document-open-write-failure`: `document.open()` resets a complete document, and the written script stays withheld.
+
+Both write-after-load cases allocate a fresh incarnation in the same pipeline. The engine rejects the reset script's result.
+Each parser-blocked case received exactly one request for its withheld script.
+Each case requires revocation before eight terminal callbacks, released captures, and an empty pending table.
+The host rejects the retained reply before allocation. The engine rejects the failed identity and, after a reset, the source identity.
+The host then releases the withheld script. After 300 milliseconds the crash document keeps its identity.
+No other failure occurs, the engine reports no error, and the failed document reports no further readiness.
+Reload restores the original load. A new URL recovers, and an independent view stays usable.
+For `document.open()` and `about:blank`, reload restores the document without the written content.
+
+The crash document depends on the failed document's URL.
+For an HTTP URL, the crash document is Servo's error page with the failure reason. Its origin is `null`, and an inserted script does not run.
+For `about:blank`, Servo uses its synchronous load, which ignores the crash details. The crash document is blank.
+That load also sets the active sandboxing flags from the target snapshot parameters and the CSP list.
+Crash recovery uses default snapshot parameters, so these flags are empty.
+The blank crash document has the origin `null`, and it runs inserted scripts. The reloaded `about:blank` document also has the origin `null`.
+The error-page path skips that step and keeps the crash load's creation flags.
+A host cannot tell a blank crash document from an ordinary `about:blank` document by content.
+Only the crash notification and the fresh identity identify it. The product's native error state must cover these views.
+
+A sixth shared case, `javascript-url-crash-recovery`, checks the same synchronous path for a document that a `javascript:` URL created.
+The JavaScript result replaces the source document in a new pipeline. That pipeline's load data keeps the result.
+The case requires the same revocation before eight terminal callbacks, released captures, and rejection of the retained reply.
+Crash recovery renders the JavaScript result again as the crash document.
+That document has the source URL and the page's real origin, `https://bulwark.invalid`. It does not contain the failure reason.
+Its own inline script and an inserted script both run.
+Reload replaces the crash document with its original load, and that load renders the same result again with the same origin.
+A new URL recovers, and an independent view stays usable. The behavior is the same in both modes.
+The host still receives revocation and the crash notification, but the crash document is page content, not an error page.
+This case characterizes that path. It is not a required product behavior, and this audit does not change the path.
+
+These cases characterize existing behavior. The engine patch is unchanged, so they have no negative control.
+They do not cover process exit or kill during these parses, cross-site subframes, or a `srcdoc` child in another event loop.
 
 ## Pending process and recovery audit
 
@@ -482,6 +532,7 @@ The reloaded page now runs its scripts and has its real origin. Back, forward, a
 For a failed pending navigation, reload restores the replaced source page. A new URL retries the failed target.
 
 A crash document for a view at `about:blank` is blank. Servo loads `about:blank` synchronously, so the crash fetch never runs.
+The [synchronous construction audit](#synchronous-construction-audit) found that this document has the origin `null` and runs inserted scripts.
 The shared-process fixture asserts this for its popup. The product's native error state must cover such views.
 
 One negative control restores interception for crash requests. The first fetched crash document then lacks the failure reason.
@@ -593,6 +644,12 @@ Fixture markers establish test order, without authentication claims.
 | Crash history reload | After a second failure closes a crash page in history, back rebuilds that error page. Reload from it restores the failed load's origin and scripts. |
 | Headers before parse failure | An active document without a DOM unwinds with its response open. Late data is ignored, eight callbacks are released, and reload and a new URL recover. |
 | Parser-blocked failure | An active document unwinds while its parser waits for a withheld script. The same release, late-data, and recovery checks pass. |
+| Initial `about:blank` failure | A complete initial `about:blank` document unwinds. Eight callbacks are released. The blank crash document has the origin `null` and runs inserted scripts. Reload and a new URL recover. |
+| `about:blank` write failure | `document.write` resets `about:blank`, and its parser waits for a withheld script. The same release and late-data checks pass. Reload restores a blank document. |
+| `srcdoc` parser-blocked failure | A same-thread `srcdoc` child waits for a withheld script. The parent unwinds before its load event. The error page, release, late-data, and recovery checks pass. |
+| `document.write` parser-blocked failure | The initial parser waits for a written external script. The same release, error page, late-data, and recovery checks pass. |
+| `document.open()` write failure | A reset document's script-created parser waits for a written script. Reload restores the original URL without the written content. |
+| `javascript:` URL crash recovery | A `javascript:` URL document unwinds. Eight callbacks are released. The crash document and its reload render the JavaScript result again, with the page's origin and running scripts. A new URL recovers. |
 | Unconstructed process exit and kill (multiprocess only) | The child of a new view's pending pipeline exits or is killed. The host receives revocation and a crash notification, and the view closes. |
 | Pending navigation process exit and kill (multiprocess only) | The child of a live view's pending navigation exits or is killed. Eight callbacks are released, and the view navigates again. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
@@ -615,7 +672,7 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats forty-four cases in single-process mode or fifty-four cases in multiprocess mode.
+The runner repeats fifty cases in single-process mode or sixty cases in multiprocess mode.
 The summary marker must report the same case count.
 Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
@@ -625,8 +682,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [partial response evidence](../experiments/phase3/document-partial-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, and local checks.
-Its baseline is the crash history checkpoint at `7affa0a`, whose three final runs in each mode passed with both Servo controls.
+The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, and local checks.
+Its baseline is the partial response checkpoint at `a8b9887`, whose three final runs in each mode passed with both Servo controls.
+The [partial response evidence](../experiments/phase3/document-partial-evidence-2026-11-26.json) preserves the forty-four-case checkpoint.
 The [crash history evidence](../experiments/phase3/document-crash-history-evidence-2026-11-26.json) preserves the fifty-two-case checkpoint and its negative control.
 That checkpoint's summary marker still reported fifty-one cases. The runner now rejects a stale summary count.
 The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) preserves the fifty-one-case crash page checkpoint and its two negative controls.
@@ -646,8 +704,14 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All forty-four shared cases passed in three single-process runs on macOS arm64 with software rendering.
-All fifty-four cases passed in three multiprocess runs.
+All fifty shared cases passed in three single-process runs on macOS arm64 with software rendering.
+All sixty cases passed in three multiprocess runs. Each multiprocess run took 32.6 to 32.7 seconds, within the 80-second fixture deadline.
+Two fixture errors failed development runs before the first final preparation.
+An assertion expected sandboxing in the blank crash document, and an evaluation before activation failed with `InternalError`.
+The first final preparation then failed one of three single-process repeats in `document-open-write-failure`.
+A fetched reload activates at its response headers. The polled state check ran before the parser created its element and threw a `TypeError`.
+The fixture now waits for the original page's marker before that check.
+A fresh preparation passed every final run. Ten further single-process repeats of the same binary also passed.
 Both backend loss cases passed in three separate engine runs in each mode.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
@@ -696,9 +760,11 @@ The kill fixture covers only a child blocked at a barrier.
 Kills during JavaScript execution or IPC writes remain untested.
 Script-thread unwinds, child exit, and child kill before construction now have evidence for a new view and a pending cross-site navigation.
 Error-page recovery through reload, back, forward, and a new URL has evidence for top-level history only.
-Embedder interception no longer replaces crash error pages. Crash pages for `about:blank` documents remain blank.
+Embedder interception no longer replaces crash error pages. Crash pages for `about:blank` documents remain blank. They have the origin `null` and run inserted scripts.
 Script-thread unwinds after response headers now cover a top-level document before its DOM exists and while its parser is blocked.
-Parsing failures in pending, nested, `about:blank`, `srcdoc`, and `document.write` documents remain untested. Process loss during parsing also remains untested.
+Script-thread unwinds now also cover `about:blank`, a same-thread `srcdoc` child, `document.write`, `document.open()`, and `javascript:` URL construction.
+Parsing failures in pending and cross-site nested documents remain untested. Process loss during parsing also remains untested.
+A crash of a `javascript:` URL document renders its result again, with the page's origin and running scripts.
 Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
 Constellation loss now has single-process and unsandboxed multiprocess evidence. Its local shutdown contract needs upstream review.

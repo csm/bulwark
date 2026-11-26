@@ -40,6 +40,8 @@ struct Delegate {
     console: RefCell<Vec<String>>,
     // Navigation responses withheld by the host. Their pipelines cannot construct a document.
     held: RefCell<Vec<WebResourceLoad>>,
+    // Serve withheld paths as a counting script instead of holding them.
+    serve_held: Cell<bool>,
 }
 
 // Servo's request interceptor buffers a body until the load finishes, so it cannot stream.
@@ -52,6 +54,29 @@ const PARTIAL_BLOCKED: &str = "<script src='/held-parser-script'></script><p id=
 const PARTIAL_TAIL: &str = "<script>window.marker='late-body'</script>";
 const PARTIAL_RELOAD: &str =
     "<!doctype html><h1>reloaded</h1><script>window.marker='/partial-parse'</script>";
+
+// Synchronous construction fixtures. Servo builds `about:blank` and `srcdoc` documents in
+// the script thread without a fetch. Parser-inserted scripts from these paths stay withheld.
+const SRCDOC_PARENT: &str = "/srcdoc-parent";
+const WRITE_PARENT: &str = "/write-parent";
+const OPEN_WRITE_SOURCE: &str = "/open-write-source";
+const JS_SOURCE: &str = "/javascript-url-source";
+const HELD_SERVED: &str = "window.heldServed = (window.heldServed || 0) + 1";
+// Inserted scripts do not run in a document with the sandboxed-scripts flag.
+const INSERTED_SCRIPT: &str = "(() => { const s = document.createElement('script'); s.text = 'window.inserted = true'; document.documentElement.append(s); return String(window.inserted); })()";
+
+fn fixture_markup(path: &str) -> &'static str {
+    match path {
+        "/other" => "<iframe src='/child'></iframe>",
+        SRCDOC_PARENT => {
+            "<iframe srcdoc=\"<script>window.marker='srcdoc-child'</script><script src='/held-srcdoc-script'></script><p id='after-srcdoc'>\"></iframe>"
+        }
+        WRITE_PARENT => {
+            "<script>document.write(\"<script src='/held-write-script'><\\/script><p id='after-write'>\")</script>"
+        }
+        _ => "",
+    }
+}
 
 const DELEGATE_PANIC: &str = "S1 probe delegate panic";
 const CALLBACK_PANIC: &str = "S1 probe terminal callback panic";
@@ -153,7 +178,17 @@ impl WebViewDelegate for Delegate {
     fn load_web_resource(&self, _: WebView, load: WebResourceLoad) {
         let url = load.request().url.clone();
         if url.path().starts_with("/held") {
-            self.held.borrow_mut().push(load);
+            if self.serve_held.get() {
+                let mut response = WebResourceResponse::new(url);
+                response
+                    .headers
+                    .insert("content-type", "text/javascript".parse().unwrap());
+                let mut served = load.intercept(response);
+                served.send_body_data(HELD_SERVED.as_bytes().to_vec());
+                served.finish();
+            } else {
+                self.held.borrow_mut().push(load);
+            }
             return;
         }
         if url.host_str() == Some("127.0.0.1") && url.port() == Some(self.loopback_port.get()) {
@@ -178,7 +213,7 @@ impl WebViewDelegate for Delegate {
                 "<!doctype html><h1>{}</h1><script>window.marker={:?};window.mutations=0</script>{}",
                 url.path(),
                 url.path(),
-                if url.path() == "/other" { "<iframe src='/child'></iframe>" } else { "" }
+                fixture_markup(url.path())
             )
             .into_bytes(),
         );
@@ -608,6 +643,535 @@ fn partial_failure(
     Ok(format!(
         "active document unwound, 8 callbacks released, late data ignored, tail_delivered={tail_delivered}, reload and new URL recover"
     ))
+}
+
+// Poll a scoped evaluation until it returns the expected text. The script must not throw.
+fn wait_text(
+    servo: &Servo,
+    view: &WebView,
+    deadline: Instant,
+    document: DocumentIdentity,
+    script: &str,
+    expected: &str,
+) -> Result<()> {
+    loop {
+        let result = scoped(servo, view, deadline, document, script)?;
+        if matches!(&result, Ok(reply) if reply.value == JSValue::String(expected.into())) {
+            return text(result, document, expected);
+        }
+        ensure!(result.is_ok(), "Polled evaluation failed: {result:?}");
+        thread::park_timeout(Duration::from_millis(1));
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Construction {
+    // The view's initial `about:blank` document.
+    AboutBlank,
+    // `document.write` into that document opens a script-created parser.
+    AboutBlankWrite,
+    // A `srcdoc` child shares the parent's script thread and waits for a withheld script.
+    Srcdoc,
+    // A parser-inserted script writes a withheld script during the initial parse.
+    DocumentWrite,
+    // `document.open` resets a complete document, and the written script is withheld.
+    OpenWrite,
+}
+
+impl Construction {
+    fn name(self) -> &'static str {
+        match self {
+            Self::AboutBlank => "about-blank-failure",
+            Self::AboutBlankWrite => "about-blank-write-failure",
+            Self::Srcdoc => "srcdoc-parser-blocked-failure",
+            Self::DocumentWrite => "document-write-parser-blocked-failure",
+            Self::OpenWrite => "document-open-write-failure",
+        }
+    }
+
+    fn blank(self) -> bool {
+        matches!(self, Self::AboutBlank | Self::AboutBlankWrite)
+    }
+
+    fn source(self) -> String {
+        match self {
+            Self::AboutBlank | Self::AboutBlankWrite => "about:blank".into(),
+            Self::Srcdoc => format!("{ORIGIN}{SRCDOC_PARENT}"),
+            Self::DocumentWrite => format!("{ORIGIN}{WRITE_PARENT}"),
+            Self::OpenWrite => format!("{ORIGIN}{OPEN_WRITE_SOURCE}"),
+        }
+    }
+
+    // A script that resets the complete source document and leaves its parser blocked.
+    fn reset(self) -> Option<String> {
+        match self {
+            // The opaque `about:blank` document has no base for a relative script URL.
+            Self::AboutBlankWrite => Some(format!(
+                "document.write(\"<h1>written</h1><script src='{ORIGIN}/held-blank-script'><\\/script><p id='after-script'>\");'written'"
+            )),
+            Self::OpenWrite => Some(
+                "document.open();document.write(\"<h1>written</h1><script src='/held-open-script'><\\/script><p id='after-script'>\");'written'".into(),
+            ),
+            _ => None,
+        }
+    }
+
+    // Lifecycle readiness events for the failed document before the unwind.
+    fn readiness(self) -> &'static [&'static str] {
+        match self {
+            Self::AboutBlank => &["dom-ready", "load-complete"],
+            // The parent finishes parsing, but its load event waits for the blocked child.
+            Self::Srcdoc => &["dom-ready"],
+            Self::AboutBlankWrite | Self::DocumentWrite | Self::OpenWrite => &[],
+        }
+    }
+
+    fn held_path(self) -> Option<&'static str> {
+        match self {
+            Self::AboutBlank => None,
+            Self::AboutBlankWrite => Some("/held-blank-script"),
+            Self::Srcdoc => Some("/held-srcdoc-script"),
+            Self::DocumentWrite => Some("/held-write-script"),
+            Self::OpenWrite => Some("/held-open-script"),
+        }
+    }
+
+    fn state(self) -> (&'static str, &'static str) {
+        match self {
+            Self::AboutBlank => (
+                "String(location.href) + ':' + document.readyState",
+                "about:blank:complete",
+            ),
+            Self::AboutBlankWrite | Self::OpenWrite => (
+                "document.readyState + ':' + (document.getElementById('after-script') === null) + ':' + document.querySelector('h1').textContent",
+                "loading:true:written",
+            ),
+            // Synchronous access to the child proves that it shares the parent's script thread.
+            Self::Srcdoc => (
+                "(() => { const child = frames[0]; return String(child.location.href) + ':' + child.document.readyState + ':' + (child.document.getElementById('after-srcdoc') === null) + ':' + child.marker; })()",
+                "about:srcdoc:loading:true:srcdoc-child",
+            ),
+            Self::DocumentWrite => (
+                "document.readyState + ':' + (document.getElementById('after-write') === null)",
+                "loading:true",
+            ),
+        }
+    }
+
+    // The reloaded document must be the original load, not the reset or failed state.
+    fn reloaded(self) -> (&'static str, &'static str) {
+        match self {
+            Self::AboutBlank | Self::AboutBlankWrite => (
+                "String(location.href) + ':' + document.querySelector('h1') + ':' + String(window.heldServed)",
+                "about:blank:null:undefined",
+            ),
+            Self::Srcdoc => (
+                "(() => { try { const child = frames[0]; return String(child.document.getElementById('after-srcdoc') !== null) + ':' + child.heldServed; } catch (error) { return 'pending'; } })()",
+                "true:1",
+            ),
+            Self::DocumentWrite => (
+                "String(document.getElementById('after-write') !== null) + ':' + window.heldServed",
+                "true:1",
+            ),
+            Self::OpenWrite => (
+                "String(document.querySelector('h1') && document.querySelector('h1').textContent) + ':' + (document.getElementById('after-script') === null) + ':' + String(window.heldServed)",
+                "/open-write-source:true:undefined",
+            ),
+        }
+    }
+}
+
+fn construction_failure(
+    servo: &Servo,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    engine_errors: &BackendErrors,
+    survivor: (&WebView, DocumentIdentity),
+    variant: Construction,
+) -> Result<String> {
+    let reason = "S1 probe actual script-thread panic";
+    let delegate = Rc::new(Delegate::default());
+    let view = WebViewBuilder::new(servo, context)
+        .url(url::Url::parse(&variant.source())?)
+        .delegate(delegate.clone())
+        .build();
+    match variant {
+        Construction::AboutBlank | Construction::AboutBlankWrite | Construction::OpenWrite => {
+            drive_until(servo, deadline, || delegate.loads.get() > 0)?
+        }
+        // The load event waits for the blocked script, so wait for activation and the marker.
+        // Before activation, the view has no top browsing context.
+        Construction::Srcdoc | Construction::DocumentWrite => {
+            drive_until(servo, deadline, || delegate.active.get().is_some())?;
+            let marker = if variant == Construction::Srcdoc {
+                SRCDOC_PARENT
+            } else {
+                WRITE_PARENT
+            };
+            wait_marker(servo, &view, deadline, marker)?
+        }
+    }
+    let source = identity(servo, &view, deadline)?;
+    if let Some(reset) = variant.reset() {
+        // The reset allocates a fresh incarnation, so the engine rejects this result.
+        stale(scoped(servo, &view, deadline, source, &reset)?)?;
+    }
+    let held_count = |delegate: &Delegate| {
+        delegate
+            .held
+            .borrow()
+            .iter()
+            .filter(|load| Some(load.request().url.path()) == variant.held_path())
+            .count()
+    };
+    if variant.held_path().is_some() {
+        drive_until(servo, deadline, || held_count(&delegate) > 0)?;
+    }
+    let failed = identity(servo, &view, deadline)?;
+    ensure!(
+        delegate.active.get() == Some(failed),
+        "Construction fixture did not activate its document"
+    );
+    ensure!(
+        (failed != source) == variant.reset().is_some(),
+        "Unexpected construction reset: source={source:?}, failed={failed:?}"
+    );
+    if variant.reset().is_some() {
+        ensure!(
+            failed.pipeline_id() == source.pipeline_id(),
+            "Construction reset changed the pipeline"
+        );
+    }
+    let (state, expected_state) = variant.state();
+    text(
+        scoped(servo, &view, deadline, failed, state)?,
+        failed,
+        expected_state,
+    )?;
+    let readiness = || -> Vec<&'static str> {
+        delegate
+            .events
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                DocumentLifecycle::DomReady(id) if *id == failed => Some("dom-ready"),
+                DocumentLifecycle::LoadComplete(id) if *id == failed => Some("load-complete"),
+                _ => None,
+            })
+            .collect()
+    };
+    // The parent's readiness event can follow the child's construction.
+    drive_until(servo, deadline, || {
+        readiness().len() >= variant.readiness().len()
+    })?;
+    ensure!(
+        readiness() == variant.readiness(),
+        "Unexpected readiness before the failure: {:?}",
+        readiness()
+    );
+    let ticket = delegate.ticket(failed)?;
+    let reply = scoped(
+        servo,
+        &view,
+        deadline,
+        failed,
+        "'before-construction-failure'",
+    )?;
+    ensure!(reply.is_ok(), "Construction failure control failed");
+    // The constellation forwards both messages in order, so the unwind precedes these requests.
+    view.crash_script_thread_for_document_scope_probe();
+    let audit = CleanupAudit::queue(&view, Some(failed), &delegate, false);
+    drive_until(servo, deadline, || audit.calls.get() == 8)?;
+    audit.check()?;
+    drive_until(servo, deadline, || delegate.crashed.get())?;
+    ensure!(
+        view.pending_evaluations_for_document_scope_probe() == 0,
+        "Construction failure retained callbacks"
+    );
+    delegate.reject(ticket, reply)?;
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != failed)
+    })?;
+    let crash = identity(servo, &view, deadline)?;
+    let check_crash = || -> Result<()> {
+        // Servo applies the crash page's sandboxing flags only on its error-page path.
+        // It loads `about:blank` without the crash fetch, as an ordinary blank document
+        // with an opaque origin that runs inserted scripts. The error page runs none.
+        let (scripting, expected) = if variant.blank() {
+            (
+                format!(
+                    "String(location.href) + '|' + String(window.origin) + '|' + document.documentElement.textContent.includes({reason:?}) + '|' + {INSERTED_SCRIPT}"
+                ),
+                "about:blank|null|false|true",
+            )
+        } else {
+            crash_page(servo, &view, deadline, crash, reason)?;
+            (
+                format!("String(window.origin) + ':' + {INSERTED_SCRIPT}"),
+                "null:undefined",
+            )
+        };
+        text(
+            scoped(servo, &view, deadline, crash, &scripting)?,
+            crash,
+            expected,
+        )
+    };
+    check_crash()?;
+    let errors_before_release = engine_errors.0.borrow().len();
+    let held = delegate.held.take();
+    ensure!(
+        held.len() == usize::from(variant.held_path().is_some())
+            && held
+                .iter()
+                .all(|load| Some(load.request().url.path()) == variant.held_path()),
+        "Unexpected withheld requests: {:?}",
+        held.iter()
+            .map(|load| load.request().url.to_string())
+            .collect::<Vec<_>>()
+    );
+    // Late script data for the failed document must not reach any live document.
+    for load in held {
+        let url = load.request().url.clone();
+        let mut late = load.intercept(WebResourceResponse::new(url));
+        late.send_body_data(b"window.marker='late-script'".to_vec());
+        late.finish();
+    }
+    let settle = Instant::now() + Duration::from_millis(300);
+    drive_until(servo, deadline, || Instant::now() >= settle)?;
+    ensure!(
+        identity(servo, &view, deadline)? == crash,
+        "Late script data replaced the crash document"
+    );
+    check_crash()?;
+    ensure!(
+        readiness() == variant.readiness(),
+        "The failed document reported readiness after the failure"
+    );
+    ensure!(
+        delegate.crash_reasons.borrow().as_slice() == [reason],
+        "Unexpected failure notifications: {:?}",
+        delegate.crash_reasons.borrow()
+    );
+    let late_errors = engine_errors.0.borrow()[errors_before_release..].to_vec();
+    ensure!(
+        late_errors.is_empty(),
+        "Late script data raised engine errors: {late_errors:?}"
+    );
+    stale(scoped(servo, &view, deadline, failed, "'obsolete'")?)?;
+    stale(scoped(servo, &view, deadline, source, "'obsolete'")?)?;
+    // Reload restores the original load. Withheld paths are now served.
+    delegate.serve_held.set(true);
+    view.reload();
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != crash)
+    })?;
+    let reloaded = identity(servo, &view, deadline)?;
+    ensure!(
+        reloaded != failed && reloaded != source,
+        "Reload revived an obsolete scope"
+    );
+    if variant.blank() {
+        text(
+            scoped(
+                servo,
+                &view,
+                deadline,
+                reloaded,
+                &format!("String(window.origin) + '|' + {INSERTED_SCRIPT}"),
+            )?,
+            reloaded,
+            "null|true",
+        )?;
+    } else {
+        text(
+            scoped(servo, &view, deadline, reloaded, "String(window.origin)")?,
+            reloaded,
+            ORIGIN,
+        )?;
+    }
+    // A fetched reload activates at its response headers, before the parser runs.
+    // Wait for the original page's marker before the state check.
+    match variant {
+        Construction::Srcdoc => wait_marker(servo, &view, deadline, SRCDOC_PARENT)?,
+        Construction::DocumentWrite => wait_marker(servo, &view, deadline, WRITE_PARENT)?,
+        Construction::OpenWrite => wait_marker(servo, &view, deadline, OPEN_WRITE_SOURCE)?,
+        Construction::AboutBlank | Construction::AboutBlankWrite => {}
+    }
+    let (reloaded_state, expected_reloaded) = variant.reloaded();
+    wait_text(
+        servo,
+        &view,
+        deadline,
+        reloaded,
+        reloaded_state,
+        expected_reloaded,
+    )?;
+    load(servo, &view, deadline, "/after-construction-failure")?;
+    let recovered = identity(servo, &view, deadline)?;
+    text(
+        scoped(
+            servo,
+            &view,
+            deadline,
+            recovered,
+            "'construction-recovered'",
+        )?,
+        recovered,
+        "construction-recovered",
+    )?;
+    let (survivor, survivor_document) = survivor;
+    text(
+        scoped(
+            servo,
+            survivor,
+            deadline,
+            survivor_document,
+            "'construction-survivor'",
+        )?,
+        survivor_document,
+        "construction-survivor",
+    )?;
+    ensure!(
+        audit.calls.get() == 8,
+        "Construction failure recovery repeated callbacks"
+    );
+    Ok(format!(
+        "{}, 8 callbacks released, {}, reload and new URL recover, survivor usable",
+        match variant {
+            Construction::AboutBlank => "initial about:blank unwound",
+            Construction::AboutBlankWrite => "about:blank parser blocked by document.write",
+            Construction::Srcdoc => "srcdoc child parser blocked in the parent's thread",
+            Construction::DocumentWrite => "parser blocked by a written script",
+            Construction::OpenWrite => "document.open parser blocked by a written script",
+        },
+        match variant {
+            Construction::AboutBlank => "blank crash document with origin null runs scripts",
+            Construction::AboutBlankWrite =>
+                "late script ignored, blank crash document with origin null runs scripts",
+            _ => "late script ignored, sandboxed error page",
+        }
+    ))
+}
+
+// A `javascript:` URL result replaces the document in a new pipeline. Its load data keeps
+// the result, so crash recovery takes the same synchronous path as `about:blank`.
+// This case characterizes that path. It is not a required product behavior.
+fn javascript_url_failure(
+    servo: &Servo,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    survivor: (&WebView, DocumentIdentity),
+) -> Result<String> {
+    let reason = "S1 probe actual script-thread panic";
+    let delegate = Rc::new(Delegate::default());
+    let view = WebViewBuilder::new(servo, context)
+        .url(url::Url::parse(&format!("{ORIGIN}{JS_SOURCE}"))?)
+        .delegate(delegate.clone())
+        .build();
+    drive_until(servo, deadline, || delegate.loads.get() > 0)?;
+    let source = identity(servo, &view, deadline)?;
+    evaluate(
+        servo,
+        &view,
+        deadline,
+        "location.href=\"javascript:'<h1>JS crash source</h1><script>window.marker=\\\"js-crash-source\\\"</script>'\";'scheduled'",
+    )?;
+    wait_marker(servo, &view, deadline, "js-crash-source")?;
+    let failed = identity(servo, &view, deadline)?;
+    ensure!(
+        failed != source
+            && failed.pipeline_id() != source.pipeline_id()
+            && delegate.active.get() == Some(failed),
+        "The JavaScript URL result did not replace the document in a new pipeline"
+    );
+    let ticket = delegate.ticket(failed)?;
+    let reply = scoped(
+        servo,
+        &view,
+        deadline,
+        failed,
+        "'before-javascript-url-failure'",
+    )?;
+    ensure!(reply.is_ok(), "JavaScript URL failure control failed");
+    view.crash_script_thread_for_document_scope_probe();
+    let audit = CleanupAudit::queue(&view, Some(failed), &delegate, false);
+    drive_until(servo, deadline, || audit.calls.get() == 8)?;
+    audit.check()?;
+    drive_until(servo, deadline, || delegate.crashed.get())?;
+    ensure!(
+        delegate.crash_reasons.borrow().as_slice() == [reason],
+        "Unexpected failure notifications: {:?}",
+        delegate.crash_reasons.borrow()
+    );
+    ensure!(
+        view.pending_evaluations_for_document_scope_probe() == 0,
+        "JavaScript URL failure retained callbacks"
+    );
+    delegate.reject(ticket, reply)?;
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != failed)
+    })?;
+    let crash = identity(servo, &view, deadline)?;
+    // The crash document renders the JavaScript result again, with the page's origin.
+    // It has no failure reason, and both its own script and an inserted script run.
+    let rendered = format!(
+        "String(location.href) + '|' + String(window.origin) + '|' + document.querySelector('h1').textContent + '|' + String(window.marker) + '|' + document.documentElement.textContent.includes({reason:?}) + '|' + {INSERTED_SCRIPT}"
+    );
+    let expected =
+        format!("{ORIGIN}{JS_SOURCE}|{ORIGIN}|JS crash source|js-crash-source|false|true");
+    text(
+        scoped(servo, &view, deadline, crash, &rendered)?,
+        crash,
+        &expected,
+    )?;
+    stale(scoped(servo, &view, deadline, failed, "'obsolete'")?)?;
+    stale(scoped(servo, &view, deadline, source, "'obsolete'")?)?;
+    // Reload replaces the crash document with its original load, which keeps the result.
+    view.reload();
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != crash)
+    })?;
+    let reloaded = identity(servo, &view, deadline)?;
+    ensure!(
+        reloaded != failed && reloaded != source,
+        "Reload revived an obsolete scope"
+    );
+    text(
+        scoped(servo, &view, deadline, reloaded, &rendered)?,
+        reloaded,
+        &expected,
+    )?;
+    load(servo, &view, deadline, "/after-javascript-url-failure")?;
+    let recovered = identity(servo, &view, deadline)?;
+    text(
+        scoped(
+            servo,
+            &view,
+            deadline,
+            recovered,
+            "'javascript-url-recovered'",
+        )?,
+        recovered,
+        "javascript-url-recovered",
+    )?;
+    let (survivor, survivor_document) = survivor;
+    text(
+        scoped(
+            servo,
+            survivor,
+            deadline,
+            survivor_document,
+            "'javascript-url-survivor'",
+        )?,
+        survivor_document,
+        "javascript-url-survivor",
+    )?;
+    ensure!(
+        audit.calls.get() == 8,
+        "JavaScript URL failure recovery repeated callbacks"
+    );
+    Ok("8 callbacks released, crash document renders the JavaScript result again with its origin and running scripts, reload renders it again, new URL recovers, survivor usable".into())
 }
 
 fn redirect_fixture() -> Result<(u16, thread::JoinHandle<Result<()>>)> {
@@ -2270,6 +2834,27 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
         let detail = partial_failure(&servo, context.clone(), deadline, &engine_errors, variant)?;
         println!("S1 {}: PASS ({detail})", variant.name());
     }
+    // Fail the script thread of documents that Servo constructs without a navigation fetch,
+    // and of documents whose parser waits for a script that `document.write` inserted.
+    for variant in [
+        Construction::AboutBlank,
+        Construction::AboutBlankWrite,
+        Construction::Srcdoc,
+        Construction::DocumentWrite,
+        Construction::OpenWrite,
+    ] {
+        let detail = construction_failure(
+            &servo,
+            context.clone(),
+            deadline,
+            &engine_errors,
+            (&failure, recovered),
+            variant,
+        )?;
+        println!("S1 {}: PASS ({detail})", variant.name());
+    }
+    let detail = javascript_url_failure(&servo, context.clone(), deadline, (&failure, recovered))?;
+    println!("S1 javascript-url-crash-recovery: PASS ({detail})");
     // Releasing one clone must preserve the scope. Releasing the last handle must
     // revoke host state and callbacks without waiting for another event-loop drain.
     let release_delegate = Rc::new(Delegate::default());
@@ -3184,7 +3769,7 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     );
     println!(
         "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
-        if multiprocess { 54 } else { 44 }
+        if multiprocess { 60 } else { 50 }
     );
     Ok(())
 }

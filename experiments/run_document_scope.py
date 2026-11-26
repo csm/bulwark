@@ -20,8 +20,11 @@ EXPECTED_MARKERS = {
     "failed-load", "cross-view", "subframe-isolation", "close", "injected-crash",
     "script-created-initial-document", "javascript-url-replacement",
     "script-thread-failure-and-callback-cleanup", "unconstructed-view-failure",
-    "pending-navigation-failure", "crash-recovery-history", "crash-history-reload", "headers-before-parse-failure",
-    "parser-blocked-failure",
+    "pending-navigation-failure", "crash-recovery-history", "crash-history-reload",
+    "headers-before-parse-failure", "parser-blocked-failure", "about-blank-failure",
+    "about-blank-write-failure", "srcdoc-parser-blocked-failure",
+    "document-write-parser-blocked-failure", "document-open-write-failure",
+    "javascript-url-crash-recovery",
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
     "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
     "queued-engine-cancellation", "completed-engine-cancellation",
@@ -114,6 +117,8 @@ def main():
                   "shared-process view revocation and ordinary sibling close, "
                   "script-thread failure and content-process exit or kill before document construction, "
                   "crash recovery through reload and history, "
+                  "script-thread failure after response headers and in about:blank, srcdoc, "
+                  "and document.write construction, "
                   "callback and delegate unwind safety, and constellation loss in a separate engine. "
                   "Remaining replacement audits remain open."),
         "cases": [],
