@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PATCH = ROOT / "experiments/phase3/patches/servo-0.7-document-scope.patch"
 PACKAGES = (
     "servo", "servo-embedder-traits", "servo-constellation-traits",
-    "servo-script-traits", "servo-constellation", "servo-script",
+    "servo-script-traits", "servo-constellation", "servo-script", "servo-net",
 )
 
 

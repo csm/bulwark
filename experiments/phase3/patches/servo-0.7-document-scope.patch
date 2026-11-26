@@ -704,23 +704,26 @@
      JavaScriptEvaluationError, JavaScriptEvaluationId, KeyboardEvent, MediaSessionActionType,
      MediaSessionEvent, MediaSessionPlaybackState, MouseButtonAction, MouseButtonEvent,
      NewWebViewDetails, PaintHitTestResult, Theme, ViewportDetails, WakeLockDelegate, WakeLockType,
-@@ -346,6 +347,7 @@
+@@ -346,6 +347,9 @@
 
      /// Bookkeeping data for all webviews in the constellation.
      webviews: FxHashMap<WebViewId, ConstellationWebView>,
 +    document_identities: FxHashMap<PipelineId, DocumentIdentity>,
++    /// Original load data for each crash page, so reload does not inherit its sandboxing.
++    crash_reloads: FxHashMap<PipelineId, LoadData>,
 
      /// Channels for the constellation to send messages to the public
      /// resource-related threads. There are two groups of resource threads: one
-@@ -679,6 +681,7 @@
+@@ -679,6 +683,8 @@
                      constellation_to_embedder_proxy: state.constellation_to_embedder_proxy,
                      paint_proxy: state.paint_proxy,
                      webviews: Default::default(),
 +                    document_identities: Default::default(),
++                    crash_reloads: Default::default(),
                      devtools_sender: state.devtools_sender,
                      script_to_devtools_callback: Default::default(),
                      #[cfg(feature = "bluetooth")]
-@@ -1280,7 +1283,11 @@
+@@ -1280,7 +1286,11 @@
                  self.handle_request_from_background_hang_monitor(message);
              },
              #[cfg(feature = "multiprocess")]
@@ -733,7 +736,7 @@
              #[cfg(not(feature = "multiprocess"))]
              Request::RemoveProcess(_) => {},
          }
-@@ -1342,6 +1349,85 @@
+@@ -1342,6 +1352,85 @@
                  self.handle_new_top_level_browsing_context(url, new_webview_details);
              },
              // Close a top level browsing context.
@@ -819,7 +822,7 @@
              EmbedderToConstellationMessage::CloseWebView(webview_id) => {
                  self.handle_close_top_level_browsing_context(webview_id);
              },
-@@ -1408,10 +1494,18 @@
+@@ -1408,10 +1497,18 @@
              EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
@@ -840,7 +843,7 @@
              EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
                  self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
              },
-@@ -1576,6 +1670,8 @@
+@@ -1576,6 +1673,8 @@
          &mut self,
          webview_id: WebViewId,
          evaluation_id: JavaScriptEvaluationId,
@@ -849,7 +852,7 @@
          script: String,
      ) {
          let browsing_context_id = BrowsingContextId::from(webview_id);
-@@ -1591,12 +1687,22 @@
+@@ -1591,12 +1690,22 @@
              return;
          };
 
@@ -872,7 +875,7 @@
                  script,
              ))
              .is_err()
-@@ -1795,8 +1901,37 @@
+@@ -1795,8 +1904,37 @@
                  self.handle_joint_session_history_length(webview_id, response_sender);
              },
              // Notification that the new document is ready to become active
@@ -911,7 +914,7 @@
              },
              // Update pipeline url after redirections
              ScriptToConstellationMessage::SetFinalUrl(final_url) => {
-@@ -2025,6 +2160,20 @@
+@@ -2025,6 +2163,20 @@
                      .send(mem::ProfilerMsg::Report(sender));
              },
              ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
@@ -932,7 +935,7 @@
                  self.handle_finish_javascript_evaluation(evaluation_id, result)
              },
              ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
-@@ -2569,7 +2718,7 @@
+@@ -2569,7 +2721,7 @@
 
                      if let Ok(process) = content.spawn_multiprocess() {
                          let crossbeam_receiver = receiver.route_preserving_errors();
@@ -941,11 +944,12 @@
                      } else {
                          return warn!("Failed to spawn process for SW manager.");
                      }
-@@ -2968,10 +3117,20 @@
+@@ -2968,10 +3120,21 @@
      fn handle_pipeline_exited(&mut self, pipeline_id: PipelineId, exit_source: PipelineExitSource) {
          debug!("{}: Exited", pipeline_id);
          self.remove_worker_animation_frame_providers_for_pipeline(pipeline_id);
 +        self.document_identities.remove(&pipeline_id);
++        self.crash_reloads.remove(&pipeline_id);
 
          let Some(pipeline) = self.pipelines.remove(&pipeline_id) else {
              return;
@@ -962,7 +966,7 @@
 
          // Clean up any registered interests for this pipeline.
          self.pipeline_interests.retain(|_, set| {
-@@ -2987,6 +3146,34 @@
+@@ -2987,6 +3150,34 @@
              pipeline.id,
              exit_source,
          ));
@@ -997,7 +1001,7 @@
      }
 
      #[servo_tracing::instrument(skip_all)]
-@@ -3058,6 +3245,41 @@
+@@ -3058,6 +3249,41 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
@@ -1039,7 +1043,16 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3402,6 +3624,11 @@
+@@ -3120,6 +3346,8 @@
+             TargetSnapshotParams::default(),
+             None,
+         );
++        self.crash_reloads
++            .insert(new_pipeline_id, old_load_data.clone());
+
+         let Some(webview) = self.webviews.get_mut(&webview_id) else {
+             return warn!("Adding pending change to unknown WebView: {webview_id:?}");
+@@ -3402,6 +3630,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -1051,7 +1064,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +3698,7 @@
+@@ -3471,7 +3704,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -1060,7 +1073,26 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -5840,10 +6067,40 @@
+@@ -4947,6 +5180,18 @@
+                 return warn!("{}: Got reload event after closure", browsing_context_id);
+             },
+         };
++        // A crash page has every sandboxing flag. A reload from its script thread would
++        // inherit them, so replace the crash page with its original load instead.
++        if let Some(load_data) = self.crash_reloads.get(&pipeline_id).cloned() {
++            self.load_url(
++                webview_id,
++                pipeline_id,
++                load_data,
++                NavigationHistoryBehavior::Replace,
++                TargetSnapshotParams::default(),
++            );
++            return;
++        }
+         self.send_message_to_pipeline(
+             pipeline_id,
+             ScriptThreadMessage::Reload(pipeline_id),
+@@ -5840,10 +6085,40 @@
          }
      }
 
@@ -1937,3 +1969,27 @@
 +        event_loop
      }
  }
+--- a/servo-net/fetch/methods.rs
++++ b/servo-net/fetch/methods.rs
+@@ -539,12 +539,15 @@
+     let current_scheme = current_url.scheme();
+
+     // Intercept the request and maybe override the response.
+-    context
+-        .request_interceptor
+-        .lock()
+-        .await
+-        .intercept_request(request, &mut response, context)
+-        .await;
++    // Experimental S1 change: an embedder response must not replace a crash error page.
++    if request.crash.is_none() {
++        context
++            .request_interceptor
++            .lock()
++            .await
++            .intercept_request(request, &mut response, context)
++            .await;
++    }
+
+     let mut response = match response {
+         Some(response) => response,

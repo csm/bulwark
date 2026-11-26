@@ -258,6 +258,25 @@ fn cancel_held(delegate: &Delegate) -> usize {
     count
 }
 
+// Servo's crash page embeds the failure reason. A request hook must not replace it.
+// The reason text only orders the fixture; it grants no host authority.
+fn crash_page(
+    servo: &Servo,
+    view: &WebView,
+    deadline: Instant,
+    document: DocumentIdentity,
+    reason: &str,
+) -> Result<()> {
+    let script = format!(
+        "document.documentElement.textContent.includes({reason:?}) ? 'crash-document' : String(location.href)"
+    );
+    text(
+        scoped(servo, view, deadline, document, &script)?,
+        document,
+        "crash-document",
+    )
+}
+
 fn stale(result: Evaluation) -> Result<()> {
     ensure!(
         matches!(result, Err(JavaScriptEvaluationError::StaleDocument)),
@@ -1536,16 +1555,12 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
             .is_some_and(|id| id != failure_id)
     })?;
     let crash_document = identity(&servo, &failure, deadline)?;
-    text(
-        scoped(
-            &servo,
-            &failure,
-            deadline,
-            crash_document,
-            "'crash-document'",
-        )?,
+    crash_page(
+        &servo,
+        &failure,
+        deadline,
         crash_document,
-        "crash-document",
+        "S1 probe actual script-thread panic",
     )?;
     load(&servo, &failure, deadline, "/after-thread-failure")?;
     let recovered = identity(&servo, &failure, deadline)?;
@@ -1751,20 +1766,16 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
         pending_delegate.active.get().is_some_and(|id| id != source)
     })?;
     let pending_crash = identity(&servo, &pending_view, deadline)?;
-    text(
-        scoped(
-            &servo,
-            &pending_view,
-            deadline,
-            pending_crash,
-            "'crash-document'",
-        )?,
+    crash_page(
+        &servo,
+        &pending_view,
+        deadline,
         pending_crash,
-        "crash-document",
+        "S1 probe actual script-thread panic",
     )?;
     // An error page must recover through reload, back, forward, and a new URL.
     // Recovery closes every history pipeline in the view, so no entry may keep one.
-    // The fixture interceptor serves the crash load, so reload shows the source again.
+    // Reload of the crash page must load the failed view's previous URL again.
     pending_view.reload();
     drive_until(&servo, deadline, || {
         pending_delegate
@@ -1774,6 +1785,18 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     })?;
     wait_marker(&servo, &pending_view, deadline, "/navigation-source")?;
     let reloaded = identity(&servo, &pending_view, deadline)?;
+    // The crash page has every sandboxing flag. The reloaded page must not inherit them.
+    text(
+        scoped(
+            &servo,
+            &pending_view,
+            deadline,
+            reloaded,
+            "String(window.origin)",
+        )?,
+        reloaded,
+        ORIGIN,
+    )?;
     let traversal = pending_view.go_back(1);
     drive_until(&servo, deadline, || {
         pending_delegate.traversals.borrow().contains(&traversal)
@@ -2383,16 +2406,12 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                     .is_some_and(|id| id != process_document)
             })?;
             let crash_document = identity(&servo, &process_view, deadline)?;
-            text(
-                scoped(
-                    &servo,
-                    &process_view,
-                    deadline,
-                    crash_document,
-                    "'crash-document'",
-                )?,
+            crash_page(
+                &servo,
+                &process_view,
+                deadline,
                 crash_document,
-                "crash-document",
+                "Content process disconnected",
             )?;
             load(&servo, &process_view, deadline, &format!("/after-{path}"))?;
             let process_recovered = identity(&servo, &process_view, deadline)?;
@@ -2425,16 +2444,18 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                     .is_some_and(|id| id != shared_document)
             })?;
             let shared_crash_document = identity(&servo, &shared, deadline)?;
+            // Servo loads about:blank synchronously and skips the crash fetch, so this
+            // crash document is blank. The product's native error state must cover it.
             text(
                 scoped(
                     &servo,
                     &shared,
                     deadline,
                     shared_crash_document,
-                    "'crash-document'",
+                    "location.href + ' ' + document.documentElement.textContent.includes('Content process disconnected')",
                 )?,
                 shared_crash_document,
-                "crash-document",
+                "about:blank false",
             )?;
             load(&servo, &shared, deadline, &format!("/shared-after-{path}"))?;
             let shared_recovered = identity(&servo, &shared, deadline)?;
@@ -2610,16 +2631,12 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                 pending_delegate.active.get().is_some_and(|id| id != source)
             })?;
             let crash_document = identity(&servo, &pending_view, deadline)?;
-            text(
-                scoped(
-                    &servo,
-                    &pending_view,
-                    deadline,
-                    crash_document,
-                    "'crash-document'",
-                )?,
+            crash_page(
+                &servo,
+                &pending_view,
+                deadline,
                 crash_document,
-                "crash-document",
+                "Content process disconnected",
             )?;
             // The failed navigation must not block a new one.
             load(

@@ -224,7 +224,8 @@ Child exit and kill before construction were silent, because the lifeline did no
 A live view also kept a stale pending change and could not navigate again. The patch now treats pending pipelines as live.
 Crash recovery left history entries on closed pipelines, so back and forward wedged the view.
 The patch now marks those entries for reload before recovery closes them. Reload, back, forward, and a new URL recover.
-Embedder interception replaces Servo's crash error page. Product request hooks must not override crash loads.
+The patch now covers `servo-net`, so embedder interception cannot replace Servo's crash error page.
+Reload from that page inherited its sandboxing. The patch now reloads the failed document's original load instead.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.

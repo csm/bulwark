@@ -283,6 +283,7 @@ The review needs these decisions:
   The presentation follows the platform for fun: a classic sad Mac on macOS, a kernel panic screen on Linux, and a blue screen on Windows.
   These are original renderings in those styles, not copied vendor artwork. Windows applies only if Windows support is added.
   No milestone schedules this work yet. P3.3's lifecycle work is the natural place for it.
+- The experimental engine patch may cover `servo-net`, so request interception cannot replace a crash error page (2026-11-26).
 
 The contract review produces concrete ADRs and bounded schemas in P3.1.
 No new extension trust claim, engine pin, display scope, or failed acceptance criterion changes without a recorded decision.

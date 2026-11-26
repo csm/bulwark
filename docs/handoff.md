@@ -96,8 +96,14 @@ The patch now treats a pipeline as live while its view holds it as a pending cha
 Second, crash recovery closed every history pipeline without marking its entry for reload. Back and forward then wedged the view.
 The patch now marks those entries for reload, as history eviction does. Reload, back, forward, and a new URL recover in both modes.
 A negative control for each fix fails at its first dependent case.
-Servo also lets embedder interception replace the crash error page. The fixture intercepts every page, so every fixture "crash document" is the previous URL served again.
-The product does not intercept top-level loads today. P3.5 request hooks and P3.7 `bulwark://` delivery must not override crash loads.
+Servo also let embedder interception replace the crash error page, so earlier fixture crash documents were the previous URL served again.
+
+The owner approved patching `servo-net`, so the experimental patch now covers seven published packages.
+Interception now skips crash requests, and each fetched crash document must contain the failure reason.
+The real error page exposed a reload defect: reload inherited the crash page's sandboxing, with an opaque origin and no scripts.
+The patch now records each crash page's original load data, and reload replaces the crash page with that load.
+A crash document for a view at `about:blank` is blank, because Servo loads `about:blank` without the crash fetch.
+A negative control for each change fails at its first dependent case.
 Remaining construction failures and replacement paths stay open.
 The product pins and installed natives remain unchanged.
 
@@ -115,8 +121,9 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [recovery evidence](../experiments/phase3/document-recovery-evidence-2026-11-24.json) records the current S1 runs, engine controls, negative controls, and local checks.
-Its engine baseline is the construction checkpoint at `dde097c`, whose three final runs in each mode passed.
+The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) records the current S1 runs, engine controls, negative controls, and local checks.
+Its baseline is the recovery checkpoint at `7bfebae`, whose three final runs in each mode passed.
+The [recovery evidence](../experiments/phase3/document-recovery-evidence-2026-11-24.json) preserves the first fifty-one-case checkpoint and its negative controls.
 The [construction evidence](../experiments/phase3/document-construction-evidence-2026-11-24.json) preserves the forty-six-case checkpoint.
 The [shared-process evidence](../experiments/phase3/document-shared-evidence-2026-11-24.json) preserves the forty-four-case checkpoint and its negative control.
 The [backend evidence](../experiments/phase3/document-backend-evidence-2026-11-24.json) preserves the forty-case checkpoint and both backend loss controls.
@@ -180,7 +187,8 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
    Continue the S1 construction audit with failures during parsing, after response headers, and in `about:blank` or `srcdoc` construction.
-   Decide whether to patch `servo-net` so request interception cannot replace a crash error page, then verify reload of a real error page.
+   Decide whether crash pages for `about:blank` views should fetch Servo's error page, or rely on the product's native error state.
+   Reload from a crash page uses default target snapshot parameters. Check views that started with inherited sandboxing.
    Nested browsing-context history after crash recovery remains unchecked.
    The owner accepted crash-page replacement for a failed pending navigation.
    Error pages must be recoverable by back, reload, or a new URL. A failed buffer shows a native, platform-styled error until the user recovers or kills it. The [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-24) give details. No milestone schedules that work yet.

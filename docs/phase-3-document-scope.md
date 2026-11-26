@@ -76,8 +76,8 @@ The fixture enables Servo recovery with `Opts::hard_fail = false`.
 It uses `Servo::setup_logging()` and a panic hook that reports through `log::error!`, as the published Servo crash test does.
 The engine logger attaches the current event-loop identity and forwards the panic to the constellation.
 That path revokes every affected view and creates the engine crash document.
-The [recovery audit](#pending-process-and-recovery-audit) found that the fixture's interceptor replaces that document's error content.
-In every fixture, the "crash document" is the failed view's previous URL served again, not Servo's error page.
+Before the [crash error page audit](#crash-error-page-audit), the fixture's interceptor replaced that document's error content.
+Earlier checkpoints therefore evaluated the failed view's previous URL served again, not Servo's error page.
 The fixture requires the unwind notification, eight terminal errors, released callback captures, an empty pending table, and successful recovery.
 A retained successful reply from before the unwind must also fail the host allocation check.
 
@@ -433,11 +433,32 @@ The negative control removes only this marking. The history steps then fail with
 That control stops at the first failure, so it does not show which later cases also need the fix.
 The fix applies to every path that reaches the panic handler. Nested browsing-context history remains unchecked.
 
-Servo also sends the crash load through embedder request interception after it sets the crash network error.
-An intercepted response replaces that error. The fixture intercepts every page, so it never shows Servo's error page.
-Reload in these fixtures therefore reloads the previous URL. Reload of a real error page remains unverified.
-The product does not intercept top-level loads today.
-P3.5 request hooks and P3.7 `bulwark://` delivery must not override crash loads. A fix belongs in `servo-net`, outside the six patched packages.
+Servo also sent the crash load through embedder request interception after it set the crash network error.
+An intercepted response replaced that error. The crash error page audit below fixes this and checks reload from the real error page.
+
+## Crash error page audit
+
+The owner approved a `servo-net` change, so the experimental patch now covers seven published packages.
+`main_fetch` now skips embedder interception for a request that carries crash details.
+Servo's `crash.html` embeds the failure reason. Each fetched crash document in the fixtures must now contain that reason.
+That text check orders the fixture only. It grants no host authority.
+
+The real error page exposed a reload defect.
+The crash page carries every creation sandboxing flag, so it has an opaque origin and runs no scripts.
+An embedder reload asked the crash page's script thread to navigate, and that navigation inherited the crash page's flags.
+The reloaded page showed the previous URL's markup with an opaque origin and without running its scripts.
+The panic handler now records the failed document's original load data for each crash pipeline.
+Reload of a crash pipeline replaces it with that original load through the constellation. The record is removed at pipeline exit.
+The reloaded page now runs its scripts and has its real origin. Back, forward, and a new URL still recover.
+For a failed pending navigation, reload restores the replaced source page. A new URL retries the failed target.
+
+A crash document for a view at `about:blank` is blank. Servo loads `about:blank` synchronously, so the crash fetch never runs.
+The shared-process fixture asserts this for its popup. The product's native error state must cover such views.
+
+One negative control restores interception for crash requests. The first fetched crash document then lacks the failure reason.
+The other control disables only the reload replacement. Reload then produces a page whose script never runs.
+Each control stops at its first failure, so it does not show which later cases also need its fix.
+The reload replacement uses default target snapshot parameters. No fixture covers a view that started with sandboxing from its opener or a frame.
 
 ## Backend loss audit
 
@@ -529,7 +550,8 @@ Fixture markers establish test order, without authentication claims.
 | Script-thread failure | An actual Rust unwind revokes scope and releases eight pending callbacks exactly once. A new document accepts evaluation after recovery. |
 | Unconstructed view failure | Requests without a top browsing context fail with `InternalError` and retain nothing. A pending pipeline unwinds with revocation and no crash document. The view can only close. |
 | Pending navigation failure | A cross-site pending pipeline unwinds before construction. Its healthy active document is revoked before eight callbacks and replaced by a crash document. The view recovers. |
-| Crash recovery history | After a pending navigation failure, reload, back to a closed history entry, forward, and a new URL all recover with fresh identities. |
+| Crash recovery history | After a pending navigation failure, reload, back to a closed history entry, forward, and a new URL all recover with fresh identities. The reloaded page keeps its origin and runs scripts. |
+| Crash error page | Fetched crash documents show Servo's error page with the failure reason. A crash document at `about:blank` is blank. |
 | Unconstructed process exit and kill (multiprocess only) | The child of a new view's pending pipeline exits or is killed. The host receives revocation and a crash notification, and the view closes. |
 | Pending navigation process exit and kill (multiprocess only) | The child of a live view's pending navigation exits or is killed. Eight callbacks are released, and the view navigates again. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
@@ -561,8 +583,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [recovery evidence](../experiments/phase3/document-recovery-evidence-2026-11-24.json) records the current runs, source hashes, binary hashes, negative controls, and local checks.
-Its engine baseline is the construction checkpoint at `dde097c`, whose three final runs in each mode passed with both Servo controls.
+The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, negative controls, and local checks.
+Its baseline is the recovery checkpoint at `7bfebae`, whose three final runs in each mode passed with both Servo controls.
+The [recovery evidence](../experiments/phase3/document-recovery-evidence-2026-11-24.json) preserves the first fifty-one-case checkpoint and its two negative controls.
 The [construction evidence](../experiments/phase3/document-construction-evidence-2026-11-24.json) preserves the forty-six-case multiprocess checkpoint.
 The [shared-process evidence](../experiments/phase3/document-shared-evidence-2026-11-24.json) preserves the forty-four-case multiprocess checkpoint and its negative control.
 The [backend evidence](../experiments/phase3/document-backend-evidence-2026-11-24.json) preserves the forty-case multiprocess checkpoint and both backend loss controls.
@@ -628,7 +651,7 @@ The kill fixture covers only a child blocked at a barrier.
 Kills during JavaScript execution or IPC writes remain untested.
 Script-thread unwinds, child exit, and child kill before construction now have evidence for a new view and a pending cross-site navigation.
 Error-page recovery through reload, back, forward, and a new URL has evidence for top-level history only.
-Fixture interception hides Servo's real error page. Request hooks must not override crash loads.
+Embedder interception no longer replaces crash error pages. Crash pages for `about:blank` documents remain blank.
 Failures during parsing, after response headers, and in `about:blank` or `srcdoc` construction remain untested.
 Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
@@ -648,7 +671,7 @@ Evaluator authority, redirect/rewrite mechanisms, and owner scope decisions also
 
 ## Reproduction
 
-Prepare copies of the six published Servo packages and an isolated Bulwark workspace:
+Prepare copies of the seven published Servo packages and an isolated Bulwark workspace:
 
 ```sh
 python3 experiments/prepare_document_scope.py --out target/phase3-document-backend
