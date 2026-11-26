@@ -227,6 +227,8 @@ The patch now marks those entries for reload before recovery closes them. Reload
 The patch now covers `servo-net`, so embedder interception cannot replace Servo's crash error page.
 Reload from that page inherited its sandboxing. The patch now reloads the failed document's original load instead.
 The crash page's load data carries the original sandboxing flags, so reload also works after history rebuilds the page.
+Script-thread unwinds after response headers cover a top-level document before its DOM exists and while its parser is blocked.
+Late response data after either failure reaches no live document, and reload and a new URL recover.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.

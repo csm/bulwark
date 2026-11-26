@@ -48,13 +48,13 @@ class DocumentScopeRunnerTests(unittest.TestCase):
         if multiprocess:
             names |= runner.MULTIPROCESS_MARKERS
         return [f"S1 {name}: PASS" for name in sorted(names)] + [
-            "S1 document-scope prototype: PASS"]
+            f"S1 document-scope prototype: PASS ({len(names)} cases; probe)"]
 
     @staticmethod
     def backend_markers():
-        return [f"S1 {name}: PASS" for name in sorted(
-            runner.BACKEND_MARKERS - {"backend-loss prototype"})] + [
-            "S1 backend-loss prototype: PASS"]
+        names = runner.BACKEND_MARKERS - {"backend-loss prototype"}
+        return [f"S1 {name}: PASS" for name in sorted(names)] + [
+            f"S1 backend-loss prototype: PASS ({len(names)} cases; probe)"]
 
     def test_single_process_mode(self):
         status, report = self.run_markers(False, self.markers(), "--document-scope")
@@ -106,6 +106,17 @@ class DocumentScopeRunnerTests(unittest.TestCase):
                 status, _ = self.run_markers(
                     True, self.markers(True) + [extra], "--document-scope-multiprocess")
                 self.assertEqual(status, 1)
+
+    def test_stale_summary_count_fails(self):
+        for multiprocess in (False, True):
+            with self.subTest(multiprocess=multiprocess):
+                markers = self.markers(multiprocess)
+                count = len(markers) - 1
+                markers[-1] = markers[-1].replace(f"({count} cases;", f"({count - 1} cases;")
+                flag = "--document-scope-multiprocess" if multiprocess else "--document-scope"
+                status, report = self.run_markers(multiprocess, markers, flag)
+                self.assertEqual(status, 1)
+                self.assertFalse(report["cases"][0]["assertions_complete"])
 
     def test_timeout_stops_content_processes(self):
         with tempfile.TemporaryDirectory() as directory:

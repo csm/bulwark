@@ -20,7 +20,8 @@ EXPECTED_MARKERS = {
     "failed-load", "cross-view", "subframe-isolation", "close", "injected-crash",
     "script-created-initial-document", "javascript-url-replacement",
     "script-thread-failure-and-callback-cleanup", "unconstructed-view-failure",
-    "pending-navigation-failure", "crash-recovery-history", "crash-history-reload",
+    "pending-navigation-failure", "crash-recovery-history", "crash-history-reload", "headers-before-parse-failure",
+    "parser-blocked-failure",
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
     "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
     "queued-engine-cancellation", "completed-engine-cancellation",
@@ -48,7 +49,8 @@ def assertions_complete(markers, expected, summary):
     return (len(markers) == len(expected)
             and {line.removeprefix("S1 ").split(": PASS", 1)[0] for line in markers} == expected
             and all(": PASS" in line for line in markers)
-            and markers[-1].startswith(f"S1 {summary}: PASS"))
+            # The summary's own case count must match, so a stale count cannot pass.
+            and markers[-1].startswith(f"S1 {summary}: PASS ({len(expected) - 1} cases;"))
 
 
 def run_case(command, log, timeout):

@@ -42,6 +42,17 @@ struct Delegate {
     held: RefCell<Vec<WebResourceLoad>>,
 }
 
+// Servo's request interceptor buffers a body until the load finishes, so it cannot stream.
+// The partial-response fixtures use the real HTTP loader.
+const PARTIAL_PATH: &str = "/partial-parse";
+// Servo buffers this many body bytes for MIME sniffing before it creates the DOM.
+const SNIFF_BYTES: usize = 1445;
+const PARTIAL_SCRIPT: &str = "<script>window.marker='/partial-parse'</script>";
+const PARTIAL_BLOCKED: &str = "<script src='/held-parser-script'></script><p id='after-script'>";
+const PARTIAL_TAIL: &str = "<script>window.marker='late-body'</script>";
+const PARTIAL_RELOAD: &str =
+    "<!doctype html><h1>reloaded</h1><script>window.marker='/partial-parse'</script>";
+
 const DELEGATE_PANIC: &str = "S1 probe delegate panic";
 const CALLBACK_PANIC: &str = "S1 probe terminal callback panic";
 
@@ -322,6 +333,283 @@ fn wait_marker(servo: &Servo, view: &WebView, deadline: Instant, path: &str) -> 
     }
 }
 
+fn accept_loopback(listener: &TcpListener, deadline: Instant) -> Result<std::net::TcpStream> {
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                // Accepted sockets can inherit the listener's nonblocking mode on macOS.
+                stream.set_nonblocking(false)?;
+                stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+                return Ok(stream);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                ensure!(
+                    Instant::now() < deadline,
+                    "Loopback fixture deadline exceeded"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn read_loopback_request(stream: &mut std::net::TcpStream) -> Result<String> {
+    let mut request = Vec::new();
+    while !request.ends_with(b"\r\n\r\n") {
+        let mut byte = [0];
+        stream.read_exact(&mut byte)?;
+        request.push(byte[0]);
+        ensure!(request.len() <= 16384, "Oversized loopback request");
+    }
+    Ok(String::from_utf8_lossy(&request).into_owned())
+}
+
+// Serve the parsing document twice. The first response sends its headers and a partial body,
+// then waits for the release signal before it sends the rest. The second response is complete.
+// The worker reports whether the socket accepted the held tail, not whether Servo read it.
+fn partial_fixture(
+    head: String,
+) -> Result<(u16, mpsc::Sender<()>, thread::JoinHandle<Result<bool>>)> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    listener.set_nonblocking(true)?;
+    let (release, released) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let expected = format!("GET {PARTIAL_PATH} HTTP/1.1\r\n");
+        let mut stream = accept_loopback(&listener, deadline)?;
+        ensure!(
+            read_loopback_request(&mut stream)?.starts_with(&expected),
+            "Unexpected partial request"
+        );
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{head}",
+            head.len() + PARTIAL_TAIL.len()
+        )?;
+        stream.flush()?;
+        released.recv_timeout(Duration::from_secs(30))?;
+        let tail_delivered = stream
+            .write_all(PARTIAL_TAIL.as_bytes())
+            .and_then(|()| stream.flush())
+            .is_ok();
+        drop(stream);
+        let mut stream = accept_loopback(&listener, deadline)?;
+        ensure!(
+            read_loopback_request(&mut stream)?.starts_with(&expected),
+            "Unexpected reload request"
+        );
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PARTIAL_RELOAD}",
+            PARTIAL_RELOAD.len()
+        )?;
+        Ok(tail_delivered)
+    });
+    Ok((port, release, worker))
+}
+
+#[derive(Clone, Copy)]
+enum PartialFailure {
+    BeforeParse,
+    ParserBlocked,
+}
+
+impl PartialFailure {
+    fn name(self) -> &'static str {
+        match self {
+            Self::BeforeParse => "headers-before-parse-failure",
+            Self::ParserBlocked => "parser-blocked-failure",
+        }
+    }
+
+    fn head(self) -> String {
+        let head = format!("<!doctype html><h1>partial</h1>{PARTIAL_SCRIPT}");
+        match self {
+            Self::BeforeParse => {
+                assert!(head.len() < SNIFF_BYTES);
+                head
+            }
+            // Pad with a comment so the parser starts before the withheld script.
+            Self::ParserBlocked => format!(
+                "<!doctype html><!--{}--><h1>partial</h1>{PARTIAL_SCRIPT}{PARTIAL_BLOCKED}",
+                "p".repeat(SNIFF_BYTES)
+            ),
+        }
+    }
+}
+
+fn partial_failure(
+    servo: &Servo,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    engine_errors: &BackendErrors,
+    variant: PartialFailure,
+) -> Result<String> {
+    let delegate = Rc::new(Delegate::default());
+    let view = WebViewBuilder::new(servo, context)
+        .url(url::Url::parse(&format!("{ORIGIN}/partial-source"))?)
+        .delegate(delegate.clone())
+        .build();
+    drive_until(servo, deadline, || delegate.loads.get() > 0)?;
+    let source = identity(servo, &view, deadline)?;
+    let (port, release, worker) = partial_fixture(variant.head())?;
+    delegate.loopback_port.set(port);
+    let origin = format!("http://127.0.0.1:{port}");
+    view.load(url::Url::parse(&format!("{origin}{PARTIAL_PATH}"))?);
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != source)
+    })?;
+    let expected_state = match variant {
+        PartialFailure::BeforeParse => "null:undefined",
+        PartialFailure::ParserBlocked => {
+            wait_marker(servo, &view, deadline, PARTIAL_PATH)?;
+            // Servo's prefetch tokenizer requests the script once, and the blocked parser
+            // requests it again. Both requests stay withheld.
+            drive_until(servo, deadline, || {
+                delegate
+                    .held
+                    .borrow()
+                    .iter()
+                    .filter(|load| load.request().url.path() == "/held-parser-script")
+                    .count()
+                    == 2
+            })?;
+            "loading:true"
+        }
+    };
+    let failed = identity(servo, &view, deadline)?;
+    ensure!(
+        failed != source && delegate.active.get() == Some(failed),
+        "Partial response did not activate a new document"
+    );
+    // Before parsing there is no DOM and no script has run. A blocked parser has run the
+    // first script but has not reached the element after the withheld script.
+    let state = scoped(
+        servo,
+        &view,
+        deadline,
+        failed,
+        match variant {
+            PartialFailure::BeforeParse => {
+                "String(document.documentElement) + ':' + String(window.marker)"
+            }
+            PartialFailure::ParserBlocked => {
+                "document.readyState + ':' + (document.getElementById('after-script') === null)"
+            }
+        },
+    )?;
+    text(state, failed, expected_state)?;
+    let ticket = delegate.ticket(failed)?;
+    let reply = scoped(servo, &view, deadline, failed, "'before-partial-failure'")?;
+    ensure!(reply.is_ok(), "Partial response control failed");
+    // The constellation forwards both messages in order, so the unwind precedes these requests.
+    view.crash_script_thread_for_document_scope_probe();
+    let audit = CleanupAudit::queue(&view, Some(failed), &delegate, false);
+    drive_until(servo, deadline, || audit.calls.get() == 8)?;
+    audit.check()?;
+    drive_until(servo, deadline, || delegate.crashed.get())?;
+    ensure!(
+        view.pending_evaluations_for_document_scope_probe() == 0,
+        "Partial response failure retained callbacks"
+    );
+    delegate.reject(ticket, reply)?;
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != failed)
+    })?;
+    let crash = identity(servo, &view, deadline)?;
+    crash_page(
+        servo,
+        &view,
+        deadline,
+        crash,
+        "S1 probe actual script-thread panic",
+    )?;
+    // Late response data for the failed document must not reach any live document.
+    let errors_before_release = engine_errors.0.borrow().len();
+    let held = delegate.held.take();
+    let expected_held = match variant {
+        PartialFailure::BeforeParse => 0,
+        PartialFailure::ParserBlocked => 2,
+    };
+    ensure!(
+        held.len() == expected_held,
+        "Unexpected withheld subresources: {:?}",
+        held.iter()
+            .map(|load| (load.request().url.to_string(), load.request().destination))
+            .collect::<Vec<_>>()
+    );
+    for load in held {
+        let url = load.request().url.clone();
+        let mut late = load.intercept(WebResourceResponse::new(url));
+        late.send_body_data(b"window.marker='late-script'".to_vec());
+        late.finish();
+    }
+    release.send(())?;
+    let settle = Instant::now() + Duration::from_millis(300);
+    drive_until(servo, deadline, || Instant::now() >= settle)?;
+    ensure!(
+        identity(servo, &view, deadline)? == crash,
+        "Late response data replaced the crash document"
+    );
+    crash_page(
+        servo,
+        &view,
+        deadline,
+        crash,
+        "S1 probe actual script-thread panic",
+    )?;
+    ensure!(
+        !delegate.events.borrow().iter().any(|event| matches!(
+            event,
+            DocumentLifecycle::DomReady(id) | DocumentLifecycle::LoadComplete(id) if *id == failed
+        )),
+        "The failed partial document reported readiness"
+    );
+    ensure!(
+        delegate.crash_reasons.borrow().len() == 1,
+        "Late response data caused another failure"
+    );
+    let late_errors = engine_errors.0.borrow()[errors_before_release..].to_vec();
+    ensure!(
+        late_errors.is_empty(),
+        "Late response data raised engine errors: {late_errors:?}"
+    );
+    stale(scoped(servo, &view, deadline, failed, "'obsolete'")?)?;
+    // Reload restores the failed load. The fixture's second response is complete.
+    view.reload();
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != crash)
+    })?;
+    wait_marker(servo, &view, deadline, PARTIAL_PATH)?;
+    let reloaded = identity(servo, &view, deadline)?;
+    text(
+        scoped(servo, &view, deadline, reloaded, "String(window.origin)")?,
+        reloaded,
+        &origin,
+    )?;
+    let tail_delivered = worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("Partial fixture panicked"))??;
+    delegate.loopback_port.set(0);
+    load(servo, &view, deadline, "/after-partial-failure")?;
+    let recovered = identity(servo, &view, deadline)?;
+    text(
+        scoped(servo, &view, deadline, recovered, "'partial-recovered'")?,
+        recovered,
+        "partial-recovered",
+    )?;
+    ensure!(
+        audit.calls.get() == 8,
+        "Partial failure recovery repeated callbacks"
+    );
+    Ok(format!(
+        "active document unwound, 8 callbacks released, late data ignored, tail_delivered={tail_delivered}, reload and new URL recover"
+    ))
+}
+
 fn redirect_fixture() -> Result<(u16, thread::JoinHandle<Result<()>>)> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
@@ -531,6 +819,9 @@ fn start(multiprocess: bool) -> Result<(Rc<SoftwareRenderingContext>, Servo)> {
 pub(super) fn run(multiprocess: bool) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(if multiprocess { 80 } else { 30 });
     let (context, servo) = start(multiprocess)?;
+    // Engine errors are observations only. A case asserts on them only where it says so.
+    let engine_errors = Rc::new(BackendErrors::default());
+    servo.set_delegate(engine_errors.clone());
     let delegate = Rc::new(Delegate::default());
     let view = WebViewBuilder::new(&servo, context.clone())
         .url(url::Url::parse("about:blank")?)
@@ -1971,6 +2262,14 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
         "S1 crash-history-reload: PASS (back rebuilt a closed crash entry, reload restored the failed load)"
     );
     drop(history_view);
+
+    // Fail the script thread after response headers. First the body is shorter than Servo's
+    // MIME-sniffing buffer, so the active document has no DOM. Then the parser of an active
+    // document waits for a withheld classic script. The main response stays open in both.
+    for variant in [PartialFailure::BeforeParse, PartialFailure::ParserBlocked] {
+        let detail = partial_failure(&servo, context.clone(), deadline, &engine_errors, variant)?;
+        println!("S1 {}: PASS ({detail})", variant.name());
+    }
     // Releasing one clone must preserve the scope. Releasing the last handle must
     // revoke host state and callbacks without waiting for another event-loop drain.
     let release_delegate = Rc::new(Delegate::default());
@@ -2885,7 +3184,7 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     );
     println!(
         "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
-        if multiprocess { 51 } else { 41 }
+        if multiprocess { 54 } else { 44 }
     );
     Ok(())
 }
