@@ -118,6 +118,21 @@ class DocumentScopeRunnerTests(unittest.TestCase):
                 self.assertEqual(status, 1)
                 self.assertFalse(report["cases"][0]["assertions_complete"])
 
+    def test_parse_failure_cases_and_documented_counts(self):
+        # The scope guide and handoff state these counts. Keep them in step with the markers.
+        self.assertEqual(len(runner.EXPECTED_MARKERS) - 1, 53)
+        self.assertEqual(len(runner.EXPECTED_MARKERS | runner.MULTIPROCESS_MARKERS) - 1, 67)
+        shared = ("cross-site-parser-blocked-failure",
+                  "cross-site-subframe-parser-blocked-failure",
+                  "sandboxed-srcdoc-parser-blocked-failure")
+        for name in shared:
+            with self.subTest(missing=name):
+                markers = [line for line in self.markers()
+                           if line.removeprefix("S1 ").split(": PASS")[0] != name]
+                status, report = self.run_markers(False, markers, "--document-scope")
+                self.assertEqual(status, 1)
+                self.assertFalse(report["cases"][0]["assertions_complete"])
+
     def test_timeout_stops_content_processes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

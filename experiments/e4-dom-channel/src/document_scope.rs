@@ -42,6 +42,8 @@ struct Delegate {
     held: RefCell<Vec<WebResourceLoad>>,
     // Serve withheld paths as a counting script instead of holding them.
     serve_held: Cell<bool>,
+    // Markup for one fixture path that depends on run-time data, such as a loopback port.
+    frame_markup: RefCell<Option<(String, String)>>,
 }
 
 // Servo's request interceptor buffers a body until the load finishes, so it cannot stream.
@@ -207,13 +209,16 @@ impl WebViewDelegate for Delegate {
         response
             .headers
             .insert("content-type", "text/html; charset=utf-8".parse().unwrap());
+        let markup = match self.frame_markup.borrow().as_ref() {
+            Some((path, markup)) if path == url.path() => markup.clone(),
+            _ => fixture_markup(url.path()).to_owned(),
+        };
         let mut intercepted = load.intercept(response);
         intercepted.send_body_data(
             format!(
-                "<!doctype html><h1>{}</h1><script>window.marker={:?};window.mutations=0</script>{}",
+                "<!doctype html><h1>{}</h1><script>window.marker={:?};window.mutations=0</script>{markup}",
                 url.path(),
                 url.path(),
-                fixture_markup(url.path())
             )
             .into_bytes(),
         );
@@ -1172,6 +1177,887 @@ fn javascript_url_failure(
         "JavaScript URL failure recovery repeated callbacks"
     );
     Ok("8 callbacks released, crash document renders the JavaScript result again with its origin and running scripts, reload renders it again, new URL recovers, survivor usable".into())
+}
+
+// Cross-site parsing fixtures. A loopback HTTP server serves each cross-site document, so the
+// real loader streams its body. Parser-inserted scripts from `/held` paths stay withheld.
+const CROSS_SITE_PARSE: &str = "/cross-site-parse";
+const CROSS_SITE_RELOAD: &str =
+    "<!doctype html><h1>reloaded</h1><script>window.marker='/cross-site-parse'</script>";
+const PARSE_FRAME: &str = "/partial-frame";
+const FRAME_SIBLING: &str = "/frame-sibling";
+// Child frames report progress to the parent. These messages only order the fixture.
+const FRAME_PARSING: &str = "<script>parent.postMessage('frame-parsing', '*')</script>";
+const FRAME_RELOAD: &str =
+    "<!doctype html><script>parent.postMessage('frame-complete', '*')</script>";
+const FRAME_LISTENER: &str = "<script>addEventListener('message', event => { window.frameState = String(event.data) })</script>";
+
+// Pad the body past Servo's MIME-sniffing buffer, so the parser runs the first script and then
+// waits for the withheld script.
+fn blocked_head(script: &str, held: &str) -> String {
+    format!(
+        "<!doctype html><!--{}-->{script}<script src='{held}'></script><p id='after-script'>",
+        "p".repeat(SNIFF_BYTES)
+    )
+}
+
+enum ParseCommand {
+    Release,
+    Stop,
+}
+
+struct ParseServed {
+    // Whether the socket accepted the held tail. This does not show that Servo read it.
+    tail_delivered: Option<bool>,
+    paths: Vec<String>,
+}
+
+struct ParseServer {
+    port: u16,
+    commands: mpsc::Sender<ParseCommand>,
+    worker: thread::JoinHandle<Result<ParseServed>>,
+}
+
+impl ParseServer {
+    // The first request for `held` receives its headers and `head`. That response stays open
+    // until release. A later request for `held` receives `reload`. Other paths receive a
+    // complete page with a marker.
+    fn start(held: &'static str, head: String, reload: &'static str) -> Result<Self> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let port = listener.local_addr()?.port();
+        listener.set_nonblocking(true)?;
+        let (commands, received) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut held_stream: Option<std::net::TcpStream> = None;
+            let mut held_sent = false;
+            let mut served = ParseServed {
+                tail_delivered: None,
+                paths: Vec::new(),
+            };
+            loop {
+                match received.try_recv() {
+                    Ok(ParseCommand::Release) => {
+                        if let Some(mut stream) = held_stream.take() {
+                            served.tail_delivered = Some(
+                                stream
+                                    .write_all(PARTIAL_TAIL.as_bytes())
+                                    .and_then(|()| stream.flush())
+                                    .is_ok(),
+                            );
+                        }
+                    }
+                    Ok(ParseCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
+                        return Ok(served);
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        ensure!(
+                            Instant::now() < deadline,
+                            "Loopback fixture deadline exceeded"
+                        );
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                // Accepted sockets can inherit the listener's nonblocking mode on macOS.
+                stream.set_nonblocking(false)?;
+                stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+                let request = read_loopback_request(&mut stream)?;
+                let path = request.split(' ').nth(1).unwrap_or_default().to_owned();
+                served.paths.push(path.clone());
+                if path == held && !held_sent {
+                    held_sent = true;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{head}",
+                        head.len() + PARTIAL_TAIL.len()
+                    )?;
+                    stream.flush()?;
+                    held_stream = Some(stream);
+                    continue;
+                }
+                let body = if path == held {
+                    reload.to_owned()
+                } else {
+                    format!("<!doctype html><h1>{path}</h1><script>window.marker={path:?}</script>")
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )?;
+            }
+        });
+        Ok(Self {
+            port,
+            commands,
+            worker,
+        })
+    }
+
+    fn origin(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    fn release(&self) -> Result<()> {
+        self.commands
+            .send(ParseCommand::Release)
+            .map_err(|_| anyhow::anyhow!("Loopback fixture stopped early"))
+    }
+
+    fn finish(self) -> Result<ParseServed> {
+        let _ = self.commands.send(ParseCommand::Stop);
+        self.worker
+            .join()
+            .map_err(|_| anyhow::anyhow!("Loopback fixture panicked"))?
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ParseFailure {
+    // The failed document's script thread unwinds.
+    ScriptThread,
+    // The failed document's content process exits at a barrier. Multiprocess only.
+    ProcessExit,
+    // The host kills the failed document's content process at a barrier. Multiprocess only.
+    ProcessKill,
+}
+
+impl ParseFailure {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::ScriptThread => "S1 probe actual script-thread panic",
+            Self::ProcessExit | Self::ProcessKill => "Content process disconnected",
+        }
+    }
+
+    fn how(self) -> &'static str {
+        match self {
+            Self::ScriptThread => "script-thread unwind",
+            Self::ProcessExit => "child exit",
+            Self::ProcessKill => "host SIGKILL",
+        }
+    }
+
+    // Only the lifeline can report a process failure. Bound its delay.
+    fn wait(self, deadline: Instant) -> Instant {
+        match self {
+            Self::ScriptThread => deadline,
+            Self::ProcessExit | Self::ProcessKill => {
+                deadline.min(Instant::now() + Duration::from_secs(5))
+            }
+        }
+    }
+}
+
+fn held_count(delegate: &Delegate, path: &str) -> usize {
+    delegate
+        .held
+        .borrow()
+        .iter()
+        .filter(|load| load.request().url.path() == path)
+        .count()
+}
+
+// Release withheld scripts with late data. The failed document must not receive it.
+fn release_held(delegate: &Delegate, path: &str, expected: usize) -> Result<()> {
+    let held = delegate.held.take();
+    ensure!(
+        held.len() == expected && held.iter().all(|load| load.request().url.path() == path),
+        "Unexpected withheld requests: {:?}",
+        held.iter()
+            .map(|load| load.request().url.to_string())
+            .collect::<Vec<_>>()
+    );
+    for load in held {
+        let url = load.request().url.clone();
+        let mut late = load.intercept(WebResourceResponse::new(url));
+        late.send_body_data(b"window.marker='late-script'".to_vec());
+        late.finish();
+    }
+    Ok(())
+}
+
+// Lifecycle readiness events for one document, in order.
+fn readiness(delegate: &Delegate, document: DocumentIdentity) -> Vec<&'static str> {
+    delegate
+        .events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            DocumentLifecycle::DomReady(id) if *id == document => Some("dom-ready"),
+            DocumentLifecycle::LoadComplete(id) if *id == document => Some("load-complete"),
+            _ => None,
+        })
+        .collect()
+}
+
+// A cross-site navigation's document parses in a separate event loop. Servo activates it when
+// the script thread creates it at the response headers, so it is no longer pending while it
+// parses. The source document stays in history in its own event loop with a popup.
+#[allow(clippy::too_many_arguments)]
+fn cross_site_parse_failure(
+    servo: &Servo,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    engine_errors: &BackendErrors,
+    multiprocess: bool,
+    survivor: (&WebView, DocumentIdentity),
+    failure: ParseFailure,
+) -> Result<String> {
+    let reason = failure.reason();
+    let held_path = "/held-cross-site-script";
+    let delegate = Rc::new(Delegate::default());
+    let view = WebViewBuilder::new(servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/cross-site-first"))?)
+        .delegate(delegate.clone())
+        .build();
+    drive_until(servo, deadline, || delegate.loads.get() > 0)?;
+    load(servo, &view, deadline, "/cross-site-source")?;
+    let source = identity(servo, &view, deadline)?;
+    // The popup's `about:blank` document shares the source document's event loop.
+    let (popup, popup_delegate, popup_document) =
+        open_popup(servo, &view, &delegate, context, deadline, source)?;
+    let server = ParseServer::start(
+        CROSS_SITE_PARSE,
+        blocked_head(
+            "<script>window.marker='/cross-site-parse'</script>",
+            held_path,
+        ),
+        CROSS_SITE_RELOAD,
+    )?;
+    delegate.loopback_port.set(server.port);
+    let origin = server.origin();
+    view.load(url::Url::parse(&format!("{origin}{CROSS_SITE_PARSE}"))?);
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != source)
+    })?;
+    wait_marker(servo, &view, deadline, CROSS_SITE_PARSE)?;
+    // Servo's prefetch tokenizer and the blocked parser each request the script.
+    drive_until(servo, deadline, || held_count(&delegate, held_path) == 2)?;
+    let failed = identity(servo, &view, deadline)?;
+    ensure!(
+        failed != source
+            && failed.pipeline_id() != source.pipeline_id()
+            && delegate.active.get() == Some(failed),
+        "The cross-site document did not activate in a new pipeline"
+    );
+    text(
+        scoped(
+            servo,
+            &view,
+            deadline,
+            failed,
+            "document.readyState + ':' + (document.getElementById('after-script') === null)",
+        )?,
+        failed,
+        "loading:true",
+    )?;
+    // No pending top-level pipeline remains while the document parses. With one, this
+    // probe would unwind it and the case would fail.
+    ensure!(
+        view.crash_pending_script_thread_for_document_scope_probe()
+            .is_none(),
+        "A pending top-level pipeline remained while the document parsed"
+    );
+    if multiprocess {
+        let failed_process = view.content_process_id_for_document_scope_probe();
+        ensure!(
+            failed_process != std::process::id()
+                && failed_process != popup.content_process_id_for_document_scope_probe(),
+            "The cross-site document shared the source event loop's process"
+        );
+    }
+    let ticket = delegate.ticket(failed)?;
+    let reply = scoped(
+        servo,
+        &view,
+        deadline,
+        failed,
+        "'before-cross-site-failure'",
+    )?;
+    ensure!(reply.is_ok(), "Cross-site parse control failed");
+    let popup_ticket = popup_delegate.ticket(popup_document)?;
+    let popup_reply = scoped(servo, &popup, deadline, popup_document, "'popup-retained'")?;
+    ensure!(popup_reply.is_ok(), "Popup control failed");
+    let queue = || CleanupAudit::queue(&view, Some(failed), &delegate, true);
+    let audit = match failure {
+        // The constellation forwards both messages in order, so the unwind precedes these requests.
+        ParseFailure::ScriptThread => {
+            view.crash_script_thread_for_document_scope_probe();
+            queue()
+        }
+        ParseFailure::ProcessExit => {
+            view.with_terminating_content_process_for_document_scope_probe(queue)
+        }
+        ParseFailure::ProcessKill => {
+            view.with_killed_content_process_for_document_scope_probe(queue)
+        }
+    };
+    // Send no further work to the failed document. Only revocation can complete these callbacks.
+    drive_until(servo, failure.wait(deadline), || {
+        audit.calls.get() == 8 && delegate.crashed.get()
+    })
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "Cross-site parse {} did not revoke: {error}; active={:?}, calls={}, crashes={:?}",
+            failure.how(),
+            delegate.active.get(),
+            audit.calls.get(),
+            delegate.crash_reasons.borrow()
+        )
+    })?;
+    audit.check()?;
+    ensure!(
+        delegate.crash_reasons.borrow().as_slice() == [reason],
+        "Unexpected failure notifications: {:?}",
+        delegate.crash_reasons.borrow()
+    );
+    ensure!(
+        view.pending_evaluations_for_document_scope_probe() == 0,
+        "Cross-site parse failure retained callbacks"
+    );
+    delegate.reject(ticket, reply)?;
+    // The popup in the source event loop keeps its scope and its retained reply.
+    ensure!(
+        popup_delegate.active.get() == Some(popup_document)
+            && popup_delegate.generation.get() == popup_ticket.generation
+            && !popup_delegate.crashed.get(),
+        "The failure revoked a document in the source event loop"
+    );
+    ensure!(
+        popup_delegate.deliver(popup_ticket, popup_reply),
+        "The source event loop's retained reply lost its scope"
+    );
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != failed)
+    })?;
+    let crash = identity(servo, &view, deadline)?;
+    crash_page(servo, &view, deadline, crash, reason)?;
+    // Late script and body data for the failed document must not reach any live document.
+    let errors_before_release = engine_errors.0.borrow().len();
+    release_held(&delegate, held_path, 2)?;
+    server.release()?;
+    let settle = Instant::now() + Duration::from_millis(300);
+    drive_until(servo, deadline, || Instant::now() >= settle)?;
+    ensure!(
+        identity(servo, &view, deadline)? == crash,
+        "Late response data replaced the crash document"
+    );
+    crash_page(servo, &view, deadline, crash, reason)?;
+    ensure!(
+        readiness(&delegate, failed).is_empty(),
+        "The failed cross-site document reported readiness"
+    );
+    ensure!(
+        delegate.crash_reasons.borrow().len() == 1,
+        "Late response data caused another failure"
+    );
+    let late_errors = engine_errors.0.borrow()[errors_before_release..].to_vec();
+    ensure!(
+        late_errors.is_empty(),
+        "Late response data raised engine errors: {late_errors:?}"
+    );
+    stale(scoped(servo, &view, deadline, failed, "'obsolete'")?)?;
+    stale(scoped(servo, &view, deadline, source, "'obsolete'")?)?;
+    // Reload restores the failed load. The second response is complete.
+    delegate.serve_held.set(true);
+    view.reload();
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != crash)
+    })?;
+    wait_marker(servo, &view, deadline, CROSS_SITE_PARSE)?;
+    let reloaded = identity(servo, &view, deadline)?;
+    ensure!(
+        reloaded != failed,
+        "Reload revived the failed cross-site scope"
+    );
+    text(
+        scoped(servo, &view, deadline, reloaded, "String(window.origin)")?,
+        reloaded,
+        &origin,
+    )?;
+    // Recovery closed the source document's history pipeline in the healthy event loop.
+    // Back must rebuild it with a fresh identity.
+    let traversal = view.go_back(1);
+    drive_until(servo, deadline, || {
+        delegate.traversals.borrow().contains(&traversal)
+    })?;
+    wait_marker(servo, &view, deadline, "/cross-site-source")?;
+    let back = identity(servo, &view, deadline)?;
+    ensure!(
+        back != source,
+        "Back revived the closed source document's scope"
+    );
+    text(
+        scoped(servo, &view, deadline, back, "String(window.origin)")?,
+        back,
+        ORIGIN,
+    )?;
+    stale(scoped(servo, &view, deadline, source, "'obsolete'")?)?;
+    load(servo, &view, deadline, "/after-cross-site-failure")?;
+    let recovered = identity(servo, &view, deadline)?;
+    text(
+        scoped(servo, &view, deadline, recovered, "'cross-site-recovered'")?,
+        recovered,
+        "cross-site-recovered",
+    )?;
+    text(
+        scoped(servo, &popup, deadline, popup_document, "'popup-survivor'")?,
+        popup_document,
+        "popup-survivor",
+    )?;
+    let (survivor, survivor_document) = survivor;
+    text(
+        scoped(
+            servo,
+            survivor,
+            deadline,
+            survivor_document,
+            "'cross-site-survivor'",
+        )?,
+        survivor_document,
+        "cross-site-survivor",
+    )?;
+    ensure!(
+        audit.calls.get() == 8,
+        "Cross-site parse recovery repeated callbacks"
+    );
+    let served = server.finish()?;
+    ensure!(
+        served.paths == [CROSS_SITE_PARSE, CROSS_SITE_PARSE],
+        "Unexpected loopback requests: {:?}",
+        served.paths
+    );
+    Ok(format!(
+        "{}, separate event loop, no pending pipeline during parse, 8 callbacks released, source-loop popup kept scope, late data ignored, tail_delivered={:?}, reload, back, and new URL recover, survivor usable",
+        failure.how(),
+        served.tail_delivered
+    ))
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum FrameParse {
+    // A cross-site child frame waits for a withheld script in a loopback response.
+    CrossSite,
+    // A sandboxed `srcdoc` child has an opaque origin, so Servo never reuses an event loop for it.
+    SandboxedSrcdoc,
+}
+
+impl FrameParse {
+    fn parent_path(self) -> &'static str {
+        match self {
+            Self::CrossSite => "/frame-parent",
+            Self::SandboxedSrcdoc => "/sandboxed-srcdoc-parent",
+        }
+    }
+
+    fn held_path(self) -> &'static str {
+        match self {
+            Self::CrossSite => "/held-frame-script",
+            Self::SandboxedSrcdoc => "/held-sandboxed-script",
+        }
+    }
+
+    // The prefetch tokenizer also requests the script of a fetched document.
+    fn held_requests(self) -> usize {
+        match self {
+            Self::CrossSite => 2,
+            Self::SandboxedSrcdoc => 1,
+        }
+    }
+}
+
+// Fail the event loop of a child frame while its parser waits for a withheld script.
+// The parent runs in another event loop. One popup shares the parent's event loop, and for a
+// cross-site child, another popup loads the child's site and shares the child's event loop.
+#[allow(clippy::too_many_arguments)]
+fn frame_parse_failure(
+    servo: &Servo,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    engine_errors: &BackendErrors,
+    multiprocess: bool,
+    survivor: (&WebView, DocumentIdentity),
+    frame: FrameParse,
+    failure: ParseFailure,
+) -> Result<String> {
+    let reason = failure.reason();
+    let parent_path = frame.parent_path();
+    let held_path = frame.held_path();
+    let server = match frame {
+        FrameParse::CrossSite => Some(ParseServer::start(
+            PARSE_FRAME,
+            blocked_head(FRAME_PARSING, held_path),
+            FRAME_RELOAD,
+        )?),
+        FrameParse::SandboxedSrcdoc => None,
+    };
+    let markup = match &server {
+        Some(server) => format!(
+            "{FRAME_LISTENER}<iframe src='{}{PARSE_FRAME}'></iframe>",
+            server.origin()
+        ),
+        None => format!(
+            "{FRAME_LISTENER}<iframe sandbox='allow-scripts' srcdoc=\"{FRAME_PARSING}<script src='{held_path}'></script><p id='after-script'>\"></iframe>"
+        ),
+    };
+    let delegate = Rc::new(Delegate::default());
+    *delegate.frame_markup.borrow_mut() = Some((parent_path.into(), markup));
+    if let Some(server) = &server {
+        delegate.loopback_port.set(server.port);
+    }
+    let view = WebViewBuilder::new(servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}{parent_path}"))?)
+        .delegate(delegate.clone())
+        .build();
+    // The parent's load event waits for the child, so wait for activation and the marker.
+    drive_until(servo, deadline, || delegate.active.get().is_some())?;
+    wait_marker(servo, &view, deadline, parent_path)?;
+    let parent = identity(servo, &view, deadline)?;
+    wait_text(
+        servo,
+        &view,
+        deadline,
+        parent,
+        "String(window.frameState)",
+        "frame-parsing",
+    )?;
+    drive_until(servo, deadline, || {
+        held_count(&delegate, held_path) == frame.held_requests()
+    })?;
+    // The parent finishes parsing, but its load event waits for the blocked child.
+    drive_until(servo, deadline, || !readiness(&delegate, parent).is_empty())?;
+    ensure!(
+        readiness(&delegate, parent) == ["dom-ready"],
+        "Unexpected parent readiness before the failure: {:?}",
+        readiness(&delegate, parent)
+    );
+    // The parent cannot reach the child's document synchronously, unlike a same-thread srcdoc.
+    text(
+        scoped(
+            servo,
+            &view,
+            deadline,
+            parent,
+            "document.readyState + ':' + frames.length + ':' + (() => { try { return String(frames[0].document); } catch (error) { return error.name; } })()",
+        )?,
+        parent,
+        "interactive:1:SecurityError",
+    )?;
+    // This popup's `about:blank` document shares the parent's event loop.
+    let (parent_loop, parent_loop_delegate, parent_loop_document) =
+        open_popup(servo, &view, &delegate, context.clone(), deadline, parent)?;
+    // This popup loads the child's site, so it shares the child's event loop.
+    let child_loop = match &server {
+        Some(server) => {
+            let (popup, popup_delegate, _) =
+                open_popup(servo, &view, &delegate, context.clone(), deadline, parent)?;
+            popup_delegate.loopback_port.set(server.port);
+            popup.load(url::Url::parse(&format!(
+                "{}{FRAME_SIBLING}",
+                server.origin()
+            ))?);
+            wait_marker(servo, &popup, deadline, FRAME_SIBLING)?;
+            let document = identity(servo, &popup, deadline)?;
+            Some((popup, popup_delegate, document))
+        }
+        None => None,
+    };
+    if multiprocess {
+        let parent_process = view.content_process_id_for_document_scope_probe();
+        let frame_process = view.frame_content_process_id_for_document_scope_probe();
+        ensure!(
+            frame_process != parent_process
+                && frame_process != std::process::id()
+                && parent_loop.content_process_id_for_document_scope_probe() == parent_process,
+            "The child frame did not run in its own content process"
+        );
+        if let Some((popup, ..)) = &child_loop {
+            ensure!(
+                popup.content_process_id_for_document_scope_probe() == frame_process,
+                "The child-site popup did not share the child frame's content process"
+            );
+        }
+    }
+    let ticket = delegate.ticket(parent)?;
+    let reply = scoped(servo, &view, deadline, parent, "'before-frame-failure'")?;
+    ensure!(reply.is_ok(), "Frame parse control failed");
+    let parent_loop_ticket = parent_loop_delegate.ticket(parent_loop_document)?;
+    let parent_loop_reply = scoped(
+        servo,
+        &parent_loop,
+        deadline,
+        parent_loop_document,
+        "'parent-loop-retained'",
+    )?;
+    ensure!(
+        parent_loop_reply.is_ok(),
+        "Parent-loop popup control failed"
+    );
+    let child_loop_retained = match &child_loop {
+        Some((popup, popup_delegate, document)) => {
+            let ticket = popup_delegate.ticket(*document)?;
+            let reply = scoped(servo, popup, deadline, *document, "'child-loop-retained'")?;
+            ensure!(reply.is_ok(), "Child-loop popup control failed");
+            Some((ticket, reply))
+        }
+        None => None,
+    };
+    let mut separate = None;
+    // Hold the healthy parent's script thread. Only revocation can complete its callbacks.
+    let (audit, child_loop_audit, revoked) =
+        view.with_paused_script_for_document_scope_probe(|| {
+            let audit = CleanupAudit::queue(&view, Some(parent), &delegate, true);
+            let queue_child_loop = || {
+                child_loop
+                    .as_ref()
+                    .map(|(popup, popup_delegate, document)| {
+                        CleanupAudit::queue(popup, Some(*document), popup_delegate, true)
+                    })
+            };
+            let child_loop_audit = match failure {
+                ParseFailure::ScriptThread => {
+                    separate = view.crash_frame_script_thread_for_document_scope_probe();
+                    queue_child_loop()
+                }
+                ParseFailure::ProcessExit => view
+                    .with_terminating_frame_content_process_for_document_scope_probe(
+                        queue_child_loop,
+                    ),
+                ParseFailure::ProcessKill => view
+                    .with_killed_frame_content_process_for_document_scope_probe(queue_child_loop),
+            };
+            let revoked = drive_until(
+                servo,
+                deadline.min(Instant::now() + Duration::from_secs(4)),
+                || {
+                    audit.calls.get() == 8
+                        && child_loop_audit
+                            .as_ref()
+                            .is_none_or(|audit| audit.calls.get() == 8)
+                },
+            );
+            (audit, child_loop_audit, revoked)
+        });
+    if failure == ParseFailure::ScriptThread {
+        ensure!(
+            separate == Some(true),
+            "Probe did not reach a child frame in a separate event loop: {separate:?}"
+        );
+    }
+    revoked.map_err(|error| {
+        anyhow::anyhow!(
+            "Child frame {} did not revoke the parent within the barrier: {error}; active={:?}, calls={}, crashes={:?}",
+            failure.how(),
+            delegate.active.get(),
+            audit.calls.get(),
+            delegate.crash_reasons.borrow()
+        )
+    })?;
+    audit.check()?;
+    if let Some(audit) = &child_loop_audit {
+        audit.check()?;
+    }
+    drive_until(servo, deadline, || {
+        delegate.crashed.get()
+            && child_loop
+                .as_ref()
+                .is_none_or(|(_, popup_delegate, _)| popup_delegate.crashed.get())
+    })?;
+    ensure!(
+        delegate.crash_reasons.borrow().as_slice() == [reason]
+            && view.pending_evaluations_for_document_scope_probe() == 0,
+        "Unexpected parent failure notifications: {:?}",
+        delegate.crash_reasons.borrow()
+    );
+    delegate.reject(ticket, reply)?;
+    if let (Some((popup, popup_delegate, _)), Some((ticket, reply))) =
+        (&child_loop, child_loop_retained)
+    {
+        ensure!(
+            popup_delegate.crash_reasons.borrow().as_slice() == [reason]
+                && popup.pending_evaluations_for_document_scope_probe() == 0,
+            "Unexpected child-loop popup failure notifications: {:?}",
+            popup_delegate.crash_reasons.borrow()
+        );
+        popup_delegate.reject(ticket, reply)?;
+    }
+    // The popup in the parent's event loop keeps its scope and its retained reply.
+    ensure!(
+        parent_loop_delegate.active.get() == Some(parent_loop_document)
+            && parent_loop_delegate.generation.get() == parent_loop_ticket.generation
+            && !parent_loop_delegate.crashed.get(),
+        "The failure revoked a document in the parent's event loop"
+    );
+    ensure!(
+        parent_loop_delegate.deliver(parent_loop_ticket, parent_loop_reply),
+        "The parent loop's retained reply lost its scope"
+    );
+    // Upstream recovery replaces the whole view, including the healthy parent.
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != parent)
+    })?;
+    let crash = identity(servo, &view, deadline)?;
+    crash_page(servo, &view, deadline, crash, reason)?;
+    let child_loop_crash = match &child_loop {
+        Some((popup, popup_delegate, document)) => {
+            drive_until(servo, deadline, || {
+                popup_delegate
+                    .active
+                    .get()
+                    .is_some_and(|id| id != *document)
+            })?;
+            let crash = identity(servo, popup, deadline)?;
+            crash_page(servo, popup, deadline, crash, reason)?;
+            Some(crash)
+        }
+        None => None,
+    };
+    // Late script and body data for the failed child must not reach any live document.
+    let errors_before_release = engine_errors.0.borrow().len();
+    release_held(&delegate, held_path, frame.held_requests())?;
+    if let Some(server) = &server {
+        server.release()?;
+    }
+    let settle = Instant::now() + Duration::from_millis(300);
+    drive_until(servo, deadline, || Instant::now() >= settle)?;
+    ensure!(
+        identity(servo, &view, deadline)? == crash,
+        "Late child data replaced the crash document"
+    );
+    crash_page(servo, &view, deadline, crash, reason)?;
+    ensure!(
+        readiness(&delegate, parent) == ["dom-ready"],
+        "The failed parent reported readiness after the failure"
+    );
+    ensure!(
+        delegate.crash_reasons.borrow().len() == 1
+            && child_loop
+                .as_ref()
+                .is_none_or(
+                    |(_, popup_delegate, _)| popup_delegate.crash_reasons.borrow().len() == 1
+                ),
+        "Late child data caused another failure"
+    );
+    let late_errors = engine_errors.0.borrow()[errors_before_release..].to_vec();
+    ensure!(
+        late_errors.is_empty(),
+        "Late child data raised engine errors: {late_errors:?}"
+    );
+    stale(scoped(servo, &view, deadline, parent, "'obsolete'")?)?;
+    // Reload restores the parent's load, and the child then completes.
+    delegate.serve_held.set(true);
+    view.reload();
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != crash)
+    })?;
+    let reloaded = identity(servo, &view, deadline)?;
+    ensure!(reloaded != parent, "Reload revived the failed parent scope");
+    text(
+        scoped(servo, &view, deadline, reloaded, "String(window.origin)")?,
+        reloaded,
+        ORIGIN,
+    )?;
+    drive_until(servo, deadline, || {
+        readiness(&delegate, reloaded).contains(&"load-complete")
+    })?;
+    wait_text(
+        servo,
+        &view,
+        deadline,
+        reloaded,
+        "String(window.frameState)",
+        match frame {
+            FrameParse::CrossSite => "frame-complete",
+            FrameParse::SandboxedSrcdoc => "frame-parsing",
+        },
+    )?;
+    load(servo, &view, deadline, "/after-frame-failure")?;
+    let recovered = identity(servo, &view, deadline)?;
+    text(
+        scoped(servo, &view, deadline, recovered, "'frame-recovered'")?,
+        recovered,
+        "frame-recovered",
+    )?;
+    if let (Some((popup, _, document)), Some(crash)) = (&child_loop, child_loop_crash) {
+        stale(scoped(servo, popup, deadline, *document, "'obsolete'")?)?;
+        load(servo, popup, deadline, "/after-frame-sibling-failure")?;
+        let popup_recovered = identity(servo, popup, deadline)?;
+        ensure!(
+            popup_recovered != crash,
+            "Child-loop popup did not navigate"
+        );
+        text(
+            scoped(
+                servo,
+                popup,
+                deadline,
+                popup_recovered,
+                "'child-loop-recovered'",
+            )?,
+            popup_recovered,
+            "child-loop-recovered",
+        )?;
+    }
+    text(
+        scoped(
+            servo,
+            &parent_loop,
+            deadline,
+            parent_loop_document,
+            "'parent-loop-survivor'",
+        )?,
+        parent_loop_document,
+        "parent-loop-survivor",
+    )?;
+    let (survivor, survivor_document) = survivor;
+    text(
+        scoped(
+            servo,
+            survivor,
+            deadline,
+            survivor_document,
+            "'frame-survivor'",
+        )?,
+        survivor_document,
+        "frame-survivor",
+    )?;
+    ensure!(
+        audit.calls.get() == 8
+            && child_loop_audit
+                .as_ref()
+                .is_none_or(|audit| audit.calls.get() == 8),
+        "Frame failure recovery repeated callbacks"
+    );
+    let tail = match server {
+        Some(server) => {
+            let served = server.finish()?;
+            ensure!(
+                served.paths == [PARSE_FRAME, FRAME_SIBLING, PARSE_FRAME],
+                "Unexpected loopback requests: {:?}",
+                served.paths
+            );
+            format!(", tail_delivered={:?}", served.tail_delivered)
+        }
+        None => String::new(),
+    };
+    Ok(format!(
+        "{}, child in a separate event loop, parent revoked before 8 callbacks and replaced, {}, late data ignored{tail}, reload and new URL recover, survivor usable",
+        failure.how(),
+        match frame {
+            FrameParse::CrossSite => {
+                "child-site popup revoked before 8 callbacks, parent-loop popup kept scope"
+            }
+            FrameParse::SandboxedSrcdoc => "parent-loop popup kept scope",
+        }
+    ))
 }
 
 fn redirect_fixture() -> Result<(u16, thread::JoinHandle<Result<()>>)> {
@@ -2855,6 +3741,40 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     }
     let detail = javascript_url_failure(&servo, context.clone(), deadline, (&failure, recovered))?;
     println!("S1 javascript-url-crash-recovery: PASS ({detail})");
+    // Fail a cross-site navigation's document while its parser waits for a withheld script.
+    // Then fail a cross-site child frame and a sandboxed srcdoc child in their own event loops.
+    let detail = cross_site_parse_failure(
+        &servo,
+        context.clone(),
+        deadline,
+        &engine_errors,
+        multiprocess,
+        (&failure, recovered),
+        ParseFailure::ScriptThread,
+    )?;
+    println!("S1 cross-site-parser-blocked-failure: PASS ({detail})");
+    for (frame, name) in [
+        (
+            FrameParse::CrossSite,
+            "cross-site-subframe-parser-blocked-failure",
+        ),
+        (
+            FrameParse::SandboxedSrcdoc,
+            "sandboxed-srcdoc-parser-blocked-failure",
+        ),
+    ] {
+        let detail = frame_parse_failure(
+            &servo,
+            context.clone(),
+            deadline,
+            &engine_errors,
+            multiprocess,
+            (&failure, recovered),
+            frame,
+            ParseFailure::ScriptThread,
+        )?;
+        println!("S1 {name}: PASS ({detail})");
+    }
     // Releasing one clone must preserve the scope. Releasing the last handle must
     // revoke host state and callbacks without waiting for another event-loop drain.
     let release_delegate = Rc::new(Delegate::default());
@@ -3655,6 +4575,34 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
                 "S1 pending-navigation-process-{kind}: PASS (lifeline revocation, 8 callbacks released, crash document, navigation recovers)"
             );
         }
+
+        // A child exits or is killed while a top-level document or a child frame in it parses.
+        for (mode, kind) in [
+            (ParseFailure::ProcessExit, "exit"),
+            (ParseFailure::ProcessKill, "kill"),
+        ] {
+            let detail = cross_site_parse_failure(
+                &servo,
+                context.clone(),
+                deadline,
+                &engine_errors,
+                multiprocess,
+                (&failure, recovered),
+                mode,
+            )?;
+            println!("S1 cross-site-parser-blocked-process-{kind}: PASS ({detail})");
+            let detail = frame_parse_failure(
+                &servo,
+                context.clone(),
+                deadline,
+                &engine_errors,
+                multiprocess,
+                (&failure, recovered),
+                FrameParse::CrossSite,
+                mode,
+            )?;
+            println!("S1 cross-site-subframe-process-{kind}: PASS ({detail})");
+        }
     }
 
     let shutdown_ticket = failure_delegate.ticket(recovered)?;
@@ -3769,7 +4717,7 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     );
     println!(
         "S1 document-scope prototype: PASS ({} cases; experimental lifecycle and host gate)",
-        if multiprocess { 60 } else { 50 }
+        if multiprocess { 67 } else { 53 }
     );
     Ok(())
 }

@@ -24,7 +24,8 @@ EXPECTED_MARKERS = {
     "headers-before-parse-failure", "parser-blocked-failure", "about-blank-failure",
     "about-blank-write-failure", "srcdoc-parser-blocked-failure",
     "document-write-parser-blocked-failure", "document-open-write-failure",
-    "javascript-url-crash-recovery",
+    "javascript-url-crash-recovery", "cross-site-parser-blocked-failure",
+    "cross-site-subframe-parser-blocked-failure", "sandboxed-srcdoc-parser-blocked-failure",
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
     "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
     "queued-engine-cancellation", "completed-engine-cancellation",
@@ -39,6 +40,8 @@ MULTIPROCESS_MARKERS = {
     "shared-process-failure", "shared-process-kill",
     "shared-process-close-kill-race", "unconstructed-process-exit", "unconstructed-process-kill",
     "pending-navigation-process-exit", "pending-navigation-process-kill",
+    "cross-site-parser-blocked-process-exit", "cross-site-parser-blocked-process-kill",
+    "cross-site-subframe-process-exit", "cross-site-subframe-process-kill",
 }
 # Backend loss stops the engine, so it runs in its own process after each scope case.
 BACKEND_MARKERS = {"backend-disconnection", "drop-after-backend-loss", "backend-loss prototype"}
@@ -118,7 +121,11 @@ def main():
                   "script-thread failure and content-process exit or kill before document construction, "
                   "crash recovery through reload and history, "
                   "script-thread failure after response headers and in about:blank, srcdoc, "
-                  "and document.write construction, "
+                  "document.write, and document.open() construction, "
+                  "crash recovery of a javascript: URL document, "
+                  "script-thread failure while a cross-site navigation, a cross-site subframe, "
+                  "or a sandboxed srcdoc child parses in its own event loop, "
+                  "content-process exit or kill while a cross-site document or subframe parses, "
                   "callback and delegate unwind safety, and constellation loss in a separate engine. "
                   "Remaining replacement audits remain open."),
         "cases": [],

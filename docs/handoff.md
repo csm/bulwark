@@ -13,8 +13,8 @@ These measurements exclude the future node registry and JSON schema conversion. 
 The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its fifty shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before construction, after response headers, during `about:blank`, `srcdoc`, `document.write`, and `javascript:` URL construction, and after construction, crash recovery history, and callback panics.
-Multiprocess mode adds ten cases: content-process exit and kill, four shared-process cases, and four pending-process cases.
+Its fifty-three shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before construction, after response headers, during `about:blank`, `srcdoc`, `document.write`, and `javascript:` URL construction, while cross-site documents and frames parse, and after construction, crash recovery history, and callback panics.
+Multiprocess mode adds fourteen cases: content-process exit and kill, four shared-process cases, four pending-process cases, and four parsing-process cases.
 A separate engine process adds two backend loss cases in each mode.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
 Final handle release now revokes host scope and pending callbacks synchronously, including release before host activation.
@@ -133,6 +133,19 @@ A sixth case unwinds a document that a `javascript:` URL created. Revocation and
 Crash recovery renders the JavaScript result again, with the page's real origin and running scripts. Reload renders it again.
 These cases characterize existing behavior, so they have no negative control.
 Remaining construction failures and replacement paths stay open.
+
+The cross-site parsing audit fails documents whose parser waits for a withheld script in an event loop of their own.
+Servo has no pending top-level document that parses. It activates the document at the response headers.
+While the navigation case's cross-site document parses, the probe finds no pending top-level pipeline.
+Three shared cases unwind the script thread of a parsing cross-site navigation, a cross-site subframe, and a sandboxed `srcdoc` child.
+Servo always gives the sandboxed child a new event loop. Four multiprocess cases exit or kill the process of the parsing document or cross-site subframe.
+The engine patch adds only frame probes: an unwind of a child frame's event loop, and the exit, kill, and process-id barrier for its process.
+A failure revokes every view that has a pipeline in the failed event loop, before each view's eight terminal callbacks.
+For a child frame, this includes the healthy parent in another event loop and a popup that shares the child's event loop.
+Upstream recovery replaces each of those views with a crash page. A popup in the parent's or source document's event loop keeps its scope and its retained reply.
+Late script and body data reach no live document and raise no engine error.
+Reload and a new URL recover. After the navigation failure, back also rebuilds the source document.
+These cases characterize existing behavior, so they have no negative control.
 The product pins and installed natives remain unchanged.
 
 P3.1 remains open on these requirements:
@@ -149,8 +162,9 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) records the current S1 runs, engine controls, and local checks.
-Its baseline is the partial response checkpoint at `a8b9887`, whose three final runs in each mode passed.
+The [cross-site parsing evidence](../experiments/phase3/document-cross-site-parse-evidence-2026-11-26.json) records the current S1 runs, engine controls, and local checks.
+Its baseline is the synchronous construction checkpoint at `69201f4`, whose three final runs in each mode passed.
+The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) preserves the fifty-case checkpoint and its fixture race.
 The [partial response evidence](../experiments/phase3/document-partial-evidence-2026-11-26.json) preserves the forty-four-case checkpoint.
 The [crash history evidence](../experiments/phase3/document-crash-history-evidence-2026-11-26.json) preserves the fifty-two-case checkpoint and its negative control.
 The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) preserves the fifty-one-case crash page checkpoint and its two negative controls.
@@ -169,13 +183,12 @@ The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.js
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The fifty shared cases passed in three single-process runs.
-All sixty cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
-Each multiprocess run took 32.6 to 32.7 seconds. The six new cases took 2 to 3 seconds each in that mode.
-The first final preparation failed one single-process repeat, because a reload state check ran before the parser created its element.
-The fixture now waits for the page's marker first. A fresh preparation passed every final run and ten further single-process repeats.
+The fifty-three shared cases passed in three single-process runs.
+All sixty-seven cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
+Each multiprocess run took 40.9 to 41.0 seconds. The seven new cases added about 8.3 seconds to each run in that mode.
+Development runs in each mode passed before a fresh final preparation. No final run failed.
 Both backend loss cases passed in three separate engine runs in each mode.
-Cleanup completed 1,474 to 1,499 milliseconds after the crash request. The cause of that unwind delay is not established.
+Cleanup completed 1,467 to 1,495 milliseconds after the crash request. The cause of that unwind delay is not established.
 These builds retained the previous line-table debug configuration.
 Multiprocess evidence uses unsandboxed content processes on macOS arm64.
 The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
@@ -186,7 +199,7 @@ The prior audit also exposed a nonblocking read error on an accepted loopback so
 The fixture now explicitly selects blocking reads with a timeout. This change does not prove the earlier timeout's cause.
 
 All 61 portable tests, formatting, and portable/Servo-probe Clippy passed locally.
-Python syntax checks and nine runner tests also passed, including mode admission, backend markers, summary counts, and child cleanup after a deadline.
+Python syntax checks and ten runner tests also passed, including mode admission, backend markers, summary counts, documented case counts, and child cleanup after a deadline.
 The first backend negative control reports the loss but omits revocation. It fails with eight callbacks pending and the document active.
 The second control revokes scope but omits local shutdown completion. Its watchdog reports that the destructor waited for the lost constellation.
 The ordinary scope cases and both existing Servo controls pass with each control in both modes.
@@ -198,7 +211,7 @@ The interrupt negative control ignores closed permits in the interrupt callback.
 The interrupted loop then completes, runs its `finally` block, and records `1003` mutations.
 The execution-check negative control keeps the watcher but lets the cancelled queued mutation run.
 Both existing Servo controls pass with each negative control.
-This session started from `origin/main` at `a8b9887`.
+This session started from `origin/main` at `69201f4`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
@@ -220,13 +233,14 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Extend parsing failures to a pending cross-site document, a cross-site subframe, and content-process exit or kill.
-   Also check a sandboxed `srcdoc` child, which can run in another event loop.
+   Decide whether a child frame's failure may replace a healthy parent and revoke other views in the child's event loop.
+   Upstream recovery does both. The host must also expect crash notifications for several views from one failure.
+   Check a pending navigation in a child frame before its response headers, and process loss of a sandboxed `srcdoc` child.
    Decide whether crash pages for `about:blank` views should fetch Servo's error page, or rely on the product's native error state.
    These pages are blank, have the origin `null`, and run inserted scripts.
    Crash recovery renders a `javascript:` URL document's result again as page content. Decide whether the patch should drop that result from the crash load.
    Reload from a crash page uses default target snapshot parameters. Check views that started with inherited sandboxing.
-   Nested browsing-context history after crash recovery remains unchecked.
+   Nested browsing-context history after crash recovery remains unchecked. Only top-level back has evidence.
    The owner accepted crash-page replacement for a failed pending navigation.
    Error pages must be recoverable by back, reload, or a new URL. A failed buffer shows a native, platform-styled error until the user recovers or kills it. The [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-24) give details. No milestone schedules that work yet.
    Extend teardown-race evidence beyond the single ordered close-then-kill case.

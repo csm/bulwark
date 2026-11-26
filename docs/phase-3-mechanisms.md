@@ -189,8 +189,8 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and fifty shared regression cases.
-Multiprocess mode adds ten cases, for unexpected content-process exit, a forced kill, shared-process teardown, and pending-process failure.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and fifty-three shared regression cases.
+Multiprocess mode adds fourteen cases, for unexpected content-process exit, a forced kill, shared-process teardown, pending-process failure, and process loss during parsing.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.
 History reactivation receives a fresh incarnation before script resumes.
@@ -232,6 +232,11 @@ Late response data after either failure reaches no live document, and reload and
 Script-thread unwinds also cover `about:blank`, a same-thread `srcdoc` child, `document.write`, and `document.open()` construction.
 A crash document at `about:blank` is blank, has the origin `null`, and runs inserted scripts, because Servo's synchronous load ignores the crash details.
 Crash recovery of a `javascript:` URL document renders its result again, with its real origin and running scripts. A retained case characterizes this path.
+Script-thread unwinds, child exit, and child kill now cover a parsing cross-site document and a parsing cross-site subframe in their own event loops.
+A script-thread unwind also covers a parsing sandboxed `srcdoc` child, which Servo always places in a new event loop.
+Servo activates a top-level document at its response headers, so no pending top-level document parses.
+A child frame's failure replaces the whole view, including a healthy parent in another event loop, and revokes other views in the child's event loop.
+Views whose pipelines all run in other event loops keep their scope. The engine change adds only frame probes.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.

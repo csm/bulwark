@@ -317,9 +317,10 @@ It rejects the retained reply before host allocation and requires an empty pendi
 It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
 An independent view keeps its scope and accepts evaluation.
 
-All fifty shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
+All fifty-three shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
 The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more.
-The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases, for sixty cases in total.
+The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases.
+The [cross-site parsing audit](#cross-site-parsing-audit) adds four parsing-process cases, for sixty-seven cases in total.
 The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
 The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
@@ -427,8 +428,7 @@ The fixture cannot tell whether Servo cancels or drains the failed document's op
 These cases characterize existing behavior. The engine patch is unchanged, so they have no negative control.
 Both use a top-level navigation from a new view and a script-thread unwind.
 The [synchronous construction audit](#synchronous-construction-audit) covers `about:blank`, `srcdoc`, and `document.write`.
-Parsing failures in a pending cross-site document and a cross-site subframe remain unchecked.
-Process exit and kill during parsing also remain unchecked.
+The [cross-site parsing audit](#cross-site-parsing-audit) covers a cross-site navigation, a cross-site subframe, a sandboxed `srcdoc` child, and process exit and kill during parsing.
 
 ## Synchronous construction audit
 
@@ -477,7 +477,81 @@ The host still receives revocation and the crash notification, but the crash doc
 This case characterizes that path. It is not a required product behavior, and this audit does not change the path.
 
 These cases characterize existing behavior. The engine patch is unchanged, so they have no negative control.
-They do not cover process exit or kill during these parses, cross-site subframes, or a `srcdoc` child in another event loop.
+They do not cover process exit or kill during these parses.
+The [cross-site parsing audit](#cross-site-parsing-audit) covers cross-site subframes and a `srcdoc` child in another event loop.
+
+## Cross-site parsing audit
+
+This audit fails documents while their parser waits for a withheld script in an event loop of their own.
+A loopback HTTP server serves each cross-site document through the real loader and holds the response open.
+The server sends the headers and a body that is longer than the sniffing buffer.
+The parser runs the first script and then waits for a withheld classic script.
+
+Servo has no pending top-level document that parses.
+The script thread creates the document when the response headers arrive and asks the constellation to activate it at that time.
+The parser receives body bytes only after that request.
+The cross-site navigation case checks this. While its document parses, the probe for a pending top-level pipeline finds none.
+A failure before the headers is the [pending navigation failure](#construction-failure-audit).
+
+The engine patch adds two probe messages and four probe methods. They select the newest child frame of the active top-level document.
+One method unwinds that frame's script thread and reports whether its event loop differs from the top-level document's.
+The other three use the existing barrier on that frame's content process to exit it, kill it, or read its process id.
+The probes do not change engine behavior outside the fixture. A frame's state reaches the parent only through `postMessage`, which orders the fixture.
+
+Three shared cases unwind a script thread:
+
+- `cross-site-parser-blocked-failure`: A view loads two documents at the fixture origin, opens a popup, and navigates to the loopback site.
+  The popup's `about:blank` document shares the source document's event loop.
+  The parsing document runs in another event loop, and the source document stays in history.
+- `cross-site-subframe-parser-blocked-failure`: A parent at the fixture origin has a child frame from the loopback site.
+  The child waits for its withheld script, and the parent's load event waits for the child.
+  One popup stays at `about:blank` in the parent's event loop. A second popup loads the loopback site, so it shares the child's event loop.
+- `sandboxed-srcdoc-parser-blocked-failure`: A parent has a `srcdoc` child with `sandbox="allow-scripts"`.
+  The child has an opaque origin. Servo never reuses an event loop for such a load, so the child runs in a new event loop.
+  One popup stays at `about:blank` in the parent's event loop.
+
+In both frame cases, the probe reports a separate event loop. The parent cannot read the child's document and receives `SecurityError`.
+The cross-site child requested its withheld script twice, and the `srcdoc` child requested it once.
+
+Four multiprocess cases end a content process at the barrier instead:
+
+- `cross-site-parser-blocked-process-exit` and `cross-site-parser-blocked-process-kill` end the parsing document's process.
+- `cross-site-subframe-process-exit` and `cross-site-subframe-process-kill` end the child frame's process.
+
+In multiprocess mode, every case checks the engine-reported process ids.
+The parsing document's process differs from the host's and from the source-loop popup's process.
+A child frame's process differs from the host's and from the parent's process.
+The parent-loop popup shares the parent's process, and the child-site popup shares the child's process.
+
+A failure of an event loop revokes every view that has a pipeline in that event loop.
+Upstream recovery then replaces each of those views with a crash document.
+Views whose pipelines all run in other event loops keep their scope.
+The cases assert these scope results:
+
+- Cross-site navigation: The parsing document loses scope. The popup in the source event loop keeps its scope, and its retained reply still passes the host allocation check.
+  Recovery also closes the source document's history pipeline, although that event loop stays healthy.
+- Cross-site subframe: The healthy parent loses scope, although it runs in another event loop. The child is gone with its event loop.
+  The child-site popup in the child's event loop loses scope. The parent-loop popup keeps its scope and its retained reply.
+- Sandboxed `srcdoc` child: The healthy parent loses scope. The parent-loop popup keeps its scope and its retained reply.
+- An independent view keeps its scope in every case.
+
+The host holds each revoked document's eight callbacks. For a frame failure, a barrier on the healthy parent's script thread holds them, so only revocation can complete them.
+For the subframe process cases, the child-site popup's eight callbacks reach the blocked child before it ends.
+Each revoked view receives revocation before its terminal callbacks and the exact reason.
+The reason is `S1 probe actual script-thread panic` for an unwind and `Content process disconnected` for exit and kill.
+Captures release, the pending tables are empty, and each revoked view's retained reply fails the host allocation check.
+Each crash document is Servo's error page with the failure reason.
+
+The host then releases the withheld scripts and the held response tail.
+After 300 milliseconds the crash document keeps its identity, no other failure occurs, and the engine reports no error.
+The failed document never reports load completion. The server's write of the held tail succeeded in every run.
+The engine rejects each failed identity.
+For the navigation, reload restores the loopback document with its loopback origin. Back rebuilds the source document with a fresh identity and the fixture origin.
+For the frames, reload restores the parent with the fixture origin, and the parent reports load completion after the child completes.
+A new URL recovers each revoked view, and the independent view stays usable.
+
+These cases characterize existing behavior. The engine change adds only probes, so they have no negative control.
+A pending navigation in a child frame, history traversal inside a frame after recovery, and process loss of the sandboxed `srcdoc` child remain unchecked.
 
 ## Pending process and recovery audit
 
@@ -604,6 +678,7 @@ Such a report causes no revocation. Failures of threads without that identity re
 
 Ordinary fixture resources use interception.
 The redirect fixture uses a temporary loopback HTTP listener for exactly two requests.
+The partial response and cross-site parsing fixtures use loopback listeners that hold one response open and require their exact request paths.
 This exercises Servo's HTTP redirect path. An intercepted 302 response did not follow that path in the preliminary run.
 The failed-load fixture uses an unsupported scheme and requires no network request.
 No remote website or external service is necessary.
@@ -650,6 +725,11 @@ Fixture markers establish test order, without authentication claims.
 | `document.write` parser-blocked failure | The initial parser waits for a written external script. The same release, error page, late-data, and recovery checks pass. |
 | `document.open()` write failure | A reset document's script-created parser waits for a written script. Reload restores the original URL without the written content. |
 | `javascript:` URL crash recovery | A `javascript:` URL document unwinds. Eight callbacks are released. The crash document and its reload render the JavaScript result again, with the page's origin and running scripts. A new URL recovers. |
+| Cross-site navigation parse failure | A cross-site document parses in its own event loop with no pending top-level pipeline, and unwinds. Eight callbacks are released. A popup in the source event loop keeps scope. Reload, back, and a new URL recover. |
+| Cross-site subframe parse failure | A cross-site child unwinds while it parses. The healthy parent and a popup in the child's event loop each release eight callbacks and get crash documents. A popup in the parent's event loop keeps scope. Reload and a new URL recover. |
+| Sandboxed `srcdoc` parse failure | A sandboxed `srcdoc` child in a new event loop unwinds while it parses. The healthy parent releases eight callbacks and gets a crash document. A popup in the parent's event loop keeps scope. |
+| Cross-site parse process exit and kill (multiprocess only) | The process of a parsing cross-site document exits or is killed. The lifeline releases eight callbacks. The source-loop popup keeps scope, and reload, back, and a new URL recover. |
+| Cross-site subframe process exit and kill (multiprocess only) | The process of a parsing cross-site child exits or is killed. The parent and the child-site popup each release eight callbacks. The parent-loop popup keeps scope. |
 | Unconstructed process exit and kill (multiprocess only) | The child of a new view's pending pipeline exits or is killed. The host receives revocation and a crash notification, and the view closes. |
 | Pending navigation process exit and kill (multiprocess only) | The child of a live view's pending navigation exits or is killed. Eight callbacks are released, and the view navigates again. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
@@ -672,7 +752,7 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats fifty cases in single-process mode or sixty cases in multiprocess mode.
+The runner repeats fifty-three cases in single-process mode or sixty-seven cases in multiprocess mode.
 The summary marker must report the same case count.
 Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
@@ -682,8 +762,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, and local checks.
-Its baseline is the partial response checkpoint at `a8b9887`, whose three final runs in each mode passed with both Servo controls.
+The [cross-site parsing evidence](../experiments/phase3/document-cross-site-parse-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, and local checks.
+Its baseline is the synchronous construction checkpoint at `69201f4`, whose three final runs in each mode passed with both Servo controls.
+The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) preserves the fifty-case checkpoint and its fixture race.
 The [partial response evidence](../experiments/phase3/document-partial-evidence-2026-11-26.json) preserves the forty-four-case checkpoint.
 The [crash history evidence](../experiments/phase3/document-crash-history-evidence-2026-11-26.json) preserves the fifty-two-case checkpoint and its negative control.
 That checkpoint's summary marker still reported fifty-one cases. The runner now rejects a stale summary count.
@@ -704,19 +785,24 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All fifty shared cases passed in three single-process runs on macOS arm64 with software rendering.
-All sixty cases passed in three multiprocess runs. Each multiprocess run took 32.6 to 32.7 seconds, within the 80-second fixture deadline.
-Two fixture errors failed development runs before the first final preparation.
-An assertion expected sandboxing in the blank crash document, and an evaluation before activation failed with `InternalError`.
-The first final preparation then failed one of three single-process repeats in `document-open-write-failure`.
-A fetched reload activates at its response headers. The polled state check ran before the parser created its element and threw a `TypeError`.
-The fixture now waits for the original page's marker before that check.
-A fresh preparation passed every final run. Ten further single-process repeats of the same binary also passed.
-Both backend loss cases passed in three separate engine runs in each mode.
+All fifty-three shared cases passed in three single-process runs on macOS arm64 with software rendering.
+Each single-process run took 7.0 to 9.7 seconds.
+All sixty-seven cases passed in three multiprocess runs. Each multiprocess run took 40.9 to 41.0 seconds, within the 80-second fixture deadline.
+The seven new cases added about 8.3 seconds to each multiprocess run.
+One development build and one development run in each mode passed before the final preparation. No final run failed.
+A fresh preparation produced the final binary. Its sources matched the development sources exactly.
+Both backend loss cases passed in three separate engine runs in each mode. Cleanup completed 1,467 to 1,495 milliseconds after the crash request.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
-Python syntax checks and nine runner tests also passed.
+Python syntax checks and ten runner tests also passed. The new runner test pins the documented case counts.
 These builds retained the previous line-table debug configuration.
+
+The synchronous construction checkpoint records the following development failures.
+Two fixture errors failed development runs before its first final preparation.
+An assertion expected sandboxing in the blank crash document, and an evaluation before activation failed with `InternalError`.
+Its first final preparation then failed one of three single-process repeats in `document-open-write-failure`.
+A fetched reload activates at its response headers. The polled state check ran before the parser created its element and threw a `TypeError`.
+The fixture now waits for the original page's marker before that check.
 
 The prior interruption checkpoint records the following preliminary fixture defects and negative controls.
 
@@ -759,11 +845,16 @@ Their contracts still need upstream review.
 The kill fixture covers only a child blocked at a barrier.
 Kills during JavaScript execution or IPC writes remain untested.
 Script-thread unwinds, child exit, and child kill before construction now have evidence for a new view and a pending cross-site navigation.
+Script-thread unwinds, child exit, and child kill now also cover a parsing cross-site document and a parsing cross-site subframe.
+A script-thread unwind also covers a parsing sandboxed `srcdoc` child in its own event loop. Its process loss remains untested.
+Servo has no pending top-level document that parses, because it activates the document at the response headers.
+A failure of a child frame's event loop replaces the whole view, including a healthy parent in another event loop.
+It also revokes every other view with a pipeline in that event loop. A product contract must accept or change this.
+A pending navigation in a child frame remains untested.
 Error-page recovery through reload, back, forward, and a new URL has evidence for top-level history only.
 Embedder interception no longer replaces crash error pages. Crash pages for `about:blank` documents remain blank. They have the origin `null` and run inserted scripts.
 Script-thread unwinds after response headers now cover a top-level document before its DOM exists and while its parser is blocked.
 Script-thread unwinds now also cover `about:blank`, a same-thread `srcdoc` child, `document.write`, `document.open()`, and `javascript:` URL construction.
-Parsing failures in pending and cross-site nested documents remain untested. Process loss during parsing also remains untested.
 A crash of a `javascript:` URL document renders its result again, with the page's origin and running scripts.
 Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
