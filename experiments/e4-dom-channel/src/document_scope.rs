@@ -1868,6 +1868,109 @@ pub(super) fn run(multiprocess: bool) -> Result<()> {
     println!(
         "S1 pending-navigation-failure: PASS (separate event loop unwound before construction, 8 callbacks released, recovery)"
     );
+    // A crash page can stay in history. A later failure closes every history pipeline, so
+    // back rebuilds that crash page in a new pipeline. Reload from the rebuilt page must
+    // still load the failed document without the crash page's sandboxing.
+    let history_delegate = Rc::new(Delegate::default());
+    let history_view = WebViewBuilder::new(&servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}/crash-history-source"))?)
+        .delegate(history_delegate.clone())
+        .build();
+    drive_until(&servo, deadline, || history_delegate.loads.get() > 0)?;
+    let history_source = identity(&servo, &history_view, deadline)?;
+    let probe_crashes = |count| {
+        let reasons = history_delegate.crash_reasons.borrow();
+        reasons.len() == count
+            && reasons
+                .iter()
+                .all(|reason| reason == "S1 probe actual script-thread panic")
+    };
+    history_view.crash_script_thread_for_document_scope_probe();
+    drive_until(&servo, deadline, || probe_crashes(1))?;
+    drive_until(&servo, deadline, || {
+        history_delegate
+            .active
+            .get()
+            .is_some_and(|id| id != history_source)
+    })?;
+    let first_crash = identity(&servo, &history_view, deadline)?;
+    crash_page(
+        &servo,
+        &history_view,
+        deadline,
+        first_crash,
+        "S1 probe actual script-thread panic",
+    )?;
+    load(&servo, &history_view, deadline, "/crash-history-next")?;
+    let history_next = identity(&servo, &history_view, deadline)?;
+    history_view.crash_script_thread_for_document_scope_probe();
+    drive_until(&servo, deadline, || probe_crashes(2))?;
+    drive_until(&servo, deadline, || {
+        history_delegate
+            .active
+            .get()
+            .is_some_and(|id| id != history_next)
+    })?;
+    let second_crash = identity(&servo, &history_view, deadline)?;
+    crash_page(
+        &servo,
+        &history_view,
+        deadline,
+        second_crash,
+        "S1 probe actual script-thread panic",
+    )?;
+    let traversal = history_view.go_back(1);
+    drive_until(&servo, deadline, || {
+        history_delegate.traversals.borrow().contains(&traversal)
+    })?;
+    let rebuilt_crash = identity(&servo, &history_view, deadline)?;
+    ensure!(
+        rebuilt_crash != first_crash && rebuilt_crash != second_crash,
+        "Back did not rebuild the closed crash entry"
+    );
+    stale(scoped(
+        &servo,
+        &history_view,
+        deadline,
+        first_crash,
+        "'obsolete'",
+    )?)?;
+    crash_page(
+        &servo,
+        &history_view,
+        deadline,
+        rebuilt_crash,
+        "S1 probe actual script-thread panic",
+    )?;
+    history_view.reload();
+    drive_until(&servo, deadline, || {
+        history_delegate
+            .active
+            .get()
+            .is_some_and(|id| id != rebuilt_crash)
+    })?;
+    let history_reloaded = identity(&servo, &history_view, deadline)?;
+    // Check the origin first. A reload that kept the sandboxing never runs the marker script.
+    text(
+        scoped(
+            &servo,
+            &history_view,
+            deadline,
+            history_reloaded,
+            "String(window.origin)",
+        )?,
+        history_reloaded,
+        ORIGIN,
+    )?;
+    wait_marker(&servo, &history_view, deadline, "/crash-history-source")?;
+    ensure!(
+        identity(&servo, &history_view, deadline)? == history_reloaded,
+        "Reload from the rebuilt crash page activated another document"
+    );
+    println!(
+        "S1 crash-history-reload: PASS (back rebuilt a closed crash entry, reload restored the failed load)"
+    );
+    drop(history_view);
     // Releasing one clone must preserve the scope. Releasing the last handle must
     // revoke host state and callbacks without waiting for another event-loop drain.
     let release_delegate = Rc::new(Delegate::default());

@@ -226,6 +226,7 @@ Crash recovery left history entries on closed pipelines, so back and forward wed
 The patch now marks those entries for reload before recovery closes them. Reload, back, forward, and a new URL recover.
 The patch now covers `servo-net`, so embedder interception cannot replace Servo's crash error page.
 Reload from that page inherited its sandboxing. The patch now reloads the failed document's original load instead.
+The crash page's load data carries the original sandboxing flags, so reload also works after history rebuilds the page.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.

@@ -317,9 +317,9 @@ It rejects the retained reply before host allocation and requires an empty pendi
 It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
 An independent view keeps its scope and accepts evaluation.
 
-All forty-one shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
+All forty-two shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
 The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more.
-The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases, for fifty-one cases in total.
+The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases, for fifty-two cases in total.
 The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
 The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
@@ -447,8 +447,9 @@ The real error page exposed a reload defect.
 The crash page carries every creation sandboxing flag, so it has an opaque origin and runs no scripts.
 An embedder reload asked the crash page's script thread to navigate, and that navigation inherited the crash page's flags.
 The reloaded page showed the previous URL's markup with an opaque origin and without running its scripts.
-The panic handler now records the failed document's original load data for each crash pipeline.
-Reload of a crash pipeline replaces it with that original load through the constellation. The record is removed at pipeline exit.
+The crash page's load data now also carries the creation sandboxing flags of the load that it replaced.
+Reload of a page whose load data has crash details replaces it through the constellation with that load.
+The replacement removes the crash details, restores the original flags, and sets the reload-navigation flag.
 The reloaded page now runs its scripts and has its real origin. Back, forward, and a new URL still recover.
 For a failed pending navigation, reload restores the replaced source page. A new URL retries the failed target.
 
@@ -459,6 +460,15 @@ One negative control restores interception for crash requests. The first fetched
 The other control disables only the reload replacement. Reload then produces a page whose script never runs.
 Each control stops at its first failure, so it does not show which later cases also need its fix.
 The reload replacement uses default target snapshot parameters. No fixture covers a view that started with sandboxing from its opener or a frame.
+
+The first version of this fix stored the original load under the crash pipeline's id and removed it at pipeline exit.
+A crash page can stay in history. A later failure in the same view closes every history pipeline and marks each entry for reload.
+Back then rebuilt the crash page in a new pipeline without the record, and reload kept the crash page's sandboxing.
+The flags now travel in the load data that history keeps.
+A new case loads a page after a first failure, fails again, and goes back to the closed crash entry.
+It requires a rebuilt error page with the first failure reason. Reload must then restore the real origin and run the page's scripts.
+The previous patch is its negative control. It passes twenty-nine cases in each mode, and then reload from the rebuilt page has the origin `null`.
+History eviction and document discard keep load data in the same way, but no fixture exercises them.
 
 ## Backend loss audit
 
@@ -552,6 +562,7 @@ Fixture markers establish test order, without authentication claims.
 | Pending navigation failure | A cross-site pending pipeline unwinds before construction. Its healthy active document is revoked before eight callbacks and replaced by a crash document. The view recovers. |
 | Crash recovery history | After a pending navigation failure, reload, back to a closed history entry, forward, and a new URL all recover with fresh identities. The reloaded page keeps its origin and runs scripts. |
 | Crash error page | Fetched crash documents show Servo's error page with the failure reason. A crash document at `about:blank` is blank. |
+| Crash history reload | After a second failure closes a crash page in history, back rebuilds that error page. Reload from it restores the failed load's origin and scripts. |
 | Unconstructed process exit and kill (multiprocess only) | The child of a new view's pending pipeline exits or is killed. The host receives revocation and a crash notification, and the view closes. |
 | Pending navigation process exit and kill (multiprocess only) | The child of a live view's pending navigation exits or is killed. Eight callbacks are released, and the view navigates again. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
@@ -574,7 +585,7 @@ Fixture markers establish test order, without authentication claims.
 | Delegate panic during host unwind | All eight callbacks receive terminal errors before the original host panic reaches its handler. |
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
-The runner repeats forty-one cases in single-process mode or fifty-one cases in multiprocess mode.
+The runner repeats forty-two cases in single-process mode or fifty-two cases in multiprocess mode.
 Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
 The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before and during execution.
@@ -583,8 +594,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, negative controls, and local checks.
-Its baseline is the recovery checkpoint at `7bfebae`, whose three final runs in each mode passed with both Servo controls.
+The [crash history evidence](../experiments/phase3/document-crash-history-evidence-2026-11-26.json) records the current runs, source hashes, binary hashes, negative control, and local checks.
+Its baseline is the crash page checkpoint at `b2cacaf`, whose three final runs in each mode passed with both Servo controls.
+The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) preserves the fifty-one-case crash page checkpoint and its two negative controls.
 The [recovery evidence](../experiments/phase3/document-recovery-evidence-2026-11-24.json) preserves the first fifty-one-case checkpoint and its two negative controls.
 The [construction evidence](../experiments/phase3/document-construction-evidence-2026-11-24.json) preserves the forty-six-case multiprocess checkpoint.
 The [shared-process evidence](../experiments/phase3/document-shared-evidence-2026-11-24.json) preserves the forty-four-case multiprocess checkpoint and its negative control.
@@ -601,8 +613,8 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All forty-one shared cases passed in three single-process runs on macOS arm64 with software rendering.
-All fifty-one cases passed in three multiprocess runs.
+All forty-two shared cases passed in three single-process runs on macOS arm64 with software rendering.
+All fifty-two cases passed in three multiprocess runs.
 Both backend loss cases passed in three separate engine runs in each mode.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.

@@ -76,7 +76,7 @@ def main():
         manifest.write("\n[patch.crates-io]\n")
         for name in PACKAGES:
             manifest.write(f'{name} = {{ path = "../sources/{name}" }}\n')
-    # Change only the six package sources. Keep every other locked dependency edge.
+    # Change only the seven package sources. Keep every other locked dependency edge.
     lock_path = candidate / "Cargo.lock"
     sections = lock_path.read_text().split("[[package]]")
     for name in PACKAGES:

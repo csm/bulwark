@@ -20,7 +20,7 @@ EXPECTED_MARKERS = {
     "failed-load", "cross-view", "subframe-isolation", "close", "injected-crash",
     "script-created-initial-document", "javascript-url-replacement",
     "script-thread-failure-and-callback-cleanup", "unconstructed-view-failure",
-    "pending-navigation-failure", "crash-recovery-history",
+    "pending-navigation-failure", "crash-recovery-history", "crash-history-reload",
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
     "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
     "queued-engine-cancellation", "completed-engine-cancellation",

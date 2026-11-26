@@ -13,7 +13,7 @@ These measurements exclude the future node registry and JSON schema conversion. 
 The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its forty-one shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before and after construction, crash recovery history, and callback panics.
+Its forty-two shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before and after construction, crash recovery history, and callback panics.
 Multiprocess mode adds ten cases: content-process exit and kill, four shared-process cases, and four pending-process cases.
 A separate engine process adds two backend loss cases in each mode.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
@@ -104,6 +104,13 @@ The real error page exposed a reload defect: reload inherited the crash page's s
 The patch now records each crash page's original load data, and reload replaces the crash page with that load.
 A crash document for a view at `about:blank` is blank, because Servo loads `about:blank` without the crash fetch.
 A negative control for each change fails at its first dependent case.
+
+The review of the `servo-net` commit found that the reload record was keyed by the crash pipeline's id.
+A later failure in the same view closes a crash page left in history. Back then rebuilds that page in a new pipeline without the record.
+Reload from the rebuilt page again kept the crash page's sandboxing, with the origin `null` and no scripts.
+The crash page's load data now carries the original sandboxing flags, and reload restores them from any crash pipeline.
+The reload now also sets the reload-navigation flag, as a script-thread reload does.
+A new shared case covers this path. The previous patch, as its negative control, fails only that case in each mode.
 Remaining construction failures and replacement paths stay open.
 The product pins and installed natives remain unchanged.
 
@@ -121,8 +128,9 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) records the current S1 runs, engine controls, negative controls, and local checks.
-Its baseline is the recovery checkpoint at `7bfebae`, whose three final runs in each mode passed.
+The [crash history evidence](../experiments/phase3/document-crash-history-evidence-2026-11-26.json) records the current S1 runs, engine controls, negative control, and local checks.
+Its baseline is the crash page checkpoint at `b2cacaf`, whose three final runs in each mode passed.
+The [crash page evidence](../experiments/phase3/document-crash-page-evidence-2026-11-26.json) preserves the fifty-one-case crash page checkpoint and its two negative controls.
 The [recovery evidence](../experiments/phase3/document-recovery-evidence-2026-11-24.json) preserves the first fifty-one-case checkpoint and its negative controls.
 The [construction evidence](../experiments/phase3/document-construction-evidence-2026-11-24.json) preserves the forty-six-case checkpoint.
 The [shared-process evidence](../experiments/phase3/document-shared-evidence-2026-11-24.json) preserves the forty-four-case checkpoint and its negative control.
@@ -138,8 +146,8 @@ The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.js
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The forty-one shared cases passed in three single-process runs.
-All fifty-one cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
+The forty-two shared cases passed in three single-process runs.
+All fifty-two cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
 Both backend loss cases passed in three separate engine runs in each mode.
 Cleanup completed 1,543 to 1,627 milliseconds after the crash request. The cause of that unwind delay is not established.
 These builds retained the previous line-table debug configuration.
@@ -164,7 +172,7 @@ The interrupt negative control ignores closed permits in the interrupt callback.
 The interrupted loop then completes, runs its `finally` block, and records `1003` mutations.
 The execution-check negative control keeps the watcher but lets the cancelled queued mutation run.
 Both existing Servo controls pass with each negative control.
-The construction checkpoint started from freshly fetched `origin/main` at `46eaa88`.
+The crash history checkpoint started from freshly fetched `origin/main` at `b2cacaf`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 

@@ -704,26 +704,23 @@
      JavaScriptEvaluationError, JavaScriptEvaluationId, KeyboardEvent, MediaSessionActionType,
      MediaSessionEvent, MediaSessionPlaybackState, MouseButtonAction, MouseButtonEvent,
      NewWebViewDetails, PaintHitTestResult, Theme, ViewportDetails, WakeLockDelegate, WakeLockType,
-@@ -346,6 +347,9 @@
+@@ -346,6 +347,7 @@
 
      /// Bookkeeping data for all webviews in the constellation.
      webviews: FxHashMap<WebViewId, ConstellationWebView>,
 +    document_identities: FxHashMap<PipelineId, DocumentIdentity>,
-+    /// Original load data for each crash page, so reload does not inherit its sandboxing.
-+    crash_reloads: FxHashMap<PipelineId, LoadData>,
 
      /// Channels for the constellation to send messages to the public
      /// resource-related threads. There are two groups of resource threads: one
-@@ -679,6 +683,8 @@
+@@ -679,6 +681,7 @@
                      constellation_to_embedder_proxy: state.constellation_to_embedder_proxy,
                      paint_proxy: state.paint_proxy,
                      webviews: Default::default(),
 +                    document_identities: Default::default(),
-+                    crash_reloads: Default::default(),
                      devtools_sender: state.devtools_sender,
                      script_to_devtools_callback: Default::default(),
                      #[cfg(feature = "bluetooth")]
-@@ -1280,7 +1286,11 @@
+@@ -1280,7 +1283,11 @@
                  self.handle_request_from_background_hang_monitor(message);
              },
              #[cfg(feature = "multiprocess")]
@@ -736,7 +733,7 @@
              #[cfg(not(feature = "multiprocess"))]
              Request::RemoveProcess(_) => {},
          }
-@@ -1342,6 +1352,85 @@
+@@ -1342,6 +1349,85 @@
                  self.handle_new_top_level_browsing_context(url, new_webview_details);
              },
              // Close a top level browsing context.
@@ -822,7 +819,7 @@
              EmbedderToConstellationMessage::CloseWebView(webview_id) => {
                  self.handle_close_top_level_browsing_context(webview_id);
              },
-@@ -1408,10 +1497,18 @@
+@@ -1408,10 +1494,18 @@
              EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
@@ -843,7 +840,7 @@
              EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
                  self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
              },
-@@ -1576,6 +1673,8 @@
+@@ -1576,6 +1670,8 @@
          &mut self,
          webview_id: WebViewId,
          evaluation_id: JavaScriptEvaluationId,
@@ -852,10 +849,11 @@
          script: String,
      ) {
          let browsing_context_id = BrowsingContextId::from(webview_id);
-@@ -1591,12 +1690,22 @@
+@@ -1590,6 +1686,14 @@
+             );
              return;
          };
-
++
 +        if expected_document.is_some_and(|expected| expected.pipeline_id() != pipeline.id) {
 +            self.handle_finish_javascript_evaluation(
 +                evaluation_id,
@@ -863,10 +861,10 @@
 +            );
 +            return;
 +        }
-+
+
          if pipeline
              .event_loop
-             .send(ScriptThreadMessage::EvaluateJavaScript(
+@@ -1597,6 +1701,8 @@
                  webview_id,
                  pipeline.id,
                  evaluation_id,
@@ -875,7 +873,7 @@
                  script,
              ))
              .is_err()
-@@ -1795,8 +1904,37 @@
+@@ -1795,8 +1901,37 @@
                  self.handle_joint_session_history_length(webview_id, response_sender);
              },
              // Notification that the new document is ready to become active
@@ -914,7 +912,7 @@
              },
              // Update pipeline url after redirections
              ScriptToConstellationMessage::SetFinalUrl(final_url) => {
-@@ -2025,6 +2163,20 @@
+@@ -2025,6 +2160,20 @@
                      .send(mem::ProfilerMsg::Report(sender));
              },
              ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
@@ -935,7 +933,7 @@
                  self.handle_finish_javascript_evaluation(evaluation_id, result)
              },
              ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
-@@ -2569,7 +2721,7 @@
+@@ -2569,7 +2718,7 @@
 
                      if let Ok(process) = content.spawn_multiprocess() {
                          let crossbeam_receiver = receiver.route_preserving_errors();
@@ -944,17 +942,16 @@
                      } else {
                          return warn!("Failed to spawn process for SW manager.");
                      }
-@@ -2968,10 +3120,21 @@
+@@ -2968,11 +3117,21 @@
      fn handle_pipeline_exited(&mut self, pipeline_id: PipelineId, exit_source: PipelineExitSource) {
          debug!("{}: Exited", pipeline_id);
          self.remove_worker_animation_frame_providers_for_pipeline(pipeline_id);
 +        self.document_identities.remove(&pipeline_id);
-+        self.crash_reloads.remove(&pipeline_id);
 
          let Some(pipeline) = self.pipelines.remove(&pipeline_id) else {
              return;
          };
-+
+
 +        if pipeline.browsing_context_id == BrowsingContextId::from(pipeline.webview_id) {
 +            self.constellation_to_embedder_proxy.send(
 +                ConstellationToEmbedderMsg::DocumentLifecycle(
@@ -963,10 +960,11 @@
 +                ),
 +            );
 +        }
-
++
          // Clean up any registered interests for this pipeline.
          self.pipeline_interests.retain(|_, set| {
-@@ -2987,6 +3150,34 @@
+             set.remove(&pipeline_id);
+@@ -2987,6 +3146,34 @@
              pipeline.id,
              exit_source,
          ));
@@ -1001,7 +999,7 @@
      }
 
      #[servo_tracing::instrument(skip_all)]
-@@ -3058,6 +3249,41 @@
+@@ -3058,6 +3245,41 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
@@ -1043,16 +1041,15 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3120,6 +3346,8 @@
-             TargetSnapshotParams::default(),
-             None,
-         );
-+        self.crash_reloads
-+            .insert(new_pipeline_id, old_load_data.clone());
+@@ -3104,6 +3326,7 @@
+                     .unwrap_or_else(|| reason.clone()),
+             ),
+             creation_sandboxing_flag_set: SandboxingFlagSet::all(),
++            crash_reload_sandboxing_flag_set: Some(old_load_data.creation_sandboxing_flag_set),
+             ..old_load_data.clone()
+         };
 
-         let Some(webview) = self.webviews.get_mut(&webview_id) else {
-             return warn!("Adding pending change to unknown WebView: {webview_id:?}");
-@@ -3402,6 +3630,11 @@
+@@ -3402,6 +3625,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -1064,7 +1061,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +3704,7 @@
+@@ -3471,7 +3699,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -1073,17 +1070,28 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -4947,6 +5180,18 @@
+@@ -4947,6 +5175,29 @@
                  return warn!("{}: Got reload event after closure", browsing_context_id);
              },
          };
 +        // A crash page has every sandboxing flag. A reload from its script thread would
-+        // inherit them, so replace the crash page with its original load instead.
-+        if let Some(load_data) = self.crash_reloads.get(&pipeline_id).cloned() {
++        // inherit them, so replace the crash page with the load that it replaced. The flags
++        // travel in the load data, so this also works after history rebuilds a crash page.
++        if let Some(load_data) = self.refresh_load_data(pipeline_id) &&
++            load_data.crash.is_some() &&
++            let Some(creation_sandboxing_flag_set) = load_data.crash_reload_sandboxing_flag_set
++        {
 +            self.load_url(
 +                webview_id,
 +                pipeline_id,
-+                load_data,
++                LoadData {
++                    crash: None,
++                    crash_reload_sandboxing_flag_set: None,
++                    creation_sandboxing_flag_set,
++                    reload_navigation: true,
++                    history_navigation: false,
++                    ..load_data
++                },
 +                NavigationHistoryBehavior::Replace,
 +                TargetSnapshotParams::default(),
 +            );
@@ -1092,10 +1100,12 @@
          self.send_message_to_pipeline(
              pipeline_id,
              ScriptThreadMessage::Reload(pipeline_id),
-@@ -5840,10 +6085,40 @@
+@@ -5838,12 +6089,42 @@
+                 }
+             }
          }
-     }
-
++    }
++
 +    /// Experimental probe target: the newest top-level pipeline that has not activated a document.
 +    fn pending_top_level_pipeline(&self, webview_id: WebViewId) -> Option<&Pipeline> {
 +        let top = BrowsingContextId::from(webview_id);
@@ -1107,8 +1117,8 @@
 +            .rev()
 +            .find(|change| change.browsing_context_id == top)?;
 +        self.pipelines.get(&change.new_pipeline_id)
-+    }
-+
+     }
+
 +    fn active_document(&self, webview_id: WebViewId) -> Option<DocumentIdentity> {
 +        let context = self
 +            .browsing_contexts
@@ -1209,7 +1219,25 @@
  };
  use encoding_rs::Encoding;
  use euclid::default::Size2D as UntypedSize2D;
-@@ -774,7 +775,9 @@
+@@ -133,6 +134,9 @@
+     pub has_trustworthy_ancestor_origin: bool,
+     /// Servo internal: if crash details are present, trigger a crash error page with these details.
+     pub crash: Option<String>,
++    /// Experimental S1 field: for a crash page, the creation sandboxing flags of the load it
++    /// replaced. History keeps this load data, so a rebuilt crash page can still reload.
++    pub crash_reload_sandboxing_flag_set: Option<SandboxingFlagSet>,
+     /// Destination, used for CSP checks
+     pub destination: Destination,
+     /// The "creation sandboxing flag set" that this Pipeline should use when it is created.
+@@ -178,6 +182,7 @@
+             srcdoc: String::new(),
+             inherited_secure_context,
+             crash: None,
++            crash_reload_sandboxing_flag_set: None,
+             inherited_insecure_requests_policy,
+             has_trustworthy_ancestor_origin,
+             destination: Destination::Document,
+@@ -774,7 +779,9 @@
      /// Script has opened a new auxiliary browsing context.
      CreateAuxiliaryWebView(AuxiliaryWebViewCreationRequest),
      /// Mark a new document as active
@@ -1220,7 +1248,7 @@
      /// Update the pipeline Url, which can change after redirections.
      SetFinalUrl(ServoUrl),
      /// A log entry, with the top-level browsing context id and thread name
-@@ -810,7 +813,7 @@
+@@ -810,7 +817,7 @@
      /// Return the result of the evaluated JavaScript with the given [`JavaScriptEvaluationId`].
      FinishJavaScriptEvaluation(
          JavaScriptEvaluationId,
