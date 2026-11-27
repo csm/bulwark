@@ -285,5 +285,18 @@ The review needs these decisions:
   No milestone schedules this work yet. P3.3's lifecycle work is the natural place for it.
 - The experimental engine patch may cover `servo-net`, so request interception cannot replace a crash error page (2026-11-26).
 
+### Recorded decisions, 2026-11-26
+
+- A child frame's failure must stay inside that frame. The product does not accept the upstream recovery that replaces the whole view.
+  A healthy parent in another event loop keeps its document and its scope. Only the failed frame shows an error state.
+  This applies to an active frame and to a frame whose navigation is pending.
+  A view whose own top-level document ran in the failed event loop has failed itself. That view receives revocation and its own error state.
+  The [pending frame audit](phase-3-document-scope.md#pending-frame-audit) and the [cross-site parsing audit](phase-3-document-scope.md#cross-site-parsing-audit) record the current upstream behavior.
+- Crash recovery must not render a `javascript:` URL document's result again. The experimental engine patch must drop that result from the crash load.
+  The crash document is then an error page, not page content, and reload must not render the result again.
+  The [synchronous construction audit](phase-3-document-scope.md#synchronous-construction-audit) records the current behavior.
+- A failed view at `about:blank` relies on the product's native error state. The engine does not need to fetch Servo's error page for it.
+  The blank crash document has the origin `null` and runs inserted scripts. The product must not treat it as a usable page.
+
 The contract review produces concrete ADRs and bounded schemas in P3.1.
 No new extension trust claim, engine pin, display scope, or failed acceptance criterion changes without a recorded decision.

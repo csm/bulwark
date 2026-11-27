@@ -944,7 +944,8 @@ Script-thread unwinds, child exit, and child kill now also cover a parsing cross
 Script-thread unwinds, child exit, and child kill also cover a parsing sandboxed `srcdoc` child in its own event loop.
 Servo has no pending top-level document that parses, because it activates the document at the response headers.
 A failure of a child frame's event loop replaces the whole view, including a healthy parent in another event loop.
-It also revokes every other view with a pipeline in that event loop. A product contract must accept or change this.
+It also revokes every other view with a pipeline in that event loop.
+The owner rejected the replacement of a healthy parent. The patch must contain a frame failure to the frame, per the [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-26).
 Script-thread unwinds, child exit, and child kill now cover a child frame's pending navigation before its response headers.
 The pending pipeline shares the parent's event loop, joins a child-site popup's event loop, or runs alone in a new event loop.
 In each layout, the failure replaces the whole view in the same way as a failure of an active frame.
@@ -955,6 +956,7 @@ Embedder interception no longer replaces crash error pages. Crash pages for `abo
 Script-thread unwinds after response headers now cover a top-level document before its DOM exists and while its parser is blocked.
 Script-thread unwinds now also cover `about:blank`, a same-thread `srcdoc` child, `document.write`, `document.open()`, and `javascript:` URL construction.
 A crash of a `javascript:` URL document renders its result again, with the page's origin and running scripts.
+The owner decided that the patch must drop that result from the crash load. Failed `about:blank` views rely on the product's native error state.
 Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
 Constellation loss now has single-process and unsandboxed multiprocess evidence. Its local shutdown contract needs upstream review.

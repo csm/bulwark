@@ -249,14 +249,18 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Decide whether a child frame's failure may replace a healthy parent and revoke other views in the child's event loop.
-   Upstream recovery does both, also while the frame's navigation is pending. The host must also expect crash notifications for several views from one failure.
+   The owner decided that a child frame's failure must stay inside that frame. The [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-26) give details.
+   Upstream recovery replaces the whole view, including a healthy parent in another event loop, also while the frame's navigation is pending.
+   Change the experimental patch so the parent keeps its document and scope, and only the failed frame shows an error state.
+   Convert the frame cases to assert the contained behavior, with the current patch as the negative control.
+   A view whose own top-level document ran in the failed event loop still fails. The host must expect crash notifications for several views from one failure.
    The source shows that process loss of a lone pending frame pipeline depends on the lifeline's pending-change clause. Add a control that isolates this clause for frames.
    A frame's initial navigation, a navigation that the child starts, and a pending traversal inside a frame remain unchecked.
    The multiprocess scope run now uses about 54 of its 80 seconds. Split that run or raise its deadline before the next large set of cases.
-   Decide whether crash pages for `about:blank` views should fetch Servo's error page, or rely on the product's native error state.
-   These pages are blank, have the origin `null`, and run inserted scripts.
-   Crash recovery renders a `javascript:` URL document's result again as page content. Decide whether the patch should drop that result from the crash load.
+   The owner decided that failed views at `about:blank` rely on the product's native error state. No engine change is needed for them.
+   Their blank crash documents have the origin `null` and run inserted scripts. The product must not treat them as usable pages.
+   The owner decided that crash recovery must not render a `javascript:` URL document's result again.
+   Change the experimental patch to drop that result from the crash load. Convert the `javascript-url-crash-recovery` case, with the current patch as the negative control.
    Reload from a crash page uses default target snapshot parameters. Check views that started with inherited sandboxing.
    Nested browsing-context history after crash recovery remains unchecked. Only top-level back has evidence.
    The owner accepted crash-page replacement for a failed pending navigation.
