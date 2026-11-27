@@ -166,7 +166,7 @@ Navigation hooks return allow, deny, or redirect data for a host-issued pending 
 Resource hooks return allow, block, or bounded rewrite data for an authenticated resource request.
 Clojure defines hook ordering and browser policy. Rust checks authority, request identity, bounds, and deadlines.
 Redirects require loop limits and capability checks on each new target.
-Restricted code cannot use a forged hook result to complete another principal's request.
+Restricted code cannot use an unauthenticated hook result to complete another principal's request.
 
 The engine thread never waits synchronously for Clojure.
 If pinned Servo supports deferred completion, the adapter retains a bounded pending decision with a deadline.
@@ -174,7 +174,7 @@ Otherwise, P3.1 records the gap before selecting an upstream change or a reviewe
 A snapshot mechanism must preserve the promised hook semantics or require an explicit scope decision.
 Timeout behavior distinguishes ordinary web traffic from privileged documents, whose failures must deny access.
 The proposed ordinary-traffic timeout policy allows the original request and records the missed hook decision.
-That fallback never bypasses a capability denial, origin restriction, or privileged-document rule.
+That fallback never overrides a capability denial, origin restriction, or privileged-document rule.
 The owner review must settle the deadline and timeout policy before implementation.
 
 Custom types render Clojure hiccup into HTML at host-owned `bulwark://` addresses.
@@ -197,7 +197,7 @@ The first milestone resolves mechanisms before the public APIs depend on them.
 | Milestone | Work | Required exit evidence |
 |---|---|---|
 | P3.1: Contracts and mechanism proofs | Extend E4 through the product bridge. Prove document identity, event transport, principal propagation, deferred decisions, and bridge provenance. Resolve the D6/E5 prerequisite. | Local fixtures, adversarial denials, latency samples, proposed native inventory, exact limits, and ADRs for selected mechanisms or upstream gaps. |
-| P3.2: Read-only DOM slice | Add node registry, `query`, `query-all`, `text`, `attr`, and `html`. Add scoped native authorization before exposing restricted callers. | Real Servo reads in both evaluator modes, native bypass denials, navigation-race checks, cleanup, and initial C6 measurements. |
+| P3.2: Read-only DOM slice | Add node registry, `query`, `query-all`, `text`, `attr`, and `html`. Add scoped native authorization before exposing restricted callers. | Real Servo reads in both evaluator modes, authorization denials for direct native calls, navigation-race checks, cleanup, and initial C6 measurements. |
 | P3.3: Mutations, subscriptions, and lifecycle | Add mutations, `observe`, `on`, unsubscribe, and the three lifecycle hooks. | Fixture mutations, event ordering, overload behavior, stale generations, cancellation, and close during pending work. |
 | P3.4: Restricted extension loading | Add a local directory manifest, grants, restricted evaluation, and owned commands, hooks, subscriptions, and timers. | Empty-capability extension denials, alternate-call denials, interleaved async principals, unload/reload cleanup, and exceptions plus Messages entries. |
 | P3.5: Navigation and resource hooks | Expose bounded allow/deny/redirect and block/rewrite decisions. Add origin scope checks and redirect limits. | Page links, forms, script navigation, history, redirects, denied interception, decision timeout, runtime stalls, and shutdown with pending decisions. |
@@ -224,7 +224,7 @@ The owner must resolve Q6 before the source format becomes a public contract.
 | C2: Reader mode | The command works on five owner-approved mainstream article sites. Each result retains the article title, body, and links without duplicate transformation artifacts. |
 | C3: Native enforcement | An extension with no `:net` grant cannot navigate or intercept through direct native calls. Alternate operations, aliases, trusted helpers, and delayed callbacks also fail. |
 | C4: Stale DOM handles | Handles fail after document replacement, including calls queued before navigation and replies received afterward. Reload and history fixtures cover generation changes. |
-| C5: Privileged bridge | Ordinary pages, remote frames, forged origin fields, copied requests, and obsolete privileged documents cannot run privileged actions. Denial occurs in Rust. |
+| C5: Privileged bridge | Ordinary pages, remote frames, unauthenticated origin fields, copied requests, and obsolete privileged documents cannot run privileged actions. Denial occurs in Rust. |
 | C6: DOM latency | Release p50 for the complete sequential query-then-text operation is less than 10 ms on a simple local page. |
 | Other deliverables | Local fixtures cover tables, links, metadata, user content, subscriptions, hooks, resource rewrite, custom types, and extension cleanup. |
 | Accepted regressions | Relevant Phase 1 and 2 checks pass, including browsing, keyboard routing, Option/Escape policy, REPL, init reload, AOT, and bounded shutdown. |

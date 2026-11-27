@@ -18,7 +18,7 @@ E4 asserts the decoded Unicode data and the acknowledgement in the page.
 This alternative works, but does not replace the callback path for ordinary DOM requests.
 
 The agent shares the page's JavaScript world.
-Pages can replace the agent or forge its requests.
+Pages can replace the agent or send requests that the host cannot distinguish from the agent's.
 Resource interception alone does not authenticate messages or grant host capabilities.
 The product needs origin checks, document generations, payload limits, and permission enforcement before it exposes privileged operations.
 
@@ -36,7 +36,9 @@ Run the probe:
 python3 experiments/run_e4.py
 ```
 
-On macOS, the rendering context needs access to graphics services outside the Codex filesystem sandbox.
+These runs require native macOS graphics and window-server access. Run them on the host.
+Do not change or attempt to circumvent the agent's execution environment.
+If that access is unavailable, complete static checks and leave the graphical execution commands for the owner.
 The Python runner terminates the child after 35 seconds.
 The Rust driver also checks a 30-second deadline between Servo turns.
 

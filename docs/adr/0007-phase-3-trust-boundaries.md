@@ -6,7 +6,7 @@ The [contract draft](../phase-3-contracts.md) records proposed native operations
 
 ## Evidence
 
-The injected agent shares the page world. The page can replace its operations and forge its data.
+The injected agent shares the page world. The page can replace its operations and supply unauthenticated data in their place.
 Top-document and same-origin iframe fetches can produce identical public resource metadata in the same view.
 The public custom-protocol request exposes richer source metadata, which the final probe distinguishes across four frame contexts.
 That alternative still needs a binding to the active privileged document and rejection of obsolete messages.

@@ -288,7 +288,7 @@ Both existing Servo controls pass with each negative control.
 The process audit uses Servo's public multiprocess feature and content-process entry point.
 The fixture enables `Opts::multiprocess` and keeps `hard_fail = false`.
 Content processes use the same panic hook as the host for the existing script-thread unwind case.
-These runs use unsandboxed content processes on macOS arm64. The product keeps its existing single-process configuration.
+Servo content-process sandboxing is disabled only in this local experimental fixture configuration on macOS arm64. The product keeps its existing single-process configuration.
 
 The source audit found that the process manager only reaped a child after its lifeline closed.
 It did not notify the affected views. Host scope and pending callbacks remained live until another send failed.
@@ -1308,8 +1308,10 @@ The fixture now explicitly selects blocking reads with a timeout.
 The audit evidence retains that diagnostic log and a successful diagnostic run before the three final repeats.
 The earlier redirect timeout's exact cause remains unproven.
 
-The initial sandboxed graphics run failed during macOS surface initialization.
-Graphics runs require normal macOS graphics services outside that sandbox.
+The first graphics run inside the coding agent's execution environment failed during macOS surface initialization, because that environment has no window-server access.
+Graphics runs require native macOS graphics and window-server access. Run them on the host.
+Do not change or attempt to circumvent the agent's execution environment.
+If that access is unavailable, complete static checks and leave the graphical execution commands for the owner.
 Servo emits its known GL texture warning and debug linker warning.
 The copied engine packages also emit warnings from published code under disabled features.
 The panic hook logs the intentional script-thread panic, callback and delegate panics, and host unwinds. Recovery also logs pipeline teardown warnings.
@@ -1323,7 +1325,7 @@ No remote CI, physical input, Linux, or release latency result applies to this c
 ## Remaining requirements
 
 This prototype does not close S1 or permit a restricted DOM API.
-Unexpected content-process exit, forced kill, queued cancellation, and active interruption now have unsandboxed multiprocess evidence.
+Unexpected content-process exit, forced termination of a fixture-owned child process, queued cancellation, and active interruption now have multiprocess evidence from the local fixture configuration.
 Their contracts still need upstream review.
 The kill fixture covers only a child blocked at a barrier.
 Kills during JavaScript execution or IPC writes remain untested.
@@ -1353,7 +1355,7 @@ Crash recovery now removes an inactive top-level `javascript:` URL history entry
 Failed `about:blank` views rely on the product's native error state.
 Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.
-Constellation loss now has single-process and unsandboxed multiprocess evidence. Its local shutdown contract needs upstream review.
+Constellation loss now has single-process and multiprocess evidence from the local fixture configuration. Its local shutdown contract needs upstream review.
 A view that fails before its first document cannot recover. The owner decided that the product shows a native error state until the user recovers or kills the buffer.
 The owner accepted the upstream recovery that replaces a healthy active document when its pending navigation fails.
 The [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-24) describe both.

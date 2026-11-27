@@ -52,8 +52,10 @@ target/debug/bulwark-experiment-e3 https://servo.org
 target/debug/bulwark-experiment-e3 https://en.wikipedia.org
 ```
 
-On macOS, these commands need access to the native window server outside the Codex filesystem sandbox.
-The sandboxed attempt could not connect to macOS services and did not display a test window.
+These commands require native macOS graphics and window-server access. Run them on the host.
+Do not change or attempt to circumvent the agent's execution environment.
+A run inside the coding agent's execution environment could not connect to macOS services and did not display a test window.
+If that access is unavailable, complete static checks and leave these graphical commands for the owner.
 The successful automation used a temporary `.app` bundle with the compiled binary and an identifying `Info.plist`.
 The bundle changed process identification for Computer Use. It did not change the probe code.
 The build took 2m 31s with cached dependencies and an empty target directory.

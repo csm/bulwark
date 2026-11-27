@@ -331,14 +331,15 @@ python3 experiments/run_phase3.py
 ```
 
 The [P3.1 report](../docs/phase-3-mechanisms.md) records product-channel timings, deferred decisions, bounded observer data, and custom-protocol rendering.
-Its counterexamples reproduce namespace authority leaks, identical source-frame metadata, and replacement of the shared-world agent.
+Its counterexamples reproduce the missing authorization checks under namespace-only restriction, identical source-frame metadata, and replacement of the shared-world agent.
 The six-case runner retains logs and enforces independent process deadlines.
 These diagnostic results do not establish a restricted extension loader or a privileged page bridge.
 
-The [S1 document scope prototype](../docs/phase-3-document-scope.md) adds an isolated engine patch and sixteen regression cases.
-Its preparation script keeps the product pins unchanged.
-Lifecycle snapshots and a host allocation check reject obsolete replies after reset, history, redirect, failed load, close, and injected crash recovery.
-Actual process failure, cancellation of engine work, callback cleanup, and other replacement paths remain open.
+The [S1 document scope prototype](../docs/phase-3-document-scope.md) adds an isolated engine patch and sixty-one shared regression cases, plus twenty-eight multiprocess cases.
+Its preparation script keeps the product pins and the product's engine configuration unchanged.
+Lifecycle snapshots and a host allocation check reject obsolete replies after reset, history, redirect, failed load, close, and crash recovery.
+The cases also cover queued cancellation, interruption of running JavaScript, callback and delegate cleanup, child-process exit and forced termination in the local fixture configuration, backend loss, and crash-recovery history.
+The [document scope report](../docs/phase-3-document-scope.md#remaining-requirements) records the remaining open paths.
 
 For runtime-only checks without graphics, build the example without the Servo feature and use `--runtime-only` on the Python runner.
 For release product timings, build the example with `--release` and pass `--binary target/release/examples/phase3` to that runner.

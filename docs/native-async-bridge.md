@@ -79,7 +79,9 @@ It uses a parking `Thread/sleep` between JavaScript requests.
 The page also contains an input, button, and scroll marker.
 Closing the window cancels the program. The experiment deadline still applies.
 
-On macOS, these commands need native graphics access outside the Codex filesystem sandbox.
+These commands require native macOS graphics and window-server access. Run them on the host.
+Do not change or attempt to circumvent the agent's execution environment.
+If that access is unavailable, complete static checks and leave the graphical execution commands for the owner.
 The lifecycle cases open and close real windows and assert process outcomes.
 The failure cases deliberately emit errors or panic messages.
 
