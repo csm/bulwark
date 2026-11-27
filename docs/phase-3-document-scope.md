@@ -36,6 +36,8 @@ The experimental delegate receives `DocumentLifecycle` events through the same c
 - `Active(None)` revokes the current top document on close or crash recovery.
 - `DomReady(identity)` and `LoadComplete(identity)` identify the top document at those lifecycle points.
 
+A separate [frame failure notice](#frame-failure-notice) reports a failure that stayed inside child frames. It is not a lifecycle event and revokes nothing.
+
 Construction registers the identity before activation.
 A reset sends the new incarnation before the engine clears the DOM.
 The constellation forwards reset and readiness events only for its current top document.
@@ -318,13 +320,13 @@ It rejects the retained reply before host allocation and requires an empty pendi
 It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
 An independent view keeps its scope and accepts evaluation.
 
-All fifty-nine shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
+All sixty-one shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
 The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more.
 The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases.
 The [cross-site parsing audit](#cross-site-parsing-audit) adds four parsing-process cases.
 The [pending frame audit](#pending-frame-audit) adds eight cases.
 The [frame failure containment](#frame-failure-containment) change converts eight of those multiprocess cases.
-The [frame path audit](#frame-path-audit) adds six cases, for eighty-seven cases in total.
+The [frame path audit](#frame-path-audit) adds six cases, for eighty-nine cases in total with the current shared cases.
 The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
 The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
@@ -661,8 +663,10 @@ A view fails if its active top-level pipeline or a pending top-level pipeline ra
 A view without a top-level browsing context also fails. Each failed view keeps the existing recovery.
 It receives revocation, a crash notification, and a crash page, as before.
 Every other view keeps its document and its scope. It receives no lifecycle event and no crash notification.
+It receives one [frame failure notice](#frame-failure-notice) instead.
 One failure can therefore send crash notifications to several views, and a host must expect each of them.
 The lifeline handler uses the same panic handler, so process exit and kill follow the same rules.
+A failed send to a frame's pipeline now follows the same rules for its view, per the [frame send failure](#frame-send-failure) section.
 
 In a surviving view, the patch finds each outermost frame whose current or pending pipeline ran in the failed event loop.
 It builds a crash load from that pipeline's load data, with every sandboxing flag, as the top-level recovery does.
@@ -702,6 +706,7 @@ Inside the barrier, the host waits until the probe shows that the failed pipelin
 For a pending navigation, the old child pipeline is still current and live, and the frame has no pending pipeline.
 The host also waits for revocation of each other view in the failed event loop, and then for 200 milliseconds.
 The parent has no terminal callback, no revocation, and no crash notification at that point.
+It has exactly one frame failure notice.
 After release, all eight callbacks succeed in the same document. Each scoped result carries the parent's identity.
 The parent's retained reply passes the host allocation check, and its pending table is empty.
 The probe then shows a new, live frame pipeline whose crash details begin with the exact reason.
@@ -770,6 +775,7 @@ The failed pipeline's process differs from the host's, the parent's, and the ind
 The parent-loop popup shares the parent's process. In the healthy pending cases, the pending pipeline runs in a third process.
 
 In every case, the parent has no terminal callback, no revocation, and no crash notification inside the barrier.
+It has exactly one frame failure notice there.
 After release, all eight callbacks succeed in the same document, and the parent's retained reply passes the host allocation check.
 The frame then shows Servo's error page in a new pipeline, whose crash details begin with the exact reason.
 In multiprocess mode, the error page's process differs from the host's, the parent's, and the failed process.
@@ -824,7 +830,86 @@ The restored parent's frame shows the same error page pipeline, and its history 
 Two controls each use a separate preparation and the final fixture. Each removes one existing part of the containment patch.
 The first control keeps a failed frame's healthy pending pipeline open.
 The second control does not mark a contained frame's inactive history entries for reload.
-The [local evidence](#local-evidence) section describes their results.
+Each control failed in all three runs of each mode.
+The first control fails at `frame-healthy-pending-navigation-failure` in each mode, and at `frame-healthy-pending-process-exit` in multiprocess mode.
+After the four-second barrier wait, the probe still reported a pending pipeline for the frame.
+The second control fails at `frame-history-failure` in each mode, and at `frame-history-process-exit` in multiprocess mode, at the fixture deadline.
+A diagnostic rerun with constellation logs showed no reload of the first child's entry after the error page activated.
+Every earlier case passed with each control, including all fifty-one documents cases of that checkpoint.
+The frame path cases therefore depend on both existing parts of the containment patch.
+The [frame path evidence](../experiments/phase3/document-frame-paths-evidence-2026-11-27.json) records these controls.
+
+## Frame failure notice
+
+The owner decided that a contained frame failure must send an engine notification for the view that keeps its document, per the [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-27).
+The view keeps its document and its scope. The notification does not revoke the view and does not replace it.
+
+The experimental patch adds `WebViewDelegate::notify_frame_failure` and a `FrameFailure` record.
+The record holds the view's active document identity, each outermost failed frame, the failure reason, and the backtrace.
+Each failed frame is a `FailedFrame` with the frame's browsing context and the failed pipeline.
+The failed pipeline is the frame's current pipeline, or its pending pipeline for a failed navigation.
+The patch exports `BrowsingContextId` and `PipelineId` from the `servo` crate for this record.
+
+The panic handler sends one notice for each surviving view and failure. The notice lists every failed frame of that view.
+It sends the notices after the failed pipelines close and before it sends any crash navigation.
+A view whose own document failed still receives revocation and a crash notification, and no frame notice.
+The handler sends those notifications before every frame notice of the same failure.
+A view with only inactive history entries in the failed event loop receives no notice. Those entries reload on traversal.
+The embedder drops a notice after shutdown starts, because shutdown has revoked every view.
+
+The notice has this contract:
+
+- The named document is still active. Its identity, activation generation, and retained replies stay valid.
+- The notice revokes no callback. Pending evaluations in that document continue.
+- Each named frame then navigates to Servo's error page. The error page has an opaque origin and runs no scripts.
+- The notice is distinct from `notify_crashed`, which reports a failure of the view's own document.
+- The notice is not a lifecycle event. Later `DocumentLifecycle` events still govern scope.
+- The notice grants no authority. A frame's browsing context or pipeline is not a host scope.
+
+A new probe reports the browsing context of the active top-level document's newest child frame and that frame's newest pending pipeline.
+Page JavaScript cannot supply these values.
+
+Every contained case now requires the notice: seven frames cases, the frame send case, and fourteen processes cases.
+Inside the barrier, the parent's script thread still waits, so its frame cannot navigate yet. The notice has already arrived.
+It names the parent's identity, the failed frame's browsing context and pipeline, and the exact reason.
+After the error page loads, the late data, and 300 milliseconds, the parent still has exactly one notice.
+The parent-loop popup, the child-site popup, and the independent view receive no notice.
+In the same-site pending cases, the parent's own document fails. Neither the parent nor the parent-loop popup receives a notice.
+The [local evidence](#local-evidence) section describes the negative control.
+
+## Frame send failure
+
+The owner decided that a failed send to a frame's pipeline must also stay inside that frame.
+Servo's `handle_send_error` treated every failed send to a known pipeline as a panic of that pipeline's whole view.
+It called `handle_panic_in_webview` for the view, so the healthy parent lost its document and its scope.
+`send_message_to_pipeline` calls it, and so do direct sends for focus, frame load events, frame navigation, and pipeline creation.
+
+The experimental patch keeps that path when the view's active or pending top-level pipeline uses the failed event loop.
+Otherwise the failed send follows the panic handler's rules for that view only.
+The patch moves the body of the panic handler into `handle_event_loop_failure`, which can select one view.
+That view's pipelines in the event loop close. Each outermost failed frame gets Servo's error page.
+The view keeps its document and scope, and it receives one frame failure notice.
+The reason is still `Send failed (...)` with the channel's error.
+As before, the send path does not enter hard-fail mode and does not change other views in that event loop.
+
+A new probe closes the constellation's channel to the event loop of the newest child frame.
+Every later send to that event loop goes to a real channel whose receiver is already dropped. That channel returns its own error.
+The probe then sends one message to the frame's pipeline through `send_message_to_pipeline`.
+No script thread unwinds and no content process exits, so neither the panic handler nor the lifeline reports this failure.
+Only `handle_send_error` builds the reason `Send failed (`. The frame's crash details and the notice begin with it.
+In single-process mode, the error is `Disconnected`.
+In multiprocess mode, it is `SerializationError("Error in IO: Bogus destination port..")` from the IPC channel.
+The probe does not stop the frame's script thread. `Drop` still sends the exit message through the original channel.
+That thread exits when its event loop drops. In multiprocess mode, its process then exits, and the lifeline finds no live pipeline.
+
+The `frame-send-failure` case runs in the frames part in both modes.
+The parent loads a cross-site child alone in an event loop of its own. The child has no pending navigation.
+The parent's script thread waits at a barrier with eight callbacks, as in the frame path audit.
+The probe reports that the frame runs in an event loop other than the parent's.
+The checks inside the barrier, after release, and for the popups match the other frame path cases.
+The error page replaces the child, and the frame element fires its second load event.
+Reload loads the child again, and a new URL recovers.
+The second negative control in the [local evidence](#local-evidence) restores the previous send-error path. The case then fails.
 
 ## JavaScript URL crash page
 
@@ -856,8 +941,8 @@ The constellation's crash reload replacement reads only the top-level pipeline, 
 The patch now drops the result from a frame's crash load too. No fixture covers a `javascript:` URL document in a frame.
 A `javascript:` URL document whose source was at `about:blank` has the URL `about:blank`.
 Its crash load now takes the synchronous blank path, and the owner's decision for failed views at `about:blank` applies. No fixture covers it.
-Recovery marks inactive history entries for reload with their own load data. An inactive `javascript:` URL entry keeps its result.
-The source shows that back to that entry would render the result again, as a rebuild after history eviction would. No fixture covers this path.
+At this checkpoint, recovery marked inactive history entries for reload with their own load data. An inactive `javascript:` URL entry kept its result.
+The [JavaScript URL history entry](#javascript-url-history-entry) section supersedes this behavior.
 
 The `javascript-url-crash-recovery` case now asserts this behavior in both modes.
 Revocation before eight terminal callbacks, released captures, and rejection of the retained reply pass as before.
@@ -878,6 +963,37 @@ Reload then renders the result again, with the real origin, the result's marker,
 The third control drops the result but keeps the `Content-Type` header. Reload then sends that header with its request.
 Each control failed in all three runs of each mode, and each stops at its first failure.
 Both backend loss cases and both existing Servo controls pass with each control.
+
+## JavaScript URL history entry
+
+The owner decided that crash recovery must drop an inactive `javascript:` URL history entry, per the [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-27).
+Back and forward must not reach that entry after recovery, so its result cannot render again.
+
+A `javascript:` URL navigation always replaces the source page's history entry.
+A later navigation makes the result's entry inactive. Its pipeline keeps the result in its load data.
+Crash recovery marked that entry for reload with this load data.
+Back then rebuilt the document from the result, as the [JavaScript URL crash page](#javascript-url-crash-page) section describes.
+
+The experimental patch adds `JointSessionHistory::remove_document_entries`.
+It removes the entries in which one browsing context shows one document, unless the current entry shows it.
+The diff that leaves the document then starts from the entry before the document.
+The history length, the current index, and the embedder's back-forward list follow from the remaining diffs.
+After a view fails, recovery removes every inactive top-level entry whose reload data keeps a result.
+At the top level, every diff between those entries belongs to the document, such as its fragments and its frames.
+In a surviving view, recovery also removes such an entry of a frame, if its document ran in the failed event loop.
+There only the document's own diffs and those of frames inside it go. Sibling frames keep their diffs.
+If no diff enters the document, as for a frame's first document, its reload data drops the result instead.
+The active document's crash load already drops its result.
+
+The `javascript-url-history-crash-recovery` case runs in the documents part in both modes.
+The view loads a start page and a source page. A `javascript:` URL result then replaces the source page's entry.
+A next page makes three entries. The next page's script thread then unwinds.
+The crash page shows the failure reason, and its history has two entries.
+Back reaches the start page with a fresh identity, the real origin, and no result text.
+Forward restores the crash page with the failure reason, and back reaches the start page again.
+Every earlier identity is stale. A new URL recovers, and an independent view stays usable.
+No fixture covers a `javascript:` URL entry in a frame's history, an entry that no diff enters, or an entry that history eviction discarded earlier.
+The third negative control in the [local evidence](#local-evidence) removes the top-level drop. Back then renders the result again.
 
 ## Pending process and recovery audit
 
@@ -1052,6 +1168,7 @@ Fixture markers establish test order, without authentication claims.
 | `document.write` parser-blocked failure | The initial parser waits for a written external script. The same release, error page, late-data, and recovery checks pass. |
 | `document.open()` write failure | A reset document's script-created parser waits for a written script. Reload restores the original URL without the written content. |
 | `javascript:` URL crash recovery | A `javascript:` URL document unwinds. Eight callbacks are released. The crash document is the error page with the failure reason, the origin `null`, no running scripts, and no JavaScript result. Reload fetches the source page with its origin and scripts, without the result's `Content-Type` header. A new URL recovers. |
+| `javascript:` URL history entry | A later page fails while a `javascript:` URL result is in history. Recovery removes the result's entry, so history has two entries. Back reaches the start page, forward restores the crash page, and the result never renders again. A new URL recovers. |
 | Cross-site navigation parse failure | A cross-site document parses in its own event loop with no pending top-level pipeline, and unwinds. Eight callbacks are released. A popup in the source event loop keeps scope. Reload, back, and a new URL recover. |
 | Cross-site subframe parse failure | A cross-site child unwinds while it parses. The healthy parent keeps its document and scope, eight held callbacks succeed, and its retained reply passes. Only the frame gets an error page, and then the parent's load completes. A popup in the child's event loop releases eight callbacks and gets a crash document. A popup in the parent's event loop keeps scope. Reload and a new URL recover. |
 | Sandboxed `srcdoc` parse failure | A sandboxed `srcdoc` child in a new event loop unwinds while it parses. The healthy parent keeps its document and scope, and eight held callbacks succeed. The frame's crash load fetches the error page instead of parsing the `srcdoc` markup again. A popup in the parent's event loop keeps scope. |
@@ -1066,6 +1183,8 @@ Fixture markers establish test order, without authentication claims.
 | Frame healthy pending navigation failure | A loaded cross-site child unwinds while the frame's next navigation waits in a third event loop. The parent keeps its document and scope. The healthy pending pipeline closes, and an error page replaces the child. The late navigation response reaches no document. Reload and a new URL recover. |
 | Frame history after failure | A frame's second child unwinds with the first child in history. The error page replaces the second child's entry. Back rebuilds the first child in a new pipeline, forward restores the same error page, and the parent keeps its scope. Top-level back restores the parent with a fresh identity and the same error page. |
 | Frame path process exit and kill (multiprocess only) | The failed pipeline's process exits or is killed in each of the three frame paths. The same scope results, callbacks, error pages, late-data, history, and recovery checks pass. |
+| Frame failure notice | Every contained case delivers exactly one notice to the parent before the frame's crash navigation. It names the parent's identity, the failed frame's browsing context and pipeline, and the exact reason. Popups, the independent view, and a parent whose own document fails receive none. |
+| Frame send failure | A send to a loaded child's event loop fails in the constellation's send helper. The parent keeps its document and scope, eight held callbacks succeed, and one notice carries `Send failed (`. Only the frame gets an error page. Reload and a new URL recover. |
 | Unconstructed process exit and kill (multiprocess only) | The child of a new view's pending pipeline exits or is killed. The host receives revocation and a crash notification, and the view closes. |
 | Pending navigation process exit and kill (multiprocess only) | The child of a live view's pending navigation exits or is killed. Eight callbacks are released, and the view navigates again. |
 | Content-process failure (multiprocess only) | A child exits without an unwind. Its lifeline revokes scope and releases eight callbacks without a later send. Recovery and an independent view accept evaluation. |
@@ -1089,11 +1208,11 @@ Fixture markers establish test order, without authentication claims.
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
 The scope cases run in three parts. Each part runs in its own engine process with its own deadline.
-The documents part has fifty-one cases, and the frames part has eight cases. Both parts run in each mode.
+The documents part has fifty-two cases, and the frames part has nine cases. Both parts run in each mode.
 The processes part has twenty-eight cases. It runs only in multiprocess mode.
 The frames and processes parts each start a fresh view at the fixture origin. Their cases check that view as the independent view.
 Each part must print exactly its own markers. Its summary marker must report its own case count.
-Each repeat must cover fifty-nine cases in single-process mode or eighty-seven cases in multiprocess mode, each case once.
+Each repeat must cover sixty-one cases in single-process mode or eighty-nine cases in multiprocess mode, each case once.
 Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
 The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before and during execution.
@@ -1102,8 +1221,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [frame path evidence](../experiments/phase3/document-frame-paths-evidence-2026-11-27.json) records the current runs, source hashes, binary hashes, isolation controls, and local checks.
-Its baseline is `b4318a2`, the JavaScript URL crash checkpoint, whose three final runs in each mode passed with both Servo controls.
+The [owner decisions evidence](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) records the current runs, source hashes, binary hashes, negative controls, and local checks.
+Its baseline is `5d2cdf8`. That commit changes only documents, so its patch is the frame path checkpoint's patch.
+The [frame path evidence](../experiments/phase3/document-frame-paths-evidence-2026-11-27.json) preserves the frame path checkpoint and its two isolation controls.
 The [JavaScript URL crash evidence](../experiments/phase3/document-javascript-crash-evidence-2026-11-26.json) preserves the JavaScript URL crash checkpoint and its three negative controls.
 The [frame containment evidence](../experiments/phase3/document-frame-containment-evidence-2026-11-26.json) preserves the frame containment checkpoint and its three negative controls.
 The [pending frame evidence](../experiments/phase3/document-pending-frame-evidence-2026-11-26.json) preserves the first seventy-eight-case checkpoint, before frame containment.
@@ -1129,27 +1249,32 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All fifty-nine shared cases passed in three single-process runs on macOS arm64 with software rendering.
-All eighty-seven cases passed in three multiprocess runs. The engine patch did not change.
+All sixty-one shared cases passed in three single-process runs on macOS arm64 with software rendering.
+All eighty-nine cases passed in three multiprocess runs.
 Each run has three parts in multiprocess mode and two parts in single-process mode. Each part ran in its own engine process.
-In multiprocess mode, the documents part took 34.1 seconds, the frames part 21.2 seconds, and the processes part 14.9 seconds.
-Their margins to the 80-second fixture deadline are about 46, 59, and 65 seconds. The single process had used about 57 of those 80 seconds.
-In single-process mode, the documents part took 6.2 to 9.0 seconds, and the frames part took 6.9 to 7.0 seconds, within the 30-second fixture deadline.
+In multiprocess mode, the documents part took 35.0 to 35.1 seconds, the frames part 21.5 to 21.6 seconds, and the processes part 14.7 to 14.8 seconds.
+Their margins to the 80-second fixture deadline are about 45, 58, and 65 seconds.
+In single-process mode, the documents part took 6.2 to 8.9 seconds, and the frames part took 7.5 to 7.6 seconds, within the 30-second fixture deadline.
 This checkpoint keeps all fixture and runner deadlines.
 Three development runs of every part in each mode passed before a fresh final preparation. No final run failed.
 A fresh preparation produced the final binary. Its sources matched the development sources exactly.
 
-The two isolation controls each used a separate preparation and the final fixture. Each failed in all three runs of each mode.
-The first control keeps a failed frame's healthy pending pipeline open.
-It fails at `frame-healthy-pending-navigation-failure` in each mode, and at `frame-healthy-pending-process-exit` in multiprocess mode.
-After the four-second barrier wait, the probe still reported a pending pipeline for the frame.
-The second control does not mark a contained frame's inactive history entries for reload.
-It fails at `frame-history-failure` in each mode, and at `frame-history-process-exit` in multiprocess mode, at the fixture deadline.
-A diagnostic rerun with constellation logs showed no reload of the first child's entry after the error page activated.
-Every earlier case passed with each control, including all fifty-one documents cases. Later cases in a failed part did not run.
-The frame path cases therefore depend on both existing parts of the containment patch.
-The [JavaScript URL crash page](#javascript-url-crash-page) and [frame failure containment](#frame-failure-containment) sections describe the earlier checkpoints' controls.
-Both backend loss cases passed in three separate engine runs in each mode. Cleanup completed 1,478 to 1,508 milliseconds after the crash request.
+Three negative controls each used a separate preparation and the final fixture. Each failed in all three runs of each mode.
+The first control is the previous patch with only the new probes and the inert notice API.
+That API is the `FrameFailure` types, the delegate method with its empty default, and the identifier exports. The constellation never sends a notice.
+The frames part fails at its first case, `cross-site-subframe-parser-blocked-failure`, because the parent has no frame notice.
+In multiprocess mode, the processes part passes eleven cases and fails at `cross-site-subframe-process-exit` for the same reason.
+The documents part passes thirty-eight cases and fails at `javascript-url-history-crash-recovery`. Back reached the rendered result instead of the start page.
+One single-process frames run printed its error and then exited with signal 11 during process teardown. The other runs exited with status 1.
+The second control restores the previous `handle_send_error` body in the final patch.
+In single-process mode, `frame-send-failure` fails inside the barrier. The parent had eight terminal callbacks and the crash notification `Send failed (Disconnected)`.
+In multiprocess mode, the frames part passes eight cases and reaches the 90-second runner deadline in `frame-send-failure`.
+A diagnostic stack sample showed that the fixture had returned and the engine destructor waited for shutdown completion. The error message never printed.
+The third control removes only the top-level `javascript:` URL entry drop from the final patch.
+The documents part passes thirty-eight cases and fails at `javascript-url-history-crash-recovery`, as in the first control.
+With each control, the parts that do not depend on the removed change pass. Later cases in a failed part did not run.
+The [frame path audit](#frame-path-audit), [JavaScript URL crash page](#javascript-url-crash-page), and [frame failure containment](#frame-failure-containment) sections describe the earlier checkpoints' controls.
+Both backend loss cases passed in three separate engine runs in each mode. Cleanup completed 1,472 to 1,501 milliseconds after the crash request.
 Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
 Clippy denied warnings for the probe and portable workspace.
 Python syntax checks and twelve runner tests also passed. The runner test pins each part's documented case count and the totals.
@@ -1211,9 +1336,10 @@ The pending pipeline shares the parent's event loop, joins a child-site popup's 
 The patch now contains a child frame's failure to that frame when the parent's own top-level document runs in another event loop.
 The frame shows Servo's error page, and the parent keeps its document and its scope.
 A view whose own top-level document ran in the failed event loop still fails. A host must expect crash notifications for several views from one failure.
-The contained view receives no engine notification of the frame's failure.
+The contained view now receives one frame failure notice. Its document and scope stay valid.
 A negative control shows that process loss of a lone pending frame pipeline depends on the lifeline's pending-change clause.
-A failed send to a frame's pipeline still enters Servo's send-error path, which replaces the whole view. No fixture checks that path.
+A failed send to a frame's pipeline now stays inside that frame. The fixture closes the constellation's channel with a probe.
+The send path treats every send error to such a pipeline as a failure of its event loop for that view. A serialization error to a live event loop has no fixture.
 A frame's first navigation, a failed frame with a healthy pending navigation, and frame history after a contained failure now have evidence.
 A failed frame in an inactive parent document, a navigation that the child starts, and a pending traversal inside a frame remain untested.
 Error-page recovery through reload, back, forward, and a new URL has evidence for top-level history.
@@ -1223,6 +1349,7 @@ Script-thread unwinds after response headers now cover a top-level document befo
 Script-thread unwinds now also cover `about:blank`, a same-thread `srcdoc` child, `document.write`, `document.open()`, and `javascript:` URL construction.
 A crash of a `javascript:` URL document now shows Servo's error page, and reload fetches the document's URL.
 A `javascript:` URL document at `about:blank` and a `javascript:` URL document in a frame have no fixture.
+Crash recovery now removes an inactive top-level `javascript:` URL history entry. No fixture covers such an entry in a frame's history.
 Failed `about:blank` views rely on the product's native error state.
 Shared-process views now have exit, kill, close, and one ordered close-kill race. Other teardown orders remain untested.
 A product contract must decide how to revoke or tolerate work that an interrupted script already scheduled.

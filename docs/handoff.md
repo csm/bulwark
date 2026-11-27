@@ -13,10 +13,11 @@ These measurements exclude the future node registry and JSON schema conversion. 
 The [S1 document scope prototype](phase-3-document-scope.md) now includes lifecycle notifications, callback revocation, and a host allocation check.
 The isolated engine patch assigns fresh scope identities on reset and history reactivation.
 The probe rejects obsolete replies before its allocation counter changes.
-Its fifty-nine shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before construction, after response headers, during `about:blank`, `srcdoc`, `document.write`, and `javascript:` URL construction, while cross-site documents and frames parse, before a child frame's pending navigation receives its response headers, and after construction, three more frame paths, crash recovery history, and callback panics.
+Its sixty-one shared cases cover JavaScript URLs, script-created initial documents, actual script-thread unwinds before construction, after response headers, during `about:blank`, `srcdoc`, `document.write`, and `javascript:` URL construction, while cross-site documents and frames parse, before a child frame's pending navigation receives its response headers, and after construction, three more frame paths, a failed send to a frame, crash recovery history, a `javascript:` URL history entry, and callback panics.
 Multiprocess mode adds twenty-eight cases: content-process exit and kill, four shared-process cases, four pending-process cases, six parsing-process cases, six pending-frame process cases, and six frame path process cases.
 The cases run in three parts, each in its own engine process: documents, frames, and processes.
 A child frame's failure now stays inside that frame when the parent's own top-level document runs in another event loop.
+The surviving view receives one frame failure notice. A failed send to a frame's pipeline also stays inside that frame.
 A separate engine process adds two backend loss cases in each mode.
 The unwind fixture releases eight pending callbacks and accepts new work after recovery.
 Final handle release now revokes host scope and pending callbacks synchronously, including release before host activation.
@@ -197,7 +198,7 @@ A frame's crash load already fetched the error page. No fixture covers a `javasc
 
 The multiprocess scope run had used about 57 of its 80 seconds in one engine process.
 The runner now runs the scope cases in three parts, each in its own engine process with its own deadline.
-The documents part has fifty-one cases. The frames part has eight cases. The processes part has twenty-eight cases and runs only in multiprocess mode.
+The documents part now has fifty-two cases. The frames part now has nine cases. The processes part has twenty-eight cases and runs only in multiprocess mode.
 Each part must print exactly its own markers and case count. Each repeat must cover every case of its mode once.
 The frames and processes parts check a fresh independent view at the fixture origin.
 
@@ -217,6 +218,20 @@ A frame document that history rebuilds fires no load event at its frame element.
 Two isolation controls each remove one existing part of the containment patch, and each fails at its first dependent case.
 The first keeps the healthy pending pipeline open. The second does not mark the frame's history entry for reload, and back never rebuilds the first child.
 
+The owner then decided three more frame and history rules. The experimental patch now implements all three.
+A contained frame failure sends one `FrameFailure` notice through the new `WebViewDelegate::notify_frame_failure` method.
+The notice names the view's surviving document, each outermost failed frame with its failed pipeline, and the reason.
+It arrives once per surviving view and failure, after the failed pipelines close and before any crash navigation.
+It revokes nothing. The view keeps its document, its scope, and its pending callbacks.
+In multiprocess mode, twenty-two contained cases now require exactly one notice for the parent. Single-process mode runs eight of them. Popups and the independent view receive none.
+Servo's send-error path replaced the whole view of a failed pipeline. The patch now applies the panic handler's rules to that view when its own top-level document uses another event loop.
+A new probe closes the constellation's channel to a frame's event loop and sends one message to the frame. No script thread unwinds and no process exits.
+The new `frame-send-failure` case requires the reason `Send failed (`, which only the send-error path builds.
+The parent keeps its scope, and only the frame gets an error page.
+Crash recovery now removes an inactive `javascript:` URL history entry and joins its neighboring history diffs.
+The new `javascript-url-history-crash-recovery` case fails a page after a result entry. Back reaches the start page, and forward restores the crash page.
+Three negative controls fail at their first dependent case: the previous patch with only the probes, the previous send-error path, and recovery without the drop.
+
 P3.1 remains open on these requirements:
 
 - Engine document identity and protocol-source binding to the current privileged document.
@@ -231,8 +246,9 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [frame path evidence](../experiments/phase3/document-frame-paths-evidence-2026-11-27.json) records the current S1 runs, two isolation controls, engine controls, and local checks.
-Its baseline is `b4318a2`, the JavaScript URL crash checkpoint. That checkpoint's three final runs in each mode passed.
+The [owner decisions evidence](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) records the current S1 runs, three negative controls, engine controls, and local checks.
+Its baseline is `5d2cdf8`. That commit changes only documents, so its patch is the frame path checkpoint's patch.
+The [frame path evidence](../experiments/phase3/document-frame-paths-evidence-2026-11-27.json) preserves the frame path checkpoint and its two isolation controls.
 The [JavaScript URL crash evidence](../experiments/phase3/document-javascript-crash-evidence-2026-11-26.json) preserves the JavaScript URL crash checkpoint and its three negative controls.
 The [frame containment evidence](../experiments/phase3/document-frame-containment-evidence-2026-11-26.json) preserves the frame containment checkpoint and its three negative controls.
 The [pending frame evidence](../experiments/phase3/document-pending-frame-evidence-2026-11-26.json) preserves the first seventy-eight-case checkpoint, before frame containment.
@@ -256,20 +272,24 @@ The [audit evidence](../experiments/phase3/document-audit-evidence-2026-11-23.js
 The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-11-23.json) preserves the sixteen-case checkpoint.
 The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint.
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
-The fifty-nine shared cases passed in three single-process runs.
-All eighty-seven cases passed in three multiprocess runs. Both existing Servo controls passed with each mode. The engine patch did not change.
-Single-process mode runs two parts: documents with fifty-one cases and frames with eight cases.
+The sixty-one shared cases passed in three single-process runs.
+All eighty-nine cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
+Single-process mode runs two parts: documents with fifty-two cases and frames with nine cases.
 Multiprocess mode adds the processes part with twenty-eight cases. Each part runs in its own engine process.
-In multiprocess mode, the documents part took 34.1 seconds, the frames part 21.2 seconds, and the processes part 14.9 seconds.
-Their margins to the 80-second fixture deadline are about 46, 59, and 65 seconds. The single process had used about 57 of those 80 seconds.
-In single-process mode, the documents part took 6.2 to 9.0 seconds, and the frames part took 6.9 to 7.0 seconds. This checkpoint keeps all deadlines.
+In multiprocess mode, the documents part took 35.0 to 35.1 seconds, the frames part 21.5 to 21.6 seconds, and the processes part 14.7 to 14.8 seconds.
+Their margins to the 80-second fixture deadline are about 45, 58, and 65 seconds.
+In single-process mode, the documents part took 6.2 to 8.9 seconds, and the frames part took 7.5 to 7.6 seconds. This checkpoint keeps all deadlines.
 Three development runs of every part in each mode passed before a fresh final preparation. No final run failed.
-The first isolation control keeps a failed frame's healthy pending pipeline open. It fails at `frame-healthy-pending-navigation-failure` in all three runs of each mode.
-The second control does not mark a contained frame's history entries for reload. It fails at `frame-history-failure` in all three runs of each mode, at the fixture deadline.
-In multiprocess mode, each control also fails at its first process case. Every earlier case passes with each control.
-The JavaScript URL and frame containment controls remain in their checkpoints' evidence.
+The first negative control is the previous patch with only the new probes and the inert notice API.
+It fails at the first frames case and at the first frame process case, because no notice arrives. It also fails the new history case.
+The second control restores the previous send-error path. In single-process mode, `frame-send-failure` reports a revoked parent and a crash notification.
+In multiprocess mode, that part reaches the runner deadline. A stack sample showed the engine destructor waiting after the fixture's error, so the error never printed.
+The third control removes only the top-level history drop. It fails `javascript-url-history-crash-recovery`, because back renders the result again.
+Each control failed in all three runs of each mode. Parts that do not depend on the removed change passed.
+One single-process run of the first control printed its error and then exited with signal 11 during teardown.
+The frame path, JavaScript URL, and frame containment controls remain in their checkpoints' evidence.
 Both backend loss cases passed in three separate engine runs in each mode.
-Cleanup completed 1,478 to 1,508 milliseconds after the crash request. The cause of that unwind delay is not established.
+Cleanup completed 1,472 to 1,501 milliseconds after the crash request. The cause of that unwind delay is not established.
 These builds retained the previous line-table debug configuration.
 Multiprocess evidence uses unsandboxed content processes on macOS arm64.
 The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
@@ -292,7 +312,7 @@ The interrupt negative control ignores closed permits in the interrupt callback.
 The interrupted loop then completes, runs its `finally` block, and records `1003` mutations.
 The execution-check negative control keeps the watcher but lets the cancelled queued mutation run.
 Both existing Servo controls pass with each negative control.
-This session started from `origin/main` at `b4318a2`.
+This session started from `origin/main` at `5d2cdf8`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
@@ -314,17 +334,14 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   The owner decided that a contained frame failure must send an engine notification for the surviving view. The [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-27) give details.
-   Add that notification to the experimental patch. The view keeps its document and scope. Convert the frame cases to require it, with the current patch as the negative control.
-   The owner decided that a failed send to a frame's pipeline must also stay inside that frame.
-   Servo's send-error path still replaces the whole view. Change it to contain the failure, and add a case and a negative control for that path.
+   Review the frame failure notice contract before product integration. A view with several failed frames in one failure has no notice fixture.
+   The send case closes the constellation's channel with a probe. A real dead script thread and a serialization error to a live event loop remain unchecked.
    A failed frame in an inactive parent, a navigation that the child starts, and a pending traversal inside a frame remain unchecked.
    A failed frame whose healthy pending navigation shares the parent's event loop also remains unchecked.
    The owner decided that failed views at `about:blank` rely on the product's native error state. No engine change is needed for them.
    Their blank crash documents have the origin `null` and run inserted scripts. The product must not treat them as usable pages.
    A `javascript:` URL document in a frame or at `about:blank` has no crash fixture.
-   The owner decided that crash recovery must drop an inactive `javascript:` URL history entry. Recovery keeps that entry now, and the source shows that back to it would render its result again.
-   Change the experimental patch to remove the entry during recovery. Add a case and a negative control.
+   Recovery removes an inactive `javascript:` URL entry from a frame's history too. No fixture covers that path, a first entry that no diff enters, or an evicted entry.
    Reload from a crash page uses default target snapshot parameters. Check views that started with inherited sandboxing.
    Frame history after whole-view crash recovery and reload of a frame's error page remain unchecked.
    The owner accepted crash-page replacement for a failed pending navigation.

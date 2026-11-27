@@ -181,17 +181,17 @@
  }
 --- a/servo/servo.rs
 +++ b/servo/servo.rs
-@@ -1,6 +1,10 @@
- /* This Source Code Form is subject to the terms of the Mozilla Public
+@@ -2,6 +2,10 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-+
+
 +use embedder_traits::{
 +    DocumentIdentity, DocumentLifecycle, JavaScriptEvaluationError, JavaScriptEvaluationId,
 +};
-
++
  use std::cell::{Cell, Ref, RefCell, RefMut};
  use std::cmp::max;
+ use std::rc::{Rc, Weak};
 @@ -170,6 +174,8 @@
      FromNet(NetToEmbedderMsg),
      FromConstellation(ConstellationToEmbedderMsg),
@@ -289,7 +289,7 @@
      fn finish_shutting_down(&self) {
          debug!("Servo received message that Constellation shutdown is complete");
          self.shutdown_state.set(ShutdownState::FinishedShuttingDown);
-@@ -811,15 +866,38 @@
+@@ -811,15 +866,47 @@
                      webview.request_create_new(response_sender);
                  }
              },
@@ -312,6 +312,15 @@
 +                }
 +                crate::javascript_evaluator::deliver_revoked(first_panic, callbacks);
 +            },
++            ConstellationToEmbedderMsg::FrameFailure(webview_id, failure) => {
++                // A stopped engine has revoked every view, so no notice may claim live scope.
++                if self.shutdown_state.get() != ShutdownState::NotShuttingDown {
++                    return;
++                }
++                if let Some(webview) = self.get_webview_handle(webview_id) {
++                    webview.delegate().notify_frame_failure(webview, failure);
++                }
++            },
              ConstellationToEmbedderMsg::WebViewClosed(webview_id) => {
                  if let Some(webview) = self.get_webview_handle(webview_id) {
                      webview.delegate().notify_closed(webview);
@@ -330,7 +339,7 @@
              },
              ConstellationToEmbedderMsg::InputEventsHandled(webview_id, event_outcomes) => {
                  let webview = self.get_webview_handle(webview_id);
-@@ -878,9 +956,7 @@
+@@ -878,9 +965,7 @@
 
  impl Drop for ServoInner {
      fn drop(&mut self) {
@@ -341,7 +350,7 @@
          while self.spin_event_loop() {
              std::thread::sleep(Duration::from_micros(500));
          }
-@@ -1078,6 +1154,45 @@
+@@ -1078,6 +1163,45 @@
          self.0.spin_event_loop();
      }
 
@@ -422,7 +431,7 @@
      }
  }
 
-@@ -733,8 +744,325 @@
+@@ -733,8 +744,363 @@
          script: T,
          callback: impl FnOnce(Result<JSValue, JavaScriptEvaluationError>) + 'static,
      ) {
@@ -530,6 +539,44 @@
 +        );
 +        let Ok(reply) = reply.try_recv_timeout(std::time::Duration::from_secs(5)) else {
 +            panic!("Constellation did not answer the frame state probe");
++        };
++        reply
++    }
++
++    /// Experimental instrumentation: read the browsing context of the active top-level
++    /// document's newest child frame, and that frame's newest pending pipeline, if any.
++    /// Returns `None` without such a frame. Page JavaScript cannot supply these values.
++    #[doc(hidden)]
++    pub fn frame_ids_for_document_scope_probe(
++        &self,
++    ) -> Option<(
++        servo_base::id::BrowsingContextId,
++        Option<servo_base::id::PipelineId>,
++    )> {
++        let (sent, reply) = servo_base::generic_channel::channel().unwrap();
++        self.servo().constellation_proxy().send(
++            EmbedderToConstellationMessage::FrameIdsForDocumentScopeProbe(self.id(), sent),
++        );
++        let Ok(reply) = reply.try_recv_timeout(std::time::Duration::from_secs(5)) else {
++            panic!("Constellation did not answer the frame ids probe");
++        };
++        reply
++    }
++
++    /// Experimental instrumentation: close the constellation's channel to the event loop of
++    /// the active top-level document's newest child frame, then send one message to that
++    /// frame's pipeline. The send fails and enters the constellation's send-error path. No
++    /// script thread unwinds and no content process exits. Returns `None` without such a
++    /// frame. Otherwise returns whether that frame runs in an event loop other than the
++    /// top-level document's.
++    #[doc(hidden)]
++    pub fn fail_frame_send_for_document_scope_probe(&self) -> Option<bool> {
++        let (sent, reply) = servo_base::generic_channel::channel().unwrap();
++        self.servo().constellation_proxy().send(
++            EmbedderToConstellationMessage::FailFrameSendForDocumentScopeProbe(self.id(), sent),
++        );
++        let Ok(reply) = reply.try_recv_timeout(std::time::Duration::from_secs(5)) else {
++            panic!("Constellation did not acknowledge the frame send probe");
 +        };
 +        reply
 +    }
@@ -761,15 +808,15 @@
 -    SelectElementOptionOrOptgroup, SelectElementRequest, SimpleDialogRequest, TraversalId,
 -    WebResourceRequest, WebResourceResponse, WebResourceResponseMsg,
 +    ContextMenuItem, Cursor, DocumentLifecycle, EmbedderControlId, EmbedderControlResponse,
-+    FilePickerRequest, FilterPattern, InputEventId, InputEventResult, InputMethodType, LoadStatus,
-+    MediaSessionEvent, NewWebViewDetails, Notification, PermissionFeature, PromptResponse,
-+    RgbColor, ScreenGeometry, SelectElementOptionOrOptgroup, SelectElementRequest,
-+    SimpleDialogRequest, TraversalId, WebResourceRequest, WebResourceResponse,
-+    WebResourceResponseMsg,
++    FilePickerRequest, FilterPattern, FrameFailure, InputEventId, InputEventResult,
++    InputMethodType, LoadStatus, MediaSessionEvent, NewWebViewDetails, Notification,
++    PermissionFeature, PromptResponse, RgbColor, ScreenGeometry, SelectElementOptionOrOptgroup,
++    SelectElementRequest, SimpleDialogRequest, TraversalId, WebResourceRequest,
++    WebResourceResponse, WebResourceResponseMsg,
  };
  use paint_api::rendering_context::RenderingContext;
  use servo_base::generic_channel::{GenericCallback, GenericSender, SendError};
-@@ -916,6 +917,14 @@
+@@ -916,6 +917,20 @@
  /// instance. A [`WebView`]'s delegate needs to be set at the time of creation using
  /// [`WebViewBuilder::delegate`].
  pub trait WebViewDelegate {
@@ -780,6 +827,12 @@
 +    /// Engine-authenticated top-document lifecycle, ordered with evaluation replies.
 +    /// Revocation must invalidate retained replies before allocating host handles.
 +    fn notify_document_lifecycle(&self, _webview: WebView, _event: DocumentLifecycle) {}
++
++    /// Experimental S1 notice: a failure stayed inside child frames of this view.
++    /// The view keeps its document and scope, so this notice must not revoke host state.
++    /// It arrives once per failure, after the failed pipelines close and before any frame's
++    /// error page loads. A crash notification reports a failure of the view's own document.
++    fn notify_frame_failure(&self, _webview: WebView, _failure: FrameFailure) {}
 +
      /// Get the [`ScreenGeometry`] for this [`WebView`]. If this is unimplemented or returns `None`
      /// the screen will have the size of the [`WebView`]'s `RenderingContext` and `WebView` will be
@@ -793,12 +846,30 @@
 -    AnimationState, EmbedderControlId, EmbedderControlResponse, EmbedderProxy, FocusSequenceNumber,
 -    GenericEmbedderProxy, InputEvent, InputEventAndId, InputEventOutcome, JSValue,
 +    AnimationState, DocumentIdentity, DocumentJavaScriptResult, DocumentLifecycle,
-+    EmbedderControlId, EmbedderControlResponse, EmbedderProxy, FocusSequenceNumber,
-+    GenericEmbedderProxy, InputEvent, InputEventAndId, InputEventOutcome,
++    EmbedderControlId, EmbedderControlResponse, EmbedderProxy, FailedFrame, FocusSequenceNumber,
++    FrameFailure, GenericEmbedderProxy, InputEvent, InputEventAndId, InputEventOutcome,
      JavaScriptEvaluationError, JavaScriptEvaluationId, KeyboardEvent, MediaSessionActionType,
      MediaSessionEvent, MediaSessionPlaybackState, MouseButtonAction, MouseButtonEvent,
      NewWebViewDetails, PaintHitTestResult, Theme, ViewportDetails, WakeLockDelegate, WakeLockType,
-@@ -346,6 +347,7 @@
+@@ -190,6 +191,17 @@
+ use crate::serviceworker::ServiceWorkerUnprivilegedContent;
+ use crate::session_history::{NeedsToReload, SessionHistoryChange, SessionHistoryDiff};
+
++/// Experimental S1 record of a failed child frame in a view that keeps its document.
++struct ContainedFrame {
++    webview_id: WebViewId,
++    browsing_context_id: BrowsingContextId,
++    /// The failed pipeline that the frame showed or was loading.
++    pipeline_id: PipelineId,
++    parent_pipeline_id: PipelineId,
++    /// The crash load for the frame's error page.
++    load_data: LoadData,
++}
++
+ struct PendingApprovalNavigation {
+     load_data: LoadData,
+     history_behaviour: NavigationHistoryBehavior,
+@@ -346,6 +358,7 @@
 
      /// Bookkeeping data for all webviews in the constellation.
      webviews: FxHashMap<WebViewId, ConstellationWebView>,
@@ -806,7 +877,7 @@
 
      /// Channels for the constellation to send messages to the public
      /// resource-related threads. There are two groups of resource threads: one
-@@ -679,6 +681,7 @@
+@@ -679,6 +692,7 @@
                      constellation_to_embedder_proxy: state.constellation_to_embedder_proxy,
                      paint_proxy: state.paint_proxy,
                      webviews: Default::default(),
@@ -814,7 +885,7 @@
                      devtools_sender: state.devtools_sender,
                      script_to_devtools_callback: Default::default(),
                      #[cfg(feature = "bluetooth")]
-@@ -1280,7 +1283,11 @@
+@@ -1280,7 +1294,11 @@
                  self.handle_request_from_background_hang_monitor(message);
              },
              #[cfg(feature = "multiprocess")]
@@ -827,7 +898,7 @@
              #[cfg(not(feature = "multiprocess"))]
              Request::RemoveProcess(_) => {},
          }
-@@ -1342,6 +1349,156 @@
+@@ -1342,6 +1360,198 @@
                  self.handle_new_top_level_browsing_context(url, new_webview_details);
              },
              // Close a top level browsing context.
@@ -876,6 +947,48 @@
 +                        )
 +                    });
 +                let _ = reply.send(state);
++            }
++            EmbedderToConstellationMessage::FrameIdsForDocumentScopeProbe(webview_id, reply) => {
++                let ids = self
++                    .browsing_contexts
++                    .get(&BrowsingContextId::from(webview_id))
++                    .and_then(|top| self.pipelines.get(&top.pipeline_id)?.children.last())
++                    .map(|child| {
++                        let pending = self.webviews.get(&webview_id).and_then(|webview| {
++                            webview
++                                .pending_changes
++                                .iter()
++                                .rev()
++                                .find(|change| change.browsing_context_id == *child)
++                                .map(|change| change.new_pipeline_id)
++                        });
++                        (*child, pending)
++                    });
++                let _ = reply.send(ids);
++            }
++            EmbedderToConstellationMessage::FailFrameSendForDocumentScopeProbe(webview_id, sent) => {
++                let active = self
++                    .browsing_contexts
++                    .get(&BrowsingContextId::from(webview_id))
++                    .and_then(|context| self.pipelines.get(&context.pipeline_id))
++                    .map(|pipeline| pipeline.event_loop.id());
++                let target = self
++                    .frame_pipeline(webview_id)
++                    .map(|pipeline| (pipeline.id, pipeline.event_loop.clone()));
++                let reply = target.map(|(pipeline_id, event_loop)| {
++                    // No script thread unwinds and no process exits. Only this send fails.
++                    event_loop.close_for_document_scope_probe();
++                    let separate = active != Some(event_loop.id());
++                    drop(event_loop);
++                    // The constellation's own helper sends the message and handles its failure.
++                    self.send_message_to_pipeline(
++                        pipeline_id,
++                        ScriptThreadMessage::GetTitle(pipeline_id),
++                        "S1 probe send after closure",
++                    );
++                    separate
++                });
++                let _ = sent.send(reply);
 +            }
 +            EmbedderToConstellationMessage::ExitContentProcessForDocumentScopeProbe(webview_id, entered, resume, exit) => {
 +                assert!(opts::get().multiprocess, "Process exit probe requires multiprocess mode");
@@ -984,7 +1097,7 @@
              EmbedderToConstellationMessage::CloseWebView(webview_id) => {
                  self.handle_close_top_level_browsing_context(webview_id);
              },
-@@ -1408,10 +1565,18 @@
+@@ -1408,10 +1618,18 @@
              EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
@@ -1005,7 +1118,7 @@
              EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
                  self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
              },
-@@ -1576,6 +1741,8 @@
+@@ -1576,6 +1794,8 @@
          &mut self,
          webview_id: WebViewId,
          evaluation_id: JavaScriptEvaluationId,
@@ -1014,11 +1127,10 @@
          script: String,
      ) {
          let browsing_context_id = BrowsingContextId::from(webview_id);
-@@ -1590,6 +1757,14 @@
-             );
+@@ -1591,12 +1811,22 @@
              return;
          };
-+
+
 +        if expected_document.is_some_and(|expected| expected.pipeline_id() != pipeline.id) {
 +            self.handle_finish_javascript_evaluation(
 +                evaluation_id,
@@ -1026,10 +1138,10 @@
 +            );
 +            return;
 +        }
-
++
          if pipeline
              .event_loop
-@@ -1597,6 +1772,8 @@
+             .send(ScriptThreadMessage::EvaluateJavaScript(
                  webview_id,
                  pipeline.id,
                  evaluation_id,
@@ -1038,7 +1150,7 @@
                  script,
              ))
              .is_err()
-@@ -1795,8 +1972,37 @@
+@@ -1795,8 +2025,37 @@
                  self.handle_joint_session_history_length(webview_id, response_sender);
              },
              // Notification that the new document is ready to become active
@@ -1077,7 +1189,7 @@
              },
              // Update pipeline url after redirections
              ScriptToConstellationMessage::SetFinalUrl(final_url) => {
-@@ -2025,6 +2231,20 @@
+@@ -2025,6 +2284,20 @@
                      .send(mem::ProfilerMsg::Report(sender));
              },
              ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
@@ -1098,7 +1210,7 @@
                  self.handle_finish_javascript_evaluation(evaluation_id, result)
              },
              ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
-@@ -2569,7 +2789,7 @@
+@@ -2569,7 +2842,7 @@
 
                      if let Ok(process) = content.spawn_multiprocess() {
                          let crossbeam_receiver = receiver.route_preserving_errors();
@@ -1107,7 +1219,7 @@
                      } else {
                          return warn!("Failed to spawn process for SW manager.");
                      }
-@@ -2968,11 +3188,21 @@
+@@ -2968,11 +3241,21 @@
      fn handle_pipeline_exited(&mut self, pipeline_id: PipelineId, exit_source: PipelineExitSource) {
          debug!("{}: Exited", pipeline_id);
          self.remove_worker_animation_frame_providers_for_pipeline(pipeline_id);
@@ -1129,12 +1241,10 @@
          // Clean up any registered interests for this pipeline.
          self.pipeline_interests.retain(|_, set| {
              set.remove(&pipeline_id);
-@@ -2987,6 +3217,34 @@
-             pipeline.id,
-             exit_source,
+@@ -2989,6 +3272,34 @@
          ));
-+    }
-+
+     }
+
 +    /// A lifeline error must revoke scope even if the host sends no more work.
 +    #[cfg(feature = "multiprocess")]
 +    fn handle_content_process_disconnected(&mut self, id: ScriptEventLoopId) {
@@ -1161,10 +1271,61 @@
 +                self.handle_pipeline_exited(id, PipelineExitSource::all());
 +            }
 +        }
++    }
++
+     #[servo_tracing::instrument(skip_all)]
+     fn handle_send_error(&mut self, pipeline_id: PipelineId, error: SendError) {
+         error!("Error sending message to {pipeline_id:?}: {error}",);
+@@ -2997,13 +3308,19 @@
+         let Some(pipeline) = self.pipelines.get(&pipeline_id) else {
+             return;
+         };
++        let (webview_id, event_loop_id) = (pipeline.webview_id, pipeline.event_loop.id());
++        let reason = format!("Send failed ({error})");
++
++        // Experimental S1 change: a failed send to a pipeline that the view's own top-level
++        // document does not share an event loop with stays inside the affected frames. The
++        // panic handler's rules apply to the pipelines of this view in that event loop. As
++        // before, other views and hard-fail mode are unaffected.
++        if !self.top_level_failed(webview_id, event_loop_id) {
++            return self.handle_event_loop_failure(event_loop_id, Some(webview_id), reason, None);
++        }
+
+         // Treat send error the same as receiving a panic message
+-        self.handle_panic_in_webview(
+-            pipeline.webview_id,
+-            &format!("Send failed ({error})"),
+-            &None,
+-        );
++        self.handle_panic_in_webview(webview_id, &reason, &None);
      }
 
      #[servo_tracing::instrument(skip_all)]
-@@ -3034,7 +3292,21 @@
+@@ -3024,17 +3341,44 @@
+             return;
+         };
+         debug!("Panic handler for {event_loop_id:?}: {reason:?}",);
++        self.handle_event_loop_failure(event_loop_id, None, reason, backtrace);
++    }
+
++    /// Experimental S1 change: recover from a failure of one event loop. With `only`, this
++    /// handles only that view's pipelines in the event loop, as the send-error path does.
++    fn handle_event_loop_failure(
++        &mut self,
++        event_loop_id: ScriptEventLoopId,
++        only: Option<WebViewId>,
++        reason: String,
++        backtrace: Option<String>,
++    ) {
+         let mut webview_ids = HashSet::new();
+         let mut crashed_pipelines = Vec::new();
+         for pipeline in self.pipelines.values() {
+-            if pipeline.event_loop.id() == event_loop_id {
++            if pipeline.event_loop.id() == event_loop_id &&
++                only.is_none_or(|webview_id| webview_id == pipeline.webview_id)
++            {
+                 crashed_pipelines.push(pipeline.id);
+                 webview_ids.insert(pipeline.webview_id);
              }
          }
 
@@ -1187,24 +1348,57 @@
              self.handle_panic_in_webview(webview_id, &reason, &backtrace);
          }
 
-@@ -3050,6 +3322,153 @@
+@@ -3050,6 +3394,317 @@
              // confirmation from the event loop.
              self.handle_pipeline_exited(pipeline_id, PipelineExitSource::all());
          }
 +
-+        // Each failed frame navigates to the crash page through its parent's script thread,
-+        // so the parent's frame element accepts the new pipeline as its own navigation.
-+        for (browsing_context_id, parent_pipeline_id, load_data) in failed_frames {
-+            if !self.browsing_contexts.contains_key(&browsing_context_id) {
++        // Each surviving view learns of its failed frames once, after the failed pipelines
++        // close and before any crash navigation. Its document and scope stay valid.
++        let failed_frames: Vec<_> = failed_frames
++            .into_iter()
++            .filter(|frame| {
++                self.webviews.contains_key(&frame.webview_id) &&
++                    self.browsing_contexts.contains_key(&frame.browsing_context_id) &&
++                    self.pipelines.contains_key(&frame.parent_pipeline_id)
++            })
++            .collect();
++        let mut notified = Vec::new();
++        for frame in &failed_frames {
++            if notified.contains(&frame.webview_id) {
 +                continue;
 +            }
-+            let Some(parent) = self.pipelines.get(&parent_pipeline_id) else {
++            notified.push(frame.webview_id);
++            let frames = failed_frames
++                .iter()
++                .filter(|other| other.webview_id == frame.webview_id)
++                .map(|other| FailedFrame {
++                    browsing_context_id: other.browsing_context_id,
++                    pipeline_id: other.pipeline_id,
++                })
++                .collect();
++            self.constellation_to_embedder_proxy
++                .send(ConstellationToEmbedderMsg::FrameFailure(
++                    frame.webview_id,
++                    FrameFailure {
++                        document: self.active_document(frame.webview_id),
++                        frames,
++                        reason: reason.clone(),
++                        backtrace: backtrace.clone(),
++                    },
++                ));
++        }
++
++        // Each failed frame navigates to the crash page through its parent's script thread,
++        // so the parent's frame element accepts the new pipeline as its own navigation.
++        for frame in failed_frames {
++            let Some(parent) = self.pipelines.get(&frame.parent_pipeline_id) else {
 +                continue;
 +            };
 +            let _ = parent.event_loop.send(ScriptThreadMessage::NavigateIframe(
-+                parent_pipeline_id,
-+                browsing_context_id,
-+                load_data,
++                frame.parent_pipeline_id,
++                frame.browsing_context_id,
++                frame.load_data,
 +                NavigationHistoryBehavior::Replace,
 +                TargetSnapshotParams::default(),
 +            ));
@@ -1242,8 +1436,8 @@
 +        event_loop_id: ScriptEventLoopId,
 +        reason: &str,
 +        backtrace: &Option<String>,
-+    ) -> Vec<(BrowsingContextId, PipelineId, LoadData)> {
-+        let mut frames: Vec<(BrowsingContextId, PipelineId, LoadData)> = Vec::new();
++    ) -> Vec<ContainedFrame> {
++        let mut frames: Vec<ContainedFrame> = Vec::new();
 +        let mut history = Vec::new();
 +        for pipeline_id in crashed_pipelines {
 +            let Some(pipeline) = self.pipelines.get(pipeline_id) else {
@@ -1261,7 +1455,7 @@
 +            };
 +            if context.pipeline_id != *pipeline_id && !webview.pipeline_is_pending(*pipeline_id) {
 +                if let Some(load_data) = self.refresh_load_data(*pipeline_id) {
-+                    history.push((pipeline.webview_id, *pipeline_id, load_data));
++                    history.push((pipeline.webview_id, context.id, *pipeline_id, load_data));
 +                }
 +                continue;
 +            }
@@ -1273,17 +1467,21 @@
 +                .pipelines
 +                .get(&parent_pipeline_id)
 +                .is_none_or(|parent| parent.event_loop.id() == event_loop_id) ||
-+                frames.iter().any(|(id, ..)| *id == context.id)
++                frames
++                    .iter()
++                    .any(|frame| frame.browsing_context_id == context.id)
 +            {
 +                continue;
 +            }
 +            let Some(old_load_data) = self.refresh_load_data(*pipeline_id) else {
 +                continue;
 +            };
-+            frames.push((
-+                context.id,
++            frames.push(ContainedFrame {
++                webview_id: pipeline.webview_id,
++                browsing_context_id: context.id,
++                pipeline_id: *pipeline_id,
 +                parent_pipeline_id,
-+                LoadData {
++                load_data: LoadData {
 +                    crash: Some(
 +                        backtrace
 +                            .clone()
@@ -1296,23 +1494,55 @@
 +                    ),
 +                    ..Self::without_javascript_result(old_load_data)
 +                },
-+            ));
++            });
 +        }
-+        for (webview_id, pipeline_id, load_data) in history {
++        for (webview_id, browsing_context_id, pipeline_id, load_data) in history {
++            let javascript_url = load_data.js_eval_result.is_some();
++            // A child frame's history interleaves with its siblings' history. Only the
++            // document's own diffs and those of frames inside it go with its entries.
++            let frame = browsing_context_id != BrowsingContextId::from(webview_id);
++            let nested = if javascript_url && frame {
++                self.descendant_browsing_contexts(pipeline_id)
++            } else {
++                Vec::new()
++            };
++            let inside = |diff: &SessionHistoryDiff| match diff {
++                SessionHistoryDiff::BrowsingContext {
++                    browsing_context_id,
++                    ..
++                } => nested.contains(browsing_context_id),
++                SessionHistoryDiff::Pipeline {
++                    pipeline_reloader, ..
++                } |
++                SessionHistoryDiff::Hash {
++                    pipeline_reloader, ..
++                } => matches!(
++                    pipeline_reloader,
++                    NeedsToReload::No(id) | NeedsToReload::Yes(id, _) if *id == pipeline_id
++                ),
++            };
 +            if let Some(webview) = self.webviews.get_mut(&webview_id) {
 +                webview.session_history.replace_reloader(
 +                    NeedsToReload::No(pipeline_id),
 +                    NeedsToReload::Yes(pipeline_id, load_data),
 +                );
++                if javascript_url {
++                    Self::drop_javascript_url_entry(
++                        &mut webview.session_history,
++                        browsing_context_id,
++                        pipeline_id,
++                        frame.then_some(&inside as &dyn Fn(&SessionHistoryDiff) -> bool),
++                    );
++                }
 +            }
 +        }
 +        // A healthy pending navigation in a failed frame must not replace the crash page.
-+        for (browsing_context_id, ..) in &frames {
++        for frame in &frames {
 +            let pending: Vec<_> = contained_webviews
 +                .iter()
 +                .filter_map(|webview_id| self.webviews.get(webview_id))
 +                .flat_map(|webview| webview.pending_changes.iter())
-+                .filter(|change| change.browsing_context_id == *browsing_context_id)
++                .filter(|change| change.browsing_context_id == frame.browsing_context_id)
 +                .map(|change| change.new_pipeline_id)
 +                .filter(|pipeline_id| !crashed_pipelines.contains(pipeline_id))
 +                .collect();
@@ -1338,10 +1568,105 @@
 +            load_data.headers.remove("content-type");
 +        }
 +        load_data
++    }
++
++    /// Experimental S1 helper: the history documents of a browsing context whose reload data
++    /// keeps a `javascript:` URL result.
++    fn javascript_url_documents(
++        session_history: &crate::session_history::JointSessionHistory,
++        browsing_context_id: BrowsingContextId,
++    ) -> Vec<PipelineId> {
++        let mut documents = Vec::new();
++        for diff in session_history
++            .past
++            .iter()
++            .chain(session_history.future.iter())
++        {
++            let SessionHistoryDiff::BrowsingContext {
++                browsing_context_id: id,
++                old_reloader,
++                new_reloader,
++            } = diff
++            else {
++                continue;
++            };
++            for reloader in [old_reloader, new_reloader] {
++                if let NeedsToReload::Yes(pipeline_id, load_data) = reloader &&
++                    *id == browsing_context_id &&
++                    load_data.js_eval_result.is_some() &&
++                    !documents.contains(pipeline_id)
++                {
++                    documents.push(*pipeline_id);
++                }
++            }
++        }
++        documents
++    }
++
++    /// Experimental S1 change: crash recovery drops an inactive history entry whose document a
++    /// `javascript:` URL created. A traversal would rebuild that document from load data that
++    /// keeps the result, so the result would render again. If no entry can go, as for the
++    /// first document of a child frame, the entry's reload data drops the result instead.
++    fn drop_javascript_url_entry(
++        session_history: &mut crate::session_history::JointSessionHistory,
++        browsing_context_id: BrowsingContextId,
++        pipeline_id: PipelineId,
++        inside: Option<&dyn Fn(&SessionHistoryDiff) -> bool>,
++    ) {
++        if session_history.remove_document_entries(browsing_context_id, pipeline_id, inside) {
++            return;
++        }
++        let load_data = session_history
++            .past
++            .iter()
++            .chain(session_history.future.iter())
++            .find_map(|diff| match diff {
++                SessionHistoryDiff::BrowsingContext {
++                    old_reloader,
++                    new_reloader,
++                    ..
++                } => [old_reloader, new_reloader]
++                    .into_iter()
++                    .find_map(|reloader| match reloader {
++                        NeedsToReload::Yes(id, load_data) if *id == pipeline_id => {
++                            Some(load_data.clone())
++                        },
++                        _ => None,
++                    }),
++                _ => None,
++            });
++        if let Some(load_data) = load_data {
++            session_history.replace_reloader(
++                NeedsToReload::Yes(pipeline_id, load_data.clone()),
++                NeedsToReload::Yes(pipeline_id, Self::without_javascript_result(load_data)),
++            );
++        }
++    }
++
++    /// Experimental S1 helper: the browsing contexts nested inside a document, including those
++    /// inside the history documents of its child frames.
++    fn descendant_browsing_contexts(&self, pipeline_id: PipelineId) -> Vec<BrowsingContextId> {
++        let mut found = Vec::new();
++        let mut documents = vec![pipeline_id];
++        while let Some(document) = documents.pop() {
++            let Some(pipeline) = self.pipelines.get(&document) else {
++                continue;
++            };
++            for child in &pipeline.children {
++                if found.contains(child) {
++                    continue;
++                }
++                found.push(*child);
++                if let Some(context) = self.browsing_contexts.get(child) {
++                    documents.extend(context.pipelines.iter().copied());
++                }
++            }
++        }
++        found
      }
 
      fn handle_panic_in_webview(
-@@ -3058,6 +3477,41 @@
+@@ -3058,6 +3713,60 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
@@ -1375,6 +1700,25 @@
 +                    .replace_reloader(NeedsToReload::No(id), NeedsToReload::Yes(id, load_data));
 +            }
 +        }
++        // Experimental S1 change: no traversal may render a `javascript:` URL result again.
++        // Every top-level diff between a document's entries belongs to that document.
++        let top = BrowsingContextId::from(webview_id);
++        let active = self
++            .browsing_contexts
++            .get(&top)
++            .map(|context| context.pipeline_id);
++        if let Some(webview) = self.webviews.get_mut(&webview_id) {
++            for pipeline_id in Self::javascript_url_documents(&webview.session_history, top) {
++                if Some(pipeline_id) != active {
++                    Self::drop_javascript_url_entry(
++                        &mut webview.session_history,
++                        top,
++                        pipeline_id,
++                        None,
++                    );
++                }
++            }
++        }
 +        self.constellation_to_embedder_proxy
 +            .send(ConstellationToEmbedderMsg::DocumentLifecycle(
 +                webview_id,
@@ -1383,16 +1727,17 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3104,6 +3558,7 @@
+@@ -3104,7 +3813,8 @@
                      .unwrap_or_else(|| reason.clone()),
              ),
              creation_sandboxing_flag_set: SandboxingFlagSet::all(),
-+            crash_reload_sandboxing_flag_set: Some(old_load_data.creation_sandboxing_flag_set),
 -            ..old_load_data.clone()
++            crash_reload_sandboxing_flag_set: Some(old_load_data.creation_sandboxing_flag_set),
 +            ..Self::without_javascript_result(old_load_data.clone())
          };
 
-@@ -3402,6 +3857,11 @@
+         let is_private = false;
+@@ -3402,6 +4112,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -1404,7 +1749,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +3931,7 @@
+@@ -3471,7 +4186,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -1413,7 +1758,7 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -4947,6 +5407,29 @@
+@@ -4947,6 +5662,29 @@
                  return warn!("{}: Got reload event after closure", browsing_context_id);
              },
          };
@@ -1443,12 +1788,10 @@
          self.send_message_to_pipeline(
              pipeline_id,
              ScriptThreadMessage::Reload(pipeline_id),
-@@ -5838,12 +6321,67 @@
-                 }
-             }
+@@ -5840,10 +6578,65 @@
          }
-+    }
-+
+     }
+
 +    /// Experimental probe target: the newest top-level pipeline that has not activated a document.
 +    fn pending_top_level_pipeline(&self, webview_id: WebViewId) -> Option<&Pipeline> {
 +        let top = BrowsingContextId::from(webview_id);
@@ -1460,8 +1803,8 @@
 +            .rev()
 +            .find(|change| change.browsing_context_id == top)?;
 +        self.pipelines.get(&change.new_pipeline_id)
-     }
-
++    }
++
 +    /// Experimental probe target: the active pipeline of the newest child browsing context
 +    /// of the active top-level document.
 +    fn frame_pipeline(&self, webview_id: WebViewId) -> Option<&Pipeline> {
@@ -1513,18 +1856,19 @@
      /// Handle updating the size of a browsing context.
 --- a/servo-constellation/embedder.rs
 +++ b/servo-constellation/embedder.rs
-@@ -3,8 +3,8 @@
+@@ -3,8 +3,9 @@
   * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
  use embedder_traits::{
 -    InputEventOutcome, JSValue, JavaScriptEvaluationError, JavaScriptEvaluationId,
 -    MediaSessionEvent, NewWebViewDetails, TraversalId,
-+    DocumentJavaScriptResult, DocumentLifecycle, InputEventOutcome, JavaScriptEvaluationError,
-+    JavaScriptEvaluationId, MediaSessionEvent, NewWebViewDetails, TraversalId,
++    DocumentJavaScriptResult, DocumentLifecycle, FrameFailure, InputEventOutcome,
++    JavaScriptEvaluationError, JavaScriptEvaluationId, MediaSessionEvent, NewWebViewDetails,
++    TraversalId,
  };
  use servo_base::generic_channel::GenericSender;
  use servo_base::id::{PipelineId, WebViewId};
-@@ -32,8 +32,10 @@
+@@ -32,8 +33,12 @@
      /// finished with the given result.
      FinishJavaScriptEvaluation(
          JavaScriptEvaluationId,
@@ -1533,12 +1877,14 @@
      ),
 +    /// Top-document identity and readiness events, ordered with evaluation replies.
 +    DocumentLifecycle(WebViewId, DocumentLifecycle),
++    /// Experimental S1 notice: a failure stayed inside child frames of this view.
++    FrameFailure(WebViewId, FrameFailure),
      /// Whether or not to allow script to open a new tab/browser
      AllowOpeningWebView(WebViewId, GenericSender<Option<NewWebViewDetails>>),
      /// Whether or not to allow a pipeline to load a url.
 --- a/servo-constellation/tracing.rs
 +++ b/servo-constellation/tracing.rs
-@@ -61,6 +61,39 @@
+@@ -61,6 +61,45 @@
                  Self::LogEntry(..) => target!("LogEntry"),
                  Self::NewWebView(..) => target!("NewWebView"),
                  Self::CloseWebView(..) => target!("CloseWebView"),
@@ -1575,10 +1921,16 @@
 +                Self::PauseScriptForDocumentScopeProbe(..) => {
 +                    target!("PauseScriptForDocumentScopeProbe")
 +                }
++                Self::FrameIdsForDocumentScopeProbe(..) => {
++                    target!("FrameIdsForDocumentScopeProbe")
++                }
++                Self::FailFrameSendForDocumentScopeProbe(..) => {
++                    target!("FailFrameSendForDocumentScopeProbe")
++                }
                  Self::SetWebViewHasSystemFocus(..) => target!("SetWebViewHasSystemFocus"),
                  Self::ForwardInputEvent(_webview_id, event, ..) => event.log_target(),
                  Self::RefreshCursor(..) => target!("RefreshCursor"),
-@@ -181,7 +214,8 @@
+@@ -181,7 +220,8 @@
                  Self::ScriptLoadedURLInIFrame(..) => target!("ScriptLoadedURLInIFrame"),
                  Self::ScriptNewIFrame(..) => target!("ScriptNewIFrame"),
                  Self::CreateAuxiliaryWebView(..) => target!("ScriptNewAuxiliary"),
@@ -1664,7 +2016,7 @@
  use servo_base::id::{LCPCandidateID, MessagePortId, PipelineId, ScriptEventLoopId, WebViewId};
  use servo_config::prefs::PrefValue;
  use servo_url::{ImmutableOrigin, ServoUrl};
-@@ -72,6 +72,43 @@
+@@ -72,6 +72,56 @@
      NewWebView(ServoUrl, NewWebViewDetails),
      /// Close a top level browsing context.
      CloseWebView(WebViewId),
@@ -1705,10 +2057,23 @@
 +    ),
 +    /// Experimental execution barrier for deterministic cancellation probes.
 +    PauseScriptForDocumentScopeProbe(WebViewId, GenericSender<()>, GenericReceiver<()>),
++    /// Experimental read of the active top-level document's newest child frame. The reply is
++    /// `None` without such a frame. Otherwise it holds the frame's browsing context and its
++    /// newest pending pipeline, if any.
++    FrameIdsForDocumentScopeProbe(
++        WebViewId,
++        GenericSender<Option<(servo_base::id::BrowsingContextId, Option<PipelineId>)>>,
++    ),
++    /// Experimental send failure for the event loop of the active top-level document's newest
++    /// child frame. The constellation's channel to that event loop closes, and one message to
++    /// the frame's pipeline then fails to send. The reply is `None` without such a frame.
++    /// Otherwise it reports whether the frame runs in an event loop other than the top-level
++    /// document's.
++    FailFrameSendForDocumentScopeProbe(WebViewId, GenericSender<Option<bool>>),
      /// Set whether a WebView has system focus. This corresponds to the [HTML
      /// specification's] concept of "system focus" and is distinct from the browsing
      /// context or element that has focus within the WebView.
-@@ -97,7 +134,13 @@
+@@ -97,7 +147,13 @@
      PaintMetric(PipelineId, PaintMetricEvent),
      /// Evaluate a JavaScript string in the context of a `WebView`. When execution is complete or an
      /// error is encountered, a correpsonding message will be sent to the embedding layer.
@@ -1725,7 +2090,7 @@
      /// Sends the generated image key to the image cache associated with this pipeline.
 --- a/servo-embedder-traits/lib.rs
 +++ b/servo-embedder-traits/lib.rs
-@@ -1033,6 +1033,49 @@
+@@ -1033,6 +1033,71 @@
  #[derive(Clone, Copy, Deserialize, Eq, Hash, PartialEq, Serialize)]
  pub struct JavaScriptEvaluationId(pub usize);
 
@@ -1772,10 +2137,32 @@
 +    pub value: JSValue,
 +}
 +
++/// Experimental S1 notice: the engine contained a failure to child frames of a view.
++/// The view keeps its active top-level document and its scope. This notice revokes nothing
++/// and replaces nothing. It is distinct from a crash notification, which reports a failure of
++/// the view's own document. The engine sends one notice per surviving view and failure.
++#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
++pub struct FrameFailure {
++    /// The view's active top-level document when the engine handled the failure.
++    pub document: Option<DocumentIdentity>,
++    /// Each outermost failed frame. Each one then navigates to an error page.
++    pub frames: Vec<FailedFrame>,
++    /// The failure reason, as a crash notification would report it.
++    pub reason: String,
++    pub backtrace: Option<String>,
++}
++
++/// A child frame and the failed pipeline that it showed or was loading.
++#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
++pub struct FailedFrame {
++    pub browsing_context_id: servo_base::id::BrowsingContextId,
++    pub pipeline_id: PipelineId,
++}
++
  /// A JavaScript value produced by evaluation of a script.
  #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
  pub enum JSValue {
-@@ -1081,6 +1124,10 @@
+@@ -1081,6 +1146,10 @@
  /// An error that happens when trying to evaluate JavaScript on a `WebView`.
  #[derive(Clone, Debug, Deserialize, EnumMessage, PartialEq, Serialize)]
  pub enum JavaScriptEvaluationError {
@@ -2348,7 +2735,33 @@
      /// Preferences were updated in the parent process.
 --- a/servo-constellation/event_loop.rs
 +++ b/servo-constellation/event_loop.rs
-@@ -182,7 +182,7 @@
+@@ -6,6 +6,7 @@
+ //! view of a script thread. When an `EventLoop` is dropped, an `ExitScriptThread`
+ //! message is sent to the script thread, asking it to shut down.
+
++use std::cell::Cell;
+ use std::hash::Hash;
+ use std::marker::PhantomData;
+ use std::rc::Rc;
+@@ -35,6 +36,9 @@
+     /// on the other side of the process boundary. When running in the same process, the
+     /// BackgroundHangMonitor is shared among all [`EventLoop`]s so this will be `None`.
+     background_hang_monitor_sender: Option<GenericSender<BackgroundHangMonitorControlMsg>>,
++    /// Experimental S1 probe: once set, every send fails as if the script thread's receiver
++    /// were gone. `Drop` still asks the script thread to exit through the original channel.
++    closed_for_document_scope_probe: Cell<bool>,
+     dont_send_or_sync: PhantomData<Rc<()>>,
+ }
+
+@@ -150,6 +154,7 @@
+             script_chan,
+             id,
+             background_hang_monitor_sender: None,
++            closed_for_document_scope_probe: Cell::new(false),
+             dont_send_or_sync: PhantomData,
+         }
+     }
+@@ -182,12 +187,13 @@
          let crossbeam_receiver = lifeline_receiver.route_preserving_errors();
          constellation
              .process_manager
@@ -2357,6 +2770,34 @@
 
          Ok(Self {
              script_chan,
+             id,
+             background_hang_monitor_sender: Some(background_hand_monitor_sender),
++            closed_for_document_scope_probe: Cell::new(false),
+             dont_send_or_sync: PhantomData,
+         })
+     }
+@@ -198,9 +204,21 @@
+
+     /// Send a message to the event loop.
+     pub fn send(&self, msg: ScriptThreadMessage) -> Result<(), SendError> {
++        if self.closed_for_document_scope_probe.get() {
++            // The error comes from a real channel whose receiver is already dropped.
++            let (closed, receiver) =
++                servo_base::generic_channel::channel().ok_or(SendError::Disconnected)?;
++            drop(receiver);
++            return closed.send(msg);
++        }
+         self.script_chan.send(msg)
+     }
+
++    /// Experimental S1 probe: make every later send to this event loop fail.
++    pub(crate) fn close_for_document_scope_probe(&self) {
++        self.closed_for_document_scope_probe.set(true);
++    }
++
+     /// If this is [`EventLoop`] is in another process, send a message to its `BackgroundHangMonitor`,
+     /// otherwise do nothing.
+     pub(crate) fn send_message_to_background_hang_monitor(
 --- a/servo-constellation/process_manager.rs
 +++ b/servo-constellation/process_manager.rs
 @@ -8,6 +8,7 @@
@@ -2444,3 +2885,100 @@
 
      let mut response = match response {
          Some(response) => response,
+--- a/servo-constellation/session_history.rs
++++ b/servo-constellation/session_history.rs
+@@ -104,6 +104,82 @@
+             _ => true,
+         });
+     }
++
++    /// Experimental S1 change: remove the entries in which `browsing_context_id` shows the
++    /// document of `pipeline_id`, unless the current entry shows it. A diff between those
++    /// entries goes too if `inside` selects it as part of that document. The diff that leaves
++    /// the document then starts from the entry before the document. `inside` is `None` for a
++    /// top-level browsing context. There every such diff is part of the document, and the
++    /// first entries of the history can go. Returns whether any entry went.
++    pub fn remove_document_entries(
++        &mut self,
++        browsing_context_id: BrowsingContextId,
++        pipeline_id: PipelineId,
++        inside: Option<&dyn Fn(&SessionHistoryDiff) -> bool>,
++    ) -> bool {
++        let shows = |reloader: &NeedsToReload| match reloader {
++            NeedsToReload::No(id) | NeedsToReload::Yes(id, _) => *id == pipeline_id,
++        };
++        let changes = |diff: &SessionHistoryDiff, enter: bool| match diff {
++            SessionHistoryDiff::BrowsingContext {
++                browsing_context_id: id,
++                old_reloader,
++                new_reloader,
++            } => *id == browsing_context_id && shows(if enter { new_reloader } else { old_reloader }),
++            _ => false,
++        };
++        // Oldest diff first. Diff `i` leads from entry `i` to entry `i + 1`.
++        let current = self.past.len();
++        let mut diffs: Vec<_> = self
++            .past
++            .drain(..)
++            .chain(self.future.drain(..).rev())
++            .collect();
++        let enters = diffs.iter().position(|diff| changes(diff, true));
++        let start = enters.map_or(0, |index| index + 1);
++        let leaves = diffs[start..]
++            .iter()
++            .position(|diff| changes(diff, false))
++            .map(|index| start + index);
++        // Entries `start..=end` show the document.
++        let end = leaves.unwrap_or(diffs.len());
++        let removable = (enters.is_some() || (leaves.is_some() && inside.is_none())) &&
++            !(start..=end).contains(&current);
++        let old = enters.and_then(|index| match &diffs[index] {
++            SessionHistoryDiff::BrowsingContext { old_reloader, .. } => Some(old_reloader.clone()),
++            _ => None,
++        });
++        let mut kept = Vec::with_capacity(diffs.len());
++        let mut new_current = current;
++        for (index, mut diff) in diffs.drain(..).enumerate() {
++            let remove = removable &&
++                if Some(index) == enters {
++                    true
++                } else if Some(index) == leaves {
++                    old.is_none()
++                } else {
++                    (start..end).contains(&index) && inside.is_none_or(|inside| inside(&diff))
++                };
++            if remove {
++                if index < current {
++                    new_current -= 1;
++                }
++                continue;
++            }
++            if removable &&
++                Some(index) == leaves &&
++                let (Some(old), SessionHistoryDiff::BrowsingContext { old_reloader, .. }) =
++                    (&old, &mut diff)
++            {
++                *old_reloader = old.clone();
++            }
++            kept.push(diff);
++        }
++        self.future = kept.split_off(new_current);
++        self.future.reverse();
++        self.past = kept;
++        removable
++    }
+ }
+
+ /// Represents a pending change in a session history, that will be applied
+--- a/servo/lib.rs
++++ b/servo/lib.rs
+@@ -86,7 +86,8 @@
+ // See <https://github.com/servo/servo/issues/40950>.
+ pub use resources;
+ pub use servo_base::generic_channel::GenericSender;
+-pub use servo_base::id::WebViewId;
++// Experimental S1 change: frame failure notices name frames and pipelines.
++pub use servo_base::id::{BrowsingContextId, PipelineId, WebViewId};
+ pub use servo_config::opts::{DiagnosticsLogging, DiagnosticsLoggingOption, Opts, OutputOptions};
+ pub use servo_config::prefs::{PrefValue, Preferences, UserAgentPlatform};
+ pub use servo_config::{opts, pref, prefs};

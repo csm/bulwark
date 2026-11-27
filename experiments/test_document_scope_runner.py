@@ -178,11 +178,11 @@ class DocumentScopeRunnerTests(unittest.TestCase):
 
     def test_documented_case_counts(self):
         # The scope guide and handoff state these counts. Keep them in step with the markers.
-        self.assertEqual(len(runner.DOCUMENT_CASES), 51)
-        self.assertEqual(len(runner.FRAME_CASES), 8)
+        self.assertEqual(len(runner.DOCUMENT_CASES), 52)
+        self.assertEqual(len(runner.FRAME_CASES), 9)
         self.assertEqual(len(runner.PROCESS_CASES), 28)
-        self.assertEqual(len(runner.SHARED_CASES), 59)
-        self.assertEqual(len(runner.MULTIPROCESS_CASES), 87)
+        self.assertEqual(len(runner.SHARED_CASES), 61)
+        self.assertEqual(len(runner.MULTIPROCESS_CASES), 89)
 
     def test_timeout_stops_content_processes(self):
         with tempfile.TemporaryDirectory() as directory:

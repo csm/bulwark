@@ -81,6 +81,10 @@ Document replacement returns `:stale-document`. A closed view retains the existi
 Capability denial returns `:capability-denied` with the operation and required capability.
 Cancelled, timed-out, or revoked requests cannot allocate nodes or subscriptions through late callbacks.
 Mutation cancellation does not promise rollback after execution.
+A failure that stays inside a child frame does not return `:stale-document` for the top document.
+The engine's frame failure notice names the view's document, each failed frame, and the reason.
+The host keeps that document's handles and subscriptions. It may show an error state for the frame.
+The notice is not a lifecycle event and grants no authority. The [frame failure notice](phase-3-document-scope.md#frame-failure-notice) records the prototype contract.
 
 An event batch uses this proposed form:
 

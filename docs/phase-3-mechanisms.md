@@ -189,7 +189,7 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and fifty-nine shared regression cases.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and sixty-one shared regression cases.
 Multiprocess mode adds twenty-eight cases, for unexpected content-process exit, a forced kill, shared-process teardown, pending-process failure, process loss during parsing, process loss of a child frame's pending pipeline, and process loss in three more frame paths.
 The cases run in three parts, each in its own engine process.
 The prototype checks document incarnations at execution and after serialization.
@@ -246,6 +246,9 @@ A view whose own top-level document ran in the failed event loop still fails, so
 A frame's crash load always fetches the error page, so a `srcdoc` frame does not render its markup again.
 Containment also holds for a frame's first navigation, a failed frame with a healthy pending navigation, and frame history after the failure.
 These paths need no engine change. Back inside the frame rebuilds a closed history entry, and forward restores the error page.
+A contained failure now sends one frame failure notice for the surviving view. The notice revokes nothing.
+A failed send to a frame's pipeline now stays inside that frame. Servo's send-error path had replaced the whole view.
+Crash recovery now removes an inactive `javascript:` URL history entry, so back and forward cannot render its result again.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.

@@ -25,7 +25,8 @@ DOCUMENT_CASES = {
     "headers-before-parse-failure", "parser-blocked-failure", "about-blank-failure",
     "about-blank-write-failure", "srcdoc-parser-blocked-failure",
     "document-write-parser-blocked-failure", "document-open-write-failure",
-    "javascript-url-crash-recovery", "cross-site-parser-blocked-failure",
+    "javascript-url-crash-recovery", "javascript-url-history-crash-recovery",
+    "cross-site-parser-blocked-failure",
     "final-handle-release", "release-before-document-activation", "engine-shutdown-cleanup",
     "result-callback-panic", "lifecycle-callback-panics", "release-callback-panics",
     "queued-engine-cancellation", "completed-engine-cancellation",
@@ -38,7 +39,7 @@ FRAME_CASES = {
     "cross-site-subframe-parser-blocked-failure", "sandboxed-srcdoc-parser-blocked-failure",
     "same-site-frame-pending-navigation-failure", "cross-site-frame-pending-navigation-failure",
     "cross-site-lone-frame-pending-navigation-failure", "frame-initial-navigation-failure",
-    "frame-healthy-pending-navigation-failure", "frame-history-failure",
+    "frame-healthy-pending-navigation-failure", "frame-history-failure", "frame-send-failure",
 }
 PROCESS_CASES = {
     "content-process-failure", "content-process-kill", "shared-process-close",
@@ -153,6 +154,7 @@ def main():
                   "script-thread failure after response headers and in about:blank, srcdoc, "
                   "document.write, and document.open() construction, "
                   "crash recovery of a javascript: URL document to an error page without its result, "
+                  "removal of an inactive javascript: URL history entry during crash recovery, "
                   "script-thread failure while a cross-site navigation, a cross-site subframe, "
                   "or a sandboxed srcdoc child parses in its own event loop, "
                   "content-process exit or kill while a cross-site document, a cross-site subframe, "
@@ -161,8 +163,9 @@ def main():
                   "cross-site child frame's navigation waits for its response headers, "
                   "containment of a child frame's failure to that frame when the parent's own "
                   "top-level document runs in another event loop, including a frame's first "
-                  "navigation, a failed frame with a healthy pending navigation, and frame "
-                  "history after a contained failure, "
+                  "navigation, a failed frame with a healthy pending navigation, frame "
+                  "history after a contained failure, and a failed send to a frame's pipeline, "
+                  "with one frame failure notice for each surviving view, "
                   "callback and delegate unwind safety, and constellation loss in a separate engine. "
                   "Remaining replacement audits remain open."),
         "cases": [],
