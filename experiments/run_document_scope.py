@@ -135,6 +135,8 @@ def main():
                   "or a sandboxed srcdoc child parses, "
                   "script-thread failure and content-process exit or kill while a same-site or "
                   "cross-site child frame's navigation waits for its response headers, "
+                  "containment of a child frame's failure to that frame when the parent's own "
+                  "top-level document runs in another event loop, "
                   "callback and delegate unwind safety, and constellation loss in a separate engine. "
                   "Remaining replacement audits remain open."),
         "cases": [],

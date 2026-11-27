@@ -422,7 +422,7 @@
      }
  }
 
-@@ -733,8 +744,307 @@
+@@ -733,8 +744,325 @@
          script: T,
          callback: impl FnOnce(Result<JSValue, JavaScriptEvaluationError>) + 'static,
      ) {
@@ -512,6 +512,24 @@
 +        );
 +        let Ok(reply) = reply.try_recv_timeout(std::time::Duration::from_secs(5)) else {
 +            panic!("Constellation did not acknowledge the pending frame crash probe");
++        };
++        reply
++    }
++
++    /// Experimental instrumentation: read the active top-level document's newest child frame.
++    /// Returns `None` without such a frame. Otherwise returns the frame's current pipeline,
++    /// whether that pipeline is live, its crash details, and whether the frame has a pending
++    /// pipeline. Page JavaScript cannot supply these values.
++    #[doc(hidden)]
++    pub fn frame_state_for_document_scope_probe(
++        &self,
++    ) -> Option<(servo_base::id::PipelineId, bool, Option<String>, bool)> {
++        let (sent, reply) = servo_base::generic_channel::channel().unwrap();
++        self.servo().constellation_proxy().send(
++            EmbedderToConstellationMessage::FrameStateForDocumentScopeProbe(self.id(), sent),
++        );
++        let Ok(reply) = reply.try_recv_timeout(std::time::Duration::from_secs(5)) else {
++            panic!("Constellation did not answer the frame state probe");
 +        };
 +        reply
 +    }
@@ -809,7 +827,7 @@
              #[cfg(not(feature = "multiprocess"))]
              Request::RemoveProcess(_) => {},
          }
-@@ -1342,6 +1349,133 @@
+@@ -1342,6 +1349,156 @@
                  self.handle_new_top_level_browsing_context(url, new_webview_details);
              },
              // Close a top level browsing context.
@@ -835,6 +853,29 @@
 +            }
 +            EmbedderToConstellationMessage::FlushForDocumentScopeProbe(ack) => {
 +                let _ = ack.send(());
++            }
++            EmbedderToConstellationMessage::FrameStateForDocumentScopeProbe(webview_id, reply) => {
++                let state = self
++                    .browsing_contexts
++                    .get(&BrowsingContextId::from(webview_id))
++                    .and_then(|top| self.pipelines.get(&top.pipeline_id)?.children.last())
++                    .and_then(|child| self.browsing_contexts.get(child))
++                    .map(|context| {
++                        let pipeline = self.pipelines.get(&context.pipeline_id);
++                        let pending = self.webviews.get(&webview_id).is_some_and(|webview| {
++                            webview
++                                .pending_changes
++                                .iter()
++                                .any(|change| change.browsing_context_id == context.id)
++                        });
++                        (
++                            context.pipeline_id,
++                            pipeline.is_some(),
++                            pipeline.and_then(|pipeline| pipeline.load_data.crash.clone()),
++                            pending,
++                        )
++                    });
++                let _ = reply.send(state);
 +            }
 +            EmbedderToConstellationMessage::ExitContentProcessForDocumentScopeProbe(webview_id, entered, resume, exit) => {
 +                assert!(opts::get().multiprocess, "Process exit probe requires multiprocess mode");
@@ -943,7 +984,7 @@
              EmbedderToConstellationMessage::CloseWebView(webview_id) => {
                  self.handle_close_top_level_browsing_context(webview_id);
              },
-@@ -1408,10 +1542,18 @@
+@@ -1408,10 +1565,18 @@
              EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
@@ -964,7 +1005,7 @@
              EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
                  self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
              },
-@@ -1576,6 +1718,8 @@
+@@ -1576,6 +1741,8 @@
          &mut self,
          webview_id: WebViewId,
          evaluation_id: JavaScriptEvaluationId,
@@ -973,7 +1014,7 @@
          script: String,
      ) {
          let browsing_context_id = BrowsingContextId::from(webview_id);
-@@ -1590,6 +1734,14 @@
+@@ -1590,6 +1757,14 @@
              );
              return;
          };
@@ -988,7 +1029,7 @@
 
          if pipeline
              .event_loop
-@@ -1597,6 +1749,8 @@
+@@ -1597,6 +1772,8 @@
                  webview_id,
                  pipeline.id,
                  evaluation_id,
@@ -997,7 +1038,7 @@
                  script,
              ))
              .is_err()
-@@ -1795,8 +1949,37 @@
+@@ -1795,8 +1972,37 @@
                  self.handle_joint_session_history_length(webview_id, response_sender);
              },
              // Notification that the new document is ready to become active
@@ -1036,7 +1077,7 @@
              },
              // Update pipeline url after redirections
              ScriptToConstellationMessage::SetFinalUrl(final_url) => {
-@@ -2025,6 +2208,20 @@
+@@ -2025,6 +2231,20 @@
                      .send(mem::ProfilerMsg::Report(sender));
              },
              ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
@@ -1057,7 +1098,7 @@
                  self.handle_finish_javascript_evaluation(evaluation_id, result)
              },
              ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
-@@ -2569,7 +2766,7 @@
+@@ -2569,7 +2789,7 @@
 
                      if let Ok(process) = content.spawn_multiprocess() {
                          let crossbeam_receiver = receiver.route_preserving_errors();
@@ -1066,7 +1107,7 @@
                      } else {
                          return warn!("Failed to spawn process for SW manager.");
                      }
-@@ -2968,11 +3165,21 @@
+@@ -2968,11 +3188,21 @@
      fn handle_pipeline_exited(&mut self, pipeline_id: PipelineId, exit_source: PipelineExitSource) {
          debug!("{}: Exited", pipeline_id);
          self.remove_worker_animation_frame_providers_for_pipeline(pipeline_id);
@@ -1088,7 +1129,7 @@
          // Clean up any registered interests for this pipeline.
          self.pipeline_interests.retain(|_, set| {
              set.remove(&pipeline_id);
-@@ -2987,6 +3194,34 @@
+@@ -2987,6 +3217,34 @@
              pipeline.id,
              exit_source,
          ));
@@ -1123,7 +1164,171 @@
      }
 
      #[servo_tracing::instrument(skip_all)]
-@@ -3058,6 +3293,41 @@
+@@ -3034,7 +3292,21 @@
+             }
+         }
+
+-        for webview_id in webview_ids {
++        // Experimental S1 change: a view fails only if its own top-level document, or its
++        // pending top-level navigation, ran in the failed event loop. In every other view,
++        // the failure stays inside each affected child frame.
++        let (failed_webviews, contained_webviews): (HashSet<_>, HashSet<_>) = webview_ids
++            .into_iter()
++            .partition(|webview_id| self.top_level_failed(*webview_id, event_loop_id));
++        let failed_frames = self.contained_failed_frames(
++            &contained_webviews,
++            &crashed_pipelines,
++            event_loop_id,
++            &reason,
++            &backtrace,
++        );
++
++        for webview_id in failed_webviews {
+             self.handle_panic_in_webview(webview_id, &reason, &backtrace);
+         }
+
+@@ -3050,6 +3322,140 @@
+             // confirmation from the event loop.
+             self.handle_pipeline_exited(pipeline_id, PipelineExitSource::all());
+         }
++
++        // Each failed frame navigates to the crash page through its parent's script thread,
++        // so the parent's frame element accepts the new pipeline as its own navigation.
++        for (browsing_context_id, parent_pipeline_id, load_data) in failed_frames {
++            if !self.browsing_contexts.contains_key(&browsing_context_id) {
++                continue;
++            }
++            let Some(parent) = self.pipelines.get(&parent_pipeline_id) else {
++                continue;
++            };
++            let _ = parent.event_loop.send(ScriptThreadMessage::NavigateIframe(
++                parent_pipeline_id,
++                browsing_context_id,
++                load_data,
++                NavigationHistoryBehavior::Replace,
++                TargetSnapshotParams::default(),
++            ));
++        }
++    }
++
++    /// Experimental S1 policy: whether a failure of this event loop is a failure of the view.
++    /// A view without a top-level browsing context has no document that could survive.
++    fn top_level_failed(&self, webview_id: WebViewId, event_loop_id: ScriptEventLoopId) -> bool {
++        let top = BrowsingContextId::from(webview_id);
++        let Some(context) = self.browsing_contexts.get(&top) else {
++            return true;
++        };
++        let in_failed_loop = |pipeline_id: &PipelineId| {
++            self.pipelines
++                .get(pipeline_id)
++                .is_none_or(|pipeline| pipeline.event_loop.id() == event_loop_id)
++        };
++        in_failed_loop(&context.pipeline_id) ||
++            self.webviews.get(&webview_id).is_some_and(|webview| {
++                webview.pending_changes.iter().any(|change| {
++                    change.browsing_context_id == top && in_failed_loop(&change.new_pipeline_id)
++                })
++            })
++    }
++
++    /// Experimental S1 policy: find the outermost child frames of surviving views whose active
++    /// or pending pipeline ran in the failed event loop. Each gets a crash load of its failed
++    /// pipeline. This also closes the frame's other pending pipelines. Inactive history entries
++    /// in the failed event loop are marked for reload before they close.
++    fn contained_failed_frames(
++        &mut self,
++        contained_webviews: &HashSet<WebViewId>,
++        crashed_pipelines: &[PipelineId],
++        event_loop_id: ScriptEventLoopId,
++        reason: &str,
++        backtrace: &Option<String>,
++    ) -> Vec<(BrowsingContextId, PipelineId, LoadData)> {
++        let mut frames: Vec<(BrowsingContextId, PipelineId, LoadData)> = Vec::new();
++        let mut history = Vec::new();
++        for pipeline_id in crashed_pipelines {
++            let Some(pipeline) = self.pipelines.get(pipeline_id) else {
++                continue;
++            };
++            let Some(webview) = self.webviews.get(&pipeline.webview_id) else {
++                continue;
++            };
++            if !contained_webviews.contains(&pipeline.webview_id) {
++                continue;
++            }
++            // A pending pipeline that creates a new browsing context has no frame to keep.
++            let Some(context) = self.browsing_contexts.get(&pipeline.browsing_context_id) else {
++                continue;
++            };
++            if context.pipeline_id != *pipeline_id && !webview.pipeline_is_pending(*pipeline_id) {
++                if let Some(load_data) = self.refresh_load_data(*pipeline_id) {
++                    history.push((pipeline.webview_id, *pipeline_id, load_data));
++                }
++                continue;
++            }
++            // A frame inside a failed document closes with that document.
++            let Some(parent_pipeline_id) = context.parent_pipeline_id else {
++                continue;
++            };
++            if self
++                .pipelines
++                .get(&parent_pipeline_id)
++                .is_none_or(|parent| parent.event_loop.id() == event_loop_id) ||
++                frames.iter().any(|(id, ..)| *id == context.id)
++            {
++                continue;
++            }
++            let Some(old_load_data) = self.refresh_load_data(*pipeline_id) else {
++                continue;
++            };
++            frames.push((
++                context.id,
++                parent_pipeline_id,
++                LoadData {
++                    crash: Some(
++                        backtrace
++                            .clone()
++                            .map(|backtrace| format!("{reason}\n{backtrace}"))
++                            .unwrap_or_else(|| reason.to_owned()),
++                    ),
++                    creation_sandboxing_flag_set: SandboxingFlagSet::all(),
++                    crash_reload_sandboxing_flag_set: Some(
++                        old_load_data.creation_sandboxing_flag_set,
++                    ),
++                    ..old_load_data
++                },
++            ));
++        }
++        for (webview_id, pipeline_id, load_data) in history {
++            if let Some(webview) = self.webviews.get_mut(&webview_id) {
++                webview.session_history.replace_reloader(
++                    NeedsToReload::No(pipeline_id),
++                    NeedsToReload::Yes(pipeline_id, load_data),
++                );
++            }
++        }
++        // A healthy pending navigation in a failed frame must not replace the crash page.
++        for (browsing_context_id, ..) in &frames {
++            let pending: Vec<_> = contained_webviews
++                .iter()
++                .filter_map(|webview_id| self.webviews.get(webview_id))
++                .flat_map(|webview| webview.pending_changes.iter())
++                .filter(|change| change.browsing_context_id == *browsing_context_id)
++                .map(|change| change.new_pipeline_id)
++                .filter(|pipeline_id| !crashed_pipelines.contains(pipeline_id))
++                .collect();
++            for pipeline_id in pending {
++                self.close_pipeline(
++                    pipeline_id,
++                    DiscardBrowsingContext::No,
++                    ExitPipelineMode::Force,
++                );
++            }
++        }
++        frames
+     }
+
+     fn handle_panic_in_webview(
+@@ -3058,6 +3464,41 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
@@ -1165,7 +1370,7 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3104,6 +3374,7 @@
+@@ -3104,6 +3545,7 @@
                      .unwrap_or_else(|| reason.clone()),
              ),
              creation_sandboxing_flag_set: SandboxingFlagSet::all(),
@@ -1173,7 +1378,7 @@
              ..old_load_data.clone()
          };
 
-@@ -3402,6 +3673,11 @@
+@@ -3402,6 +3844,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -1185,7 +1390,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +3747,7 @@
+@@ -3471,7 +3918,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -1194,7 +1399,7 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -4947,6 +5223,29 @@
+@@ -4947,6 +5394,29 @@
                  return warn!("{}: Got reload event after closure", browsing_context_id);
              },
          };
@@ -1224,7 +1429,7 @@
          self.send_message_to_pipeline(
              pipeline_id,
              ScriptThreadMessage::Reload(pipeline_id),
-@@ -5838,12 +6137,67 @@
+@@ -5838,12 +6308,67 @@
                  }
              }
          }
@@ -1319,7 +1524,7 @@
      /// Whether or not to allow a pipeline to load a url.
 --- a/servo-constellation/tracing.rs
 +++ b/servo-constellation/tracing.rs
-@@ -61,6 +61,36 @@
+@@ -61,6 +61,39 @@
                  Self::LogEntry(..) => target!("LogEntry"),
                  Self::NewWebView(..) => target!("NewWebView"),
                  Self::CloseWebView(..) => target!("CloseWebView"),
@@ -1350,13 +1555,16 @@
 +                    target!("ExitPendingFrameContentProcessForDocumentScopeProbe")
 +                }
 +                Self::FlushForDocumentScopeProbe(..) => target!("FlushForDocumentScopeProbe"),
++                Self::FrameStateForDocumentScopeProbe(..) => {
++                    target!("FrameStateForDocumentScopeProbe")
++                }
 +                Self::PauseScriptForDocumentScopeProbe(..) => {
 +                    target!("PauseScriptForDocumentScopeProbe")
 +                }
                  Self::SetWebViewHasSystemFocus(..) => target!("SetWebViewHasSystemFocus"),
                  Self::ForwardInputEvent(_webview_id, event, ..) => event.log_target(),
                  Self::RefreshCursor(..) => target!("RefreshCursor"),
-@@ -181,7 +211,8 @@
+@@ -181,7 +214,8 @@
                  Self::ScriptLoadedURLInIFrame(..) => target!("ScriptLoadedURLInIFrame"),
                  Self::ScriptNewIFrame(..) => target!("ScriptNewIFrame"),
                  Self::CreateAuxiliaryWebView(..) => target!("ScriptNewAuxiliary"),
@@ -1442,7 +1650,7 @@
  use servo_base::id::{LCPCandidateID, MessagePortId, PipelineId, ScriptEventLoopId, WebViewId};
  use servo_config::prefs::PrefValue;
  use servo_url::{ImmutableOrigin, ServoUrl};
-@@ -72,6 +72,36 @@
+@@ -72,6 +72,43 @@
      NewWebView(ServoUrl, NewWebViewDetails),
      /// Close a top level browsing context.
      CloseWebView(WebViewId),
@@ -1474,12 +1682,19 @@
 +    ExitPendingFrameContentProcessForDocumentScopeProbe(WebViewId, GenericSender<u32>, GenericReceiver<()>, bool),
 +    /// Acknowledge that preceding embedder messages reached the constellation.
 +    FlushForDocumentScopeProbe(GenericSender<()>),
++    /// Experimental read of the active top-level document's newest child frame. The reply is
++    /// `None` without such a frame. Otherwise it holds the frame's current pipeline, whether that
++    /// pipeline is live, its crash details, and whether the frame has a pending pipeline.
++    FrameStateForDocumentScopeProbe(
++        WebViewId,
++        GenericSender<Option<(PipelineId, bool, Option<String>, bool)>>,
++    ),
 +    /// Experimental execution barrier for deterministic cancellation probes.
 +    PauseScriptForDocumentScopeProbe(WebViewId, GenericSender<()>, GenericReceiver<()>),
      /// Set whether a WebView has system focus. This corresponds to the [HTML
      /// specification's] concept of "system focus" and is distinct from the browsing
      /// context or element that has focus within the WebView.
-@@ -97,7 +127,13 @@
+@@ -97,7 +134,13 @@
      PaintMetric(PipelineId, PaintMetricEvent),
      /// Evaluate a JavaScript string in the context of a `WebView`. When execution is complete or an
      /// error is encountered, a correpsonding message will be sent to the embedding layer.
@@ -1947,7 +2162,28 @@
              ))
              .unwrap();
 
-@@ -4522,6 +4695,8 @@
+@@ -4084,12 +4257,18 @@
+         };
+
+         let url_str = incomplete.load_data.url.as_str();
+-        if url_str == "about:blank" || incomplete.load_data.js_eval_result.is_some() {
++        // Experimental S1 change: a child frame's crash load always fetches the error page.
++        // The synchronous loads below would ignore the crash and render page content again.
++        let frame_crash =
++            incomplete.load_data.crash.is_some() && incomplete.parent_info.is_some();
++        if !frame_crash &&
++            (url_str == "about:blank" || incomplete.load_data.js_eval_result.is_some())
++        {
+             let source_origin = preserved_origin().or(origin_from_snapshot());
+             self.start_synchronous_page_load(cx, incomplete, source_origin);
+             return;
+         }
+-        if url_str == "about:srcdoc" {
++        if !frame_crash && url_str == "about:srcdoc" {
+             let source_origin = preserved_origin().or(origin_from_snapshot());
+             self.page_load_about_srcdoc(cx, incomplete, source_origin);
+             return;
+@@ -4522,6 +4701,8 @@
          webview_id: WebViewId,
          pipeline_id: PipelineId,
          evaluation_id: JavaScriptEvaluationId,
@@ -1956,7 +2192,7 @@
          script: String,
          cx: &mut js::context::JSContext,
      ) {
-@@ -4537,10 +4712,42 @@
+@@ -4537,10 +4718,42 @@
              return;
          };
 
@@ -1999,7 +2235,7 @@
          rooted!(&in(cx) let mut return_value = UndefinedValue());
          if let Err(err) = global_scope.evaluate_js_on_global(
              cx,
-@@ -4549,6 +4756,11 @@
+@@ -4549,6 +4762,11 @@
              None, // No known `introductionType` for JS code from embedder
              Some(return_value.handle_mut()),
          ) {
@@ -2011,7 +2247,7 @@
              _ = self.senders.pipeline_to_constellation_sender.send((
                  webview_id,
                  pipeline_id,
-@@ -4558,6 +4770,19 @@
+@@ -4558,6 +4776,19 @@
          };
 
          let result = jsval_to_webdriver(cx, global_scope, return_value.handle());

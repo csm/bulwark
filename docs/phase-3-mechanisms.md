@@ -235,12 +235,13 @@ Crash recovery of a `javascript:` URL document renders its result again, with it
 Script-thread unwinds, child exit, and child kill now cover a parsing cross-site document and a parsing cross-site subframe in their own event loops.
 A script-thread unwind also covers a parsing sandboxed `srcdoc` child, which Servo always places in a new event loop.
 Servo activates a top-level document at its response headers, so no pending top-level document parses.
-A child frame's failure replaces the whole view, including a healthy parent in another event loop, and revokes other views in the child's event loop.
-Views whose pipelines all run in other event loops keep their scope. The engine change adds only frame probes.
-Child exit and kill also cover the parsing sandboxed `srcdoc` child, with the same scope results as its unwind.
+Child exit and kill also cover the parsing sandboxed `srcdoc` child.
 Script-thread unwinds, child exit, and child kill now cover a child frame's pending navigation before its response headers.
 The pending pipeline shares the parent's event loop, joins a child-site popup's event loop, or runs alone in a new event loop.
-The failure of its event loop replaces the whole view in each layout. Other views in that event loop also lose scope.
+Upstream recovery replaced the whole view after a child frame's failure, including a healthy parent in another event loop.
+The patch now keeps such a parent's document and scope. Only the failed frame shows Servo's error page.
+A view whose own top-level document ran in the failed event loop still fails, so one failure can notify several views.
+A frame's crash load always fetches the error page, so a `srcdoc` frame does not render its markup again.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.
