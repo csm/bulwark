@@ -1187,7 +1187,7 @@
              self.handle_panic_in_webview(webview_id, &reason, &backtrace);
          }
 
-@@ -3050,6 +3322,140 @@
+@@ -3050,6 +3322,153 @@
              // confirmation from the event loop.
              self.handle_pipeline_exited(pipeline_id, PipelineExitSource::all());
          }
@@ -1294,7 +1294,7 @@
 +                    crash_reload_sandboxing_flag_set: Some(
 +                        old_load_data.creation_sandboxing_flag_set,
 +                    ),
-+                    ..old_load_data
++                    ..Self::without_javascript_result(old_load_data)
 +                },
 +            ));
 +        }
@@ -1325,10 +1325,23 @@
 +            }
 +        }
 +        frames
++    }
++
++    /// Experimental S1 change: a crash load drops a `javascript:` URL result.
++    /// The script thread would otherwise render that result again instead of the error page,
++    /// and a reload from the crash page would render it once more. Without the result, the
++    /// crash load fetches the error page, and a reload fetches the document's URL, as a
++    /// script-thread reload does. The evaluation stored the result's `Content-Type` in the
++    /// request headers, so the crash load drops that header too.
++    fn without_javascript_result(mut load_data: LoadData) -> LoadData {
++        if load_data.js_eval_result.take().is_some() {
++            load_data.headers.remove("content-type");
++        }
++        load_data
      }
 
      fn handle_panic_in_webview(
-@@ -3058,6 +3464,41 @@
+@@ -3058,6 +3477,41 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
@@ -1370,15 +1383,16 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3104,6 +3545,7 @@
+@@ -3104,6 +3558,7 @@
                      .unwrap_or_else(|| reason.clone()),
              ),
              creation_sandboxing_flag_set: SandboxingFlagSet::all(),
 +            crash_reload_sandboxing_flag_set: Some(old_load_data.creation_sandboxing_flag_set),
-             ..old_load_data.clone()
+-            ..old_load_data.clone()
++            ..Self::without_javascript_result(old_load_data.clone())
          };
 
-@@ -3402,6 +3844,11 @@
+@@ -3402,6 +3857,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -1390,7 +1404,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +3918,7 @@
+@@ -3471,7 +3931,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -1399,7 +1413,7 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -4947,6 +5394,29 @@
+@@ -4947,6 +5407,29 @@
                  return warn!("{}: Got reload event after closure", browsing_context_id);
              },
          };
@@ -1429,7 +1443,7 @@
          self.send_message_to_pipeline(
              pipeline_id,
              ScriptThreadMessage::Reload(pipeline_id),
-@@ -5838,12 +6308,67 @@
+@@ -5838,12 +6321,67 @@
                  }
              }
          }

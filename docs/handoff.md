@@ -131,8 +131,8 @@ Late script data reaches no live document. Reload and a new URL recover, and an 
 A crash document at `about:blank` is blank. It has the origin `null`, and it runs inserted scripts.
 Servo's synchronous load ignores the crash details, and it takes its sandboxing flags from the default snapshot parameters.
 A sixth case unwinds a document that a `javascript:` URL created. Revocation and callback release pass in the same way.
-Crash recovery renders the JavaScript result again, with the page's real origin and running scripts. Reload renders it again.
-These cases characterize existing behavior, so they have no negative control.
+At that audit, crash recovery rendered the JavaScript result again, with the page's real origin and running scripts. Reload rendered it again.
+These cases characterized existing behavior, so they had no negative control. A later change below replaces the sixth case's result.
 Remaining construction failures and replacement paths stay open.
 
 The cross-site parsing audit fails documents whose parser waits for a withheld script in an event loop of their own.
@@ -182,6 +182,18 @@ Three negative controls fail at their first dependent case. The first restores t
 The second isolates the lifeline's pending-change clause for frames. The third restores the synchronous frame crash loads.
 A failed send to a frame's pipeline still replaces the whole view. No fixture checks that path.
 
+The owner then decided that crash recovery must not render a `javascript:` URL document's result again.
+Servo kept the result in the document's load data, and its synchronous load ignored the crash details.
+The experimental patch now drops the result and its `Content-Type` header from every crash load.
+The crash document is now Servo's error page with the failure reason. It has the origin `null` and runs no scripts.
+Reload from the error page fetches the document's URL, which is the source page's URL.
+Servo's ordinary reload of a live `javascript:` URL document also fetches that URL.
+The converted case asserts the error page, the reloaded source page, and a reload request without a `Content-Type` header.
+Three negative controls fail in that case. The first is the previous patch, and its crash document lacks the failure reason.
+The second keeps the result in the reload record. Its reload renders the result again.
+The third keeps the `Content-Type` header, and the reload request carries it.
+A frame's crash load already fetched the error page. No fixture covers a `javascript:` URL document in a frame or at `about:blank`.
+
 P3.1 remains open on these requirements:
 
 - Engine document identity and protocol-source binding to the current privileged document.
@@ -196,8 +208,9 @@ The namespace-only counterexamples demonstrate missing restriction. They do not 
 
 ## Current evidence
 
-The [frame containment evidence](../experiments/phase3/document-frame-containment-evidence-2026-11-26.json) records the current S1 runs, three negative controls, engine controls, and local checks.
-Its baseline is `c04769b`, which changes only documentation after the pending frame checkpoint. That checkpoint's three final runs in each mode passed.
+The [JavaScript URL crash evidence](../experiments/phase3/document-javascript-crash-evidence-2026-11-26.json) records the current S1 runs, three negative controls, engine controls, and local checks.
+Its baseline is `38f2247`, the frame containment checkpoint. That checkpoint's three final runs in each mode passed.
+The [frame containment evidence](../experiments/phase3/document-frame-containment-evidence-2026-11-26.json) preserves the frame containment checkpoint and its three negative controls.
 The [pending frame evidence](../experiments/phase3/document-pending-frame-evidence-2026-11-26.json) preserves the first seventy-eight-case checkpoint, before frame containment.
 The [cross-site parsing evidence](../experiments/phase3/document-cross-site-parse-evidence-2026-11-26.json) preserves the fifty-three-case checkpoint.
 The [synchronous construction evidence](../experiments/phase3/document-synchronous-evidence-2026-11-26.json) preserves the fifty-case checkpoint and its fixture race.
@@ -221,14 +234,16 @@ The [earlier scope evidence](../experiments/phase3/document-scope-evidence-2026-
 The [reproduction guide](phase-3-document-scope.md#reproduction) prepares the engine patch without product overrides.
 The fifty-six shared cases passed in three single-process runs.
 All seventy-eight cases passed in three multiprocess runs. Both existing Servo controls passed with each mode.
-Each single-process run took 9.1 to 11.9 seconds. Each multiprocess run took 56.6 seconds, about 2.5 seconds more than before.
-The margin to the 80-second fixture deadline is now about 23 seconds. This checkpoint keeps both deadlines.
-Development runs in each mode passed before a fresh final preparation. No final run failed.
-The first negative control fails at `cross-site-subframe-parser-blocked-failure` in both modes, with the parent revoked inside the barrier.
-The second passes every single-process case. In multiprocess mode, it fails at `cross-site-lone-frame-pending-process-exit` with the frame's pending pipeline still present.
-The third fails at `sandboxed-srcdoc-parser-blocked-failure` in both modes. The parent's load never completes.
+Each single-process run took 9.2 to 12.0 seconds. Each multiprocess run took 56.9 to 57.0 seconds, about 0.4 seconds more than before.
+The margin to the 80-second fixture deadline is still about 23 seconds. This checkpoint keeps both deadlines.
+Three development runs in each mode passed before a fresh final preparation. No final run failed.
+Each negative control passes thirty-seven cases and fails at `javascript-url-crash-recovery` in all three runs of each mode.
+The first control is the previous patch. Its crash document lacks the failure reason.
+The second keeps the result in the reload record. Its crash page passes, and its reload renders the result again.
+The third keeps the result's `Content-Type` header. Its reload request carries that header.
+The frame containment controls remain in that checkpoint's evidence.
 Both backend loss cases passed in three separate engine runs in each mode.
-Cleanup completed 1,492 to 1,507 milliseconds after the crash request. The cause of that unwind delay is not established.
+Cleanup completed 1,492 to 1,508 milliseconds after the crash request. The cause of that unwind delay is not established.
 These builds retained the previous line-table debug configuration.
 Multiprocess evidence uses unsandboxed content processes on macOS arm64.
 The actual unwind uses Servo's public panic-reporting setup and `hard_fail = false` in the fixture.
@@ -251,7 +266,7 @@ The interrupt negative control ignores closed permits in the interrupt callback.
 The interrupted loop then completes, runs its `finally` block, and records `1003` mutations.
 The execution-check negative control keeps the watcher but lets the cancelled queued mutation run.
 Both existing Servo controls pass with each negative control.
-This session started from `origin/main` at `c04769b`.
+This session started from `origin/main` at `38f2247`.
 The [earlier mechanism evidence](../experiments/phase3/evidence-2026-11-22.json) includes six passing probes, timing samples, and source hashes.
 After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), run `python3 experiments/run_phase3.py` to reproduce the six cases.
 
@@ -280,8 +295,8 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
    The multiprocess scope run now uses about 57 of its 80 seconds. Split that run or raise its deadline before the next large set of cases.
    The owner decided that failed views at `about:blank` rely on the product's native error state. No engine change is needed for them.
    Their blank crash documents have the origin `null` and run inserted scripts. The product must not treat them as usable pages.
-   The owner decided that crash recovery must not render a `javascript:` URL document's result again.
-   Change the experimental patch to drop that result from the crash load. Convert the `javascript-url-crash-recovery` case, with the current patch as the negative control.
+   A `javascript:` URL document in a frame or at `about:blank` has no crash fixture.
+   Recovery keeps the result of an inactive `javascript:` URL history entry. The source shows that back to that entry would render it again. Decide whether recovery must drop it too.
    Reload from a crash page uses default target snapshot parameters. Check views that started with inherited sandboxing.
    Nested browsing-context history after crash recovery remains unchecked. Only top-level back has evidence.
    The owner accepted crash-page replacement for a failed pending navigation.

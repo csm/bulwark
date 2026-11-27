@@ -44,6 +44,9 @@ struct Delegate {
     serve_held: Cell<bool>,
     // Markup for one fixture path that depends on run-time data, such as a loopback port.
     frame_markup: RefCell<Option<(String, String)>>,
+    // For each intercepted request of the `javascript:` URL source page, whether it carried a
+    // `Content-Type` request header.
+    javascript_source_requests: RefCell<Vec<bool>>,
 }
 
 // Servo's request interceptor buffers a body until the load finishes, so it cannot stream.
@@ -205,6 +208,11 @@ impl WebViewDelegate for Delegate {
             load.intercept(WebResourceResponse::new(url)).cancel();
             return;
         }
+        if url.path() == JS_SOURCE {
+            self.javascript_source_requests
+                .borrow_mut()
+                .push(load.request().headers.contains_key("content-type"));
+        }
         let mut response = WebResourceResponse::new(url.clone());
         response
             .headers
@@ -355,6 +363,16 @@ fn load(servo: &Servo, view: &WebView, deadline: Instant, path: &str) -> Result<
 }
 
 fn wait_marker(servo: &Servo, view: &WebView, deadline: Instant, path: &str) -> Result<()> {
+    wait_any_marker(servo, view, deadline, &[path]).map(|_| ())
+}
+
+// Wait for any of several markers, so a check after the wait can report the wrong page.
+fn wait_any_marker(
+    servo: &Servo,
+    view: &WebView,
+    deadline: Instant,
+    markers: &[&str],
+) -> Result<String> {
     // A fixture marker establishes test ordering only; it grants no host authority.
     loop {
         let (sender, receiver) = mpsc::channel();
@@ -362,7 +380,9 @@ fn wait_marker(servo: &Servo, view: &WebView, deadline: Instant, path: &str) -> 
             let _ = sender.send(result);
         });
         match receive(servo, deadline, receiver)? {
-            Ok(JSValue::String(marker)) if marker == path => return Ok(()),
+            Ok(JSValue::String(marker)) if markers.contains(&marker.as_str()) => {
+                return Ok(marker);
+            }
             Ok(JSValue::String(_))
             | Err(JavaScriptEvaluationError::StaleDocument)
             | Err(JavaScriptEvaluationError::WebViewNotReady)
@@ -1060,8 +1080,8 @@ fn construction_failure(
 }
 
 // A `javascript:` URL result replaces the document in a new pipeline. Its load data keeps
-// the result, so crash recovery takes the same synchronous path as `about:blank`.
-// This case characterizes that path. It is not a required product behavior.
+// the result and the source document's URL. The experimental patch drops the result from the
+// crash load, so crash recovery fetches the error page, and reload fetches the source URL.
 fn javascript_url_failure(
     servo: &Servo,
     context: Rc<dyn RenderingContext>,
@@ -1069,6 +1089,7 @@ fn javascript_url_failure(
     survivor: (&WebView, DocumentIdentity),
 ) -> Result<String> {
     let reason = "S1 probe actual script-thread panic";
+    let result_marker = "js-crash-source";
     let delegate = Rc::new(Delegate::default());
     let view = WebViewBuilder::new(servo, context)
         .url(url::Url::parse(&format!("{ORIGIN}{JS_SOURCE}"))?)
@@ -1082,7 +1103,7 @@ fn javascript_url_failure(
         deadline,
         "location.href=\"javascript:'<h1>JS crash source</h1><script>window.marker=\\\"js-crash-source\\\"</script>'\";'scheduled'",
     )?;
-    wait_marker(servo, &view, deadline, "js-crash-source")?;
+    wait_marker(servo, &view, deadline, result_marker)?;
     let failed = identity(servo, &view, deadline)?;
     ensure!(
         failed != source
@@ -1118,35 +1139,64 @@ fn javascript_url_failure(
         delegate.active.get().is_some_and(|id| id != failed)
     })?;
     let crash = identity(servo, &view, deadline)?;
-    // The crash document renders the JavaScript result again, with the page's origin.
-    // It has no failure reason, and both its own script and an inserted script run.
-    let rendered = format!(
-        "String(location.href) + '|' + String(window.origin) + '|' + document.querySelector('h1').textContent + '|' + String(window.marker) + '|' + document.documentElement.textContent.includes({reason:?}) + '|' + {INSERTED_SCRIPT}"
-    );
-    let expected =
-        format!("{ORIGIN}{JS_SOURCE}|{ORIGIN}|JS crash source|js-crash-source|false|true");
+    // The crash document is Servo's error page with the failure reason. It keeps the
+    // document's URL, has an opaque origin, runs no scripts, and omits the JavaScript result.
+    crash_page(servo, &view, deadline, crash, reason)?;
+    let result_text = "JS crash source";
     text(
-        scoped(servo, &view, deadline, crash, &rendered)?,
+        scoped(
+            servo,
+            &view,
+            deadline,
+            crash,
+            &format!(
+                "String(location.href) + '|' + String(window.origin) + '|' + String(window.marker) + '|' + document.documentElement.textContent.includes({result_text:?}) + '|' + {INSERTED_SCRIPT}"
+            ),
+        )?,
         crash,
-        &expected,
+        &format!("{ORIGIN}{JS_SOURCE}|null|undefined|false|undefined"),
     )?;
+    // The crash fetch bypasses interception. Only the initial load requested the source page.
+    ensure!(
+        delegate.javascript_source_requests.borrow().as_slice() == [false],
+        "Unexpected source page requests before reload: {:?}",
+        delegate.javascript_source_requests.borrow()
+    );
     stale(scoped(servo, &view, deadline, failed, "'obsolete'")?)?;
     stale(scoped(servo, &view, deadline, source, "'obsolete'")?)?;
-    // Reload replaces the crash document with its original load, which keeps the result.
+    // Reload fetches the document's URL, which is the source page's URL, as a script-thread
+    // reload of the result would. A fetched reload activates at its response headers, so wait
+    // for either page's marker before the check.
     view.reload();
     drive_until(servo, deadline, || {
         delegate.active.get().is_some_and(|id| id != crash)
     })?;
+    wait_any_marker(servo, &view, deadline, &[JS_SOURCE, result_marker])?;
     let reloaded = identity(servo, &view, deadline)?;
     ensure!(
-        reloaded != failed && reloaded != source,
+        reloaded != crash && reloaded != failed && reloaded != source,
         "Reload revived an obsolete scope"
     );
     text(
-        scoped(servo, &view, deadline, reloaded, &rendered)?,
+        scoped(
+            servo,
+            &view,
+            deadline,
+            reloaded,
+            &format!(
+                "String(location.href) + '|' + String(window.origin) + '|' + document.querySelector('h1').textContent + '|' + String(window.marker) + '|' + document.documentElement.textContent.includes({result_text:?}) + '|' + document.documentElement.textContent.includes({reason:?}) + '|' + {INSERTED_SCRIPT}"
+            ),
+        )?,
         reloaded,
-        &expected,
+        &format!("{ORIGIN}{JS_SOURCE}|{ORIGIN}|{JS_SOURCE}|{JS_SOURCE}|false|false|true"),
     )?;
+    // The reload request omits the `Content-Type` header that described the JavaScript result.
+    ensure!(
+        delegate.javascript_source_requests.borrow().as_slice() == [false, false],
+        "Unexpected source page requests after reload: {:?}",
+        delegate.javascript_source_requests.borrow()
+    );
+    stale(scoped(servo, &view, deadline, crash, "'obsolete'")?)?;
     load(servo, &view, deadline, "/after-javascript-url-failure")?;
     let recovered = identity(servo, &view, deadline)?;
     text(
@@ -1176,7 +1226,7 @@ fn javascript_url_failure(
         audit.calls.get() == 8,
         "JavaScript URL failure recovery repeated callbacks"
     );
-    Ok("8 callbacks released, crash document renders the JavaScript result again with its origin and running scripts, reload renders it again, new URL recovers, survivor usable".into())
+    Ok("8 callbacks released, error page with origin null runs no scripts and omits the JavaScript result, reload fetches the source page with its origin and scripts and no result header, new URL recovers, survivor usable".into())
 }
 
 // Cross-site parsing fixtures. A loopback HTTP server serves each cross-site document, so the

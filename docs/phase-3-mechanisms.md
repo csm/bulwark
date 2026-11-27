@@ -231,7 +231,8 @@ Script-thread unwinds after response headers cover a top-level document before i
 Late response data after either failure reaches no live document, and reload and a new URL recover.
 Script-thread unwinds also cover `about:blank`, a same-thread `srcdoc` child, `document.write`, and `document.open()` construction.
 A crash document at `about:blank` is blank, has the origin `null`, and runs inserted scripts, because Servo's synchronous load ignores the crash details.
-Crash recovery of a `javascript:` URL document renders its result again, with its real origin and running scripts. A retained case characterizes this path.
+Crash recovery of a `javascript:` URL document rendered its result again, with its real origin and running scripts.
+The patch now drops that result from the crash load. The crash document is Servo's error page, and reload fetches the document's URL.
 Script-thread unwinds, child exit, and child kill now cover a parsing cross-site document and a parsing cross-site subframe in their own event loops.
 A script-thread unwind also covers a parsing sandboxed `srcdoc` child, which Servo always places in a new event loop.
 Servo activates a top-level document at its response headers, so no pending top-level document parses.

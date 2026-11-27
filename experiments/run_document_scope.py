@@ -128,7 +128,7 @@ def main():
                   "crash recovery through reload and history, "
                   "script-thread failure after response headers and in about:blank, srcdoc, "
                   "document.write, and document.open() construction, "
-                  "crash recovery of a javascript: URL document, "
+                  "crash recovery of a javascript: URL document to an error page without its result, "
                   "script-thread failure while a cross-site navigation, a cross-site subframe, "
                   "or a sandboxed srcdoc child parses in its own event loop, "
                   "content-process exit or kill while a cross-site document, a cross-site subframe, "
