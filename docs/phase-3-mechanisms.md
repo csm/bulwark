@@ -189,8 +189,9 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and fifty-six shared regression cases.
-Multiprocess mode adds twenty-two cases, for unexpected content-process exit, a forced kill, shared-process teardown, pending-process failure, process loss during parsing, and process loss of a child frame's pending pipeline.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and fifty-nine shared regression cases.
+Multiprocess mode adds twenty-eight cases, for unexpected content-process exit, a forced kill, shared-process teardown, pending-process failure, process loss during parsing, process loss of a child frame's pending pipeline, and process loss in three more frame paths.
+The cases run in three parts, each in its own engine process.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.
 History reactivation receives a fresh incarnation before script resumes.
@@ -243,6 +244,8 @@ Upstream recovery replaced the whole view after a child frame's failure, includi
 The patch now keeps such a parent's document and scope. Only the failed frame shows Servo's error page.
 A view whose own top-level document ran in the failed event loop still fails, so one failure can notify several views.
 A frame's crash load always fetches the error page, so a `srcdoc` frame does not render its markup again.
+Containment also holds for a frame's first navigation, a failed frame with a healthy pending navigation, and frame history after the failure.
+These paths need no engine change. Back inside the frame rebuilds a closed history entry, and forward restores the error page.
 Other construction failures and remaining replacement paths stay open.
 Shared-process fixtures cover close, exit, kill, and one ordered close-kill race for views in one child.
 That race found crash recovery for a closed view. The patch now ignores views that the constellation no longer holds.

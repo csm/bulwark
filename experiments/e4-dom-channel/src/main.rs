@@ -155,7 +155,9 @@ fn main() -> Result<()> {
     let mode = std::env::args().nth(1);
     #[cfg(feature = "document-scope")]
     match mode.as_deref() {
-        Some("--document-scope") => return document_scope::run(false),
+        Some("--document-scope") => {
+            return document_scope::run(false, std::env::args().nth(2).as_deref());
+        }
         Some("--document-scope-backend") => return document_scope::run_backend(false),
         _ => {}
     }
@@ -165,7 +167,7 @@ fn main() -> Result<()> {
     {
         #[cfg(feature = "document-scope-multiprocess")]
         return if mode == "--document-scope-multiprocess" {
-            document_scope::run(true)
+            document_scope::run(true, std::env::args().nth(2).as_deref())
         } else {
             document_scope::run_backend(true)
         };
