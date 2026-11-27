@@ -314,14 +314,17 @@ The [earlier handoff](handoff-2026-11-14.md) preserves the Phase 0, Phase 1, and
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   Review the frame containment contract with the owner. A contained view receives no engine notification of its frame's failure.
-   A failed send to a frame's pipeline still replaces the whole view through Servo's send-error path. Decide whether that path must also contain the failure.
+   The owner decided that a contained frame failure must send an engine notification for the surviving view. The [recorded decisions](phase-3-plan.md#recorded-decisions-2026-11-27) give details.
+   Add that notification to the experimental patch. The view keeps its document and scope. Convert the frame cases to require it, with the current patch as the negative control.
+   The owner decided that a failed send to a frame's pipeline must also stay inside that frame.
+   Servo's send-error path still replaces the whole view. Change it to contain the failure, and add a case and a negative control for that path.
    A failed frame in an inactive parent, a navigation that the child starts, and a pending traversal inside a frame remain unchecked.
    A failed frame whose healthy pending navigation shares the parent's event loop also remains unchecked.
    The owner decided that failed views at `about:blank` rely on the product's native error state. No engine change is needed for them.
    Their blank crash documents have the origin `null` and run inserted scripts. The product must not treat them as usable pages.
    A `javascript:` URL document in a frame or at `about:blank` has no crash fixture.
-   Recovery keeps the result of an inactive `javascript:` URL history entry. The source shows that back to that entry would render it again. Decide whether recovery must drop it too.
+   The owner decided that crash recovery must drop an inactive `javascript:` URL history entry. Recovery keeps that entry now, and the source shows that back to it would render its result again.
+   Change the experimental patch to remove the entry during recovery. Add a case and a negative control.
    Reload from a crash page uses default target snapshot parameters. Check views that started with inherited sandboxing.
    Frame history after whole-view crash recovery and reload of a frame's error page remain unchecked.
    The owner accepted crash-page replacement for a failed pending navigation.

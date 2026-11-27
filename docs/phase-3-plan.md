@@ -298,5 +298,15 @@ The review needs these decisions:
 - A failed view at `about:blank` relies on the product's native error state. The engine does not need to fetch Servo's error page for it.
   The blank crash document has the origin `null` and runs inserted scripts. The product must not treat it as a usable page.
 
+### Recorded decisions, 2026-11-27
+
+- A contained frame failure must send an engine notification to the embedder for the view that keeps its document.
+  The view still keeps its document and its scope. The notification does not revoke the view and does not replace it.
+  The [frame failure containment](phase-3-document-scope.md#frame-failure-containment) section records the current behavior, which sends no notification.
+- A failed send to a frame's pipeline must also stay inside that frame.
+  Servo's send-error path must not replace the whole view when the failed pipeline is a child frame of a view that otherwise survives.
+- Crash recovery must drop an inactive `javascript:` URL history entry.
+  Back and forward must not reach that entry after recovery, so its result cannot render again.
+
 The contract review produces concrete ADRs and bounded schemas in P3.1.
 No new extension trust claim, engine pin, display scope, or failed acceptance criterion changes without a recorded decision.
