@@ -20,14 +20,16 @@ The installed product natives, engine behavior, capability policy, dependency pi
 | Source-frame provenance | The top document and its same-origin iframe issue the same fetch with referrers suppressed. Their complete public request metadata is identical. | Resource interception cannot authenticate the source frame or document. |
 | Protocol-source provenance | The custom protocol receives distinct pipelines for top, same-origin, remote, and sandboxed-frame fetches. Client origins and nested-frame status remain distinct. | Public API candidate exists. Current-document binding and obsolete-message rejection remain pending. |
 | Observer transport | A 500-mutation burst retains 64 records and terminal overflow. A second drain has no repeated records and retains the overflow result. | Bounded request/reply drain is a viable prototype. Product scheduling remains pending. |
-| Agent integrity | Page JavaScript replaces the agent and returns a forged successful batch. | Agent data provides no host authority or authenticated lifecycle evidence. |
+| Agent integrity | Page JavaScript replaces the agent and returns an unauthenticated successful batch. | Agent data provides no host authority or authenticated lifecycle evidence. |
 | Restricted evaluation | An empty-capability namespace navigates through a direct native, uses a captured native after await, mutates trusted state, and reads a local fixture. | Namespace-only restriction fails in both evaluator modes. No restricted loader is exposed. |
 | Local custom protocol | A public `ProtocolHandler` serves `bulwark://` HTML. Switching back preserves the hidden web document. The custom page reports `origin=null` and no `navigator.servo`. | One-visible-view rendering works in software. Privileged bridge, physical input, and the D6 clarification remain pending. |
 
 Every successful product probe joins its runtime worker.
 All pages are local files or intercepted fixtures. The probes require no remote websites or services.
-The initial sandboxed Servo run failed during macOS rendering initialization.
-The successful graphics runs used the normal macOS graphics services outside that filesystem sandbox.
+The first Servo run inside the coding agent's execution environment failed during macOS rendering initialization, because that environment has no window-server access.
+These graphics runs require native macOS graphics and window-server access. Run them on the host.
+Do not change or attempt to circumvent the agent's execution environment.
+If that access is unavailable, complete static checks and leave the graphical execution commands for the owner.
 Servo emitted its previously observed GL texture warning. Debug linking also emitted a compact-unwind size warning.
 Neither warning changed a probe assertion.
 
@@ -190,7 +192,7 @@ P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depend
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
 The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and sixty-one shared regression cases.
-Multiprocess mode adds twenty-eight cases, for unexpected content-process exit, a forced kill, shared-process teardown, pending-process failure, process loss during parsing, process loss of a child frame's pending pipeline, and process loss in three more frame paths.
+Multiprocess mode adds twenty-eight cases, for unexpected content-process exit, forced termination of a fixture-owned child process, shared-process teardown, pending-process failure, process loss during parsing, process loss of a child frame's pending pipeline, and process loss in three more frame paths.
 The cases run in three parts, each in its own engine process.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.

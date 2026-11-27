@@ -100,7 +100,7 @@ The Clojure smoke covers native navigation/history calls, concurrent replies, ha
 live dispatcher redefinition, ordered lifecycle events, and handle replacement.
 The worker forces a collection after rooting the program and event futures.
 CI includes the headless smoke in its Linux and macOS runtime jobs.
-Both jobs passed in the [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation).
+Both jobs passed in the [Linux CI continuation](handoff-2026-11-14.md#phase-1-linux-ci-continuation).
 
 ## Servo adapter continuation
 
@@ -139,7 +139,7 @@ The host requires a painted frame, a title handler response, and a joined runtim
 On macOS, the software graphics context requires graphics access outside the filesystem sandbox.
 
 CI includes a separate Linux Servo job with a software display.
-The [Linux CI continuation](handoff.md#phase-1-linux-ci-continuation) passed the adapter tests and software smoke on 2026-11-08.
+The [Linux CI continuation](handoff-2026-11-14.md#phase-1-linux-ci-continuation) passed the adapter tests and software smoke on 2026-11-08.
 A8 remains open for explicit interpreter coverage. The product worker currently uses tiered execution.
 
 ## Next integration

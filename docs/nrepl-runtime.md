@@ -53,7 +53,9 @@ python3 experiments/run_e7_nrepl.py --native
 python3 experiments/run_e7_nrepl.py --native --close-window
 ```
 
-The Servo commands need macOS graphics access outside the Codex filesystem sandbox.
+The Servo commands require native macOS graphics and window-server access. Run them on the host.
+Do not change or attempt to circumvent the agent's execution environment.
+If that access is unavailable, complete static checks and leave the graphical execution commands for the owner.
 All modes need permission to bind a local loopback listener.
 Each child has an independent process deadline and temporary port file.
 The native close case schedules window close after 1.5 seconds.

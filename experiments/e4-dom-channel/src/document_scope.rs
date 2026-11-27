@@ -208,7 +208,7 @@ impl WebViewDelegate for Delegate {
             return;
         }
         if url.host_str() == Some("127.0.0.1") && url.port() == Some(self.loopback_port.get()) {
-            // Use the real HTTP loader for the redirect; interception bypasses that path.
+            // Use the real HTTP loader for the redirect; interception skips that path.
             return;
         }
         if url.scheme() == "s1-failure" {
@@ -1185,7 +1185,7 @@ fn javascript_url_failure(
         crash,
         &format!("{ORIGIN}{JS_SOURCE}|null|undefined|false|undefined"),
     )?;
-    // The crash fetch bypasses interception. Only the initial load requested the source page.
+    // The crash fetch skips interception. Only the initial load requested the source page.
     ensure!(
         delegate.javascript_source_requests.borrow().as_slice() == [false],
         "Unexpected source page requests before reload: {:?}",

@@ -645,8 +645,8 @@ Acceptance criteria:
   stories in new web buffers."
 - C2. A reader-mode command works on five mainstream article sites.
 - C3. An extension declaring no `:net` capability cannot navigate or intercept; the denial is
-  enforced in Rust (demonstrated by a test that bypasses the Clojure wrapper and calls the
-  native function directly).
+  enforced in Rust (demonstrated by an authorization regression test that calls the native
+  function directly, without the Clojure wrapper).
 - C4. DOM handles from a page are rejected after that page navigates; test exists.
 - C5. The `bulwark://` bridge rejects messages from non-privileged origins; test exists.
 - C6. p50 latency of `(dom/text (dom/query "h1"))` under 10 ms on a simple page.
