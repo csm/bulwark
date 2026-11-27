@@ -12,8 +12,8 @@ The current task is ordinary crash-recovery and document-lifecycle correctness i
 - Agents must not alter, disable, or circumvent their own execution sandbox.
 - Native macOS graphical tests require native graphics and window-server access.
   Run them on the host. If the agent environment lacks that access, complete static checks and leave the graphical execution commands for the owner.
-- Process-termination and fault-injection suites are separate, optional validation tasks.
-  They are not required for ordinary documentation or recovery-logic edits.
+- Process-termination and fault-injection suites are separate, targeted validation tasks.
+  Documentation and unrelated edits do not require them. Recovery-logic changes do; see [Focused acceptance checks](#focused-acceptance-checks).
 
 The word "sandbox" has three unrelated meanings in these documents. Do not confuse them:
 
@@ -110,7 +110,7 @@ If that access is unavailable, complete static checks and leave the graphical ex
 
 - No product dependency pin, product engine configuration, installed native, or product security configuration changes.
   The experimental patch never enters the product build.
-- Process-termination cases (child exit, host SIGKILL of a fixture-owned child) and fault-injection cases (intentional test-triggered engine failure, backend loss) are optional validation.
+- Process-termination cases (child exit, host SIGKILL of a fixture-owned child) and fault-injection cases (intentional test-triggered engine failure, backend loss) are targeted validation.
   Run them when recovery logic changes. They are not required for documentation or unrelated edits.
 - Servo content-process sandboxing stays disabled only in this local experimental fixture configuration. Do not generalize that to the product.
 - E5 (simultaneous live web splits) remains deferred. The accepted display scope is one visible webview per native window.
