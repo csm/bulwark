@@ -222,9 +222,15 @@ impl WebViewDelegate for Delegate {
                 .headers
                 .insert("content-type", "text/html; charset=utf-8".parse().unwrap());
             let mut intercepted = load.intercept(response);
+            // The outer frame of a nested group contains a frame of its own site.
+            let inner = if url.path() == NESTED_OUTER {
+                format!("<iframe src='{NESTED_INNER}'></iframe>")
+            } else {
+                String::new()
+            };
             intercepted.send_body_data(
                 format!(
-                    "<!doctype html><h1>{}</h1><script>window.marker={:?};parent.postMessage(location.pathname, '*')</script>",
+                    "<!doctype html><h1>{}</h1><script>window.marker={:?};parent.postMessage(location.pathname, '*')</script>{inner}",
                     url.path(),
                     url.path(),
                 )
@@ -3870,6 +3876,534 @@ fn frame_path_failure(
     ))
 }
 
+// Frame groups: one failure that ends several frames of a surviving view. A view's frames
+// share an event loop when they come from one site. The parent runs in another event loop.
+const GROUP_HEALTHY: &str = "/child";
+const GROUP_FIRST: &str = "/frame-group-first";
+const GROUP_SECOND: &str = "/frame-group-second";
+const NESTED_OUTER: &str = "/frame-nested-outer";
+const NESTED_INNER: &str = "/frame-nested-inner";
+// The parent's view of its frames, one entry for each: the frame's URL, or the error that a
+// cross-origin read raises with the number of frames that the cross-origin window reports.
+const GROUP_VIEW: &str = "(() => { const out = []; for (let i = 0; i < frames.length; i++) { try { out.push(String(frames[i].location.href)); } catch (error) { out.push(error.name + ':' + frames[i].length); } } return out.join(','); })()";
+
+#[derive(Clone, Copy, PartialEq)]
+enum FrameGroup {
+    // A healthy frame in the parent's event loop, then two cross-site siblings of one site.
+    // The siblings share one event loop, and one failure ends both.
+    Siblings,
+    // A cross-site frame that contains a frame of its own site. Both run in one event loop,
+    // so the inner frame's parent fails in the same failure.
+    Nested,
+}
+
+impl FrameGroup {
+    fn parent_path(self) -> &'static str {
+        match self {
+            Self::Siblings => "/frame-siblings-parent",
+            Self::Nested => "/frame-nested-parent",
+        }
+    }
+
+    fn markup(self) -> String {
+        match self {
+            Self::Siblings => format!(
+                "{FRAME_LISTENER}<iframe src='{GROUP_HEALTHY}'></iframe><iframe src='{FRAME_ORIGIN}{GROUP_FIRST}'></iframe><iframe src='{FRAME_ORIGIN}{GROUP_SECOND}'></iframe>"
+            ),
+            Self::Nested => {
+                format!("{FRAME_LISTENER}<iframe src='{FRAME_ORIGIN}{NESTED_OUTER}'></iframe>")
+            }
+        }
+    }
+
+    // Every frame of the view, the frames that share the failed event loop, and the outermost
+    // of those.
+    fn counts(self) -> (usize, usize, usize) {
+        match self {
+            Self::Siblings => (3, 2, 2),
+            Self::Nested => (2, 2, 1),
+        }
+    }
+
+    // The parent's view of its frames before the failure.
+    fn before(self) -> String {
+        match self {
+            Self::Siblings => format!("{ORIGIN}{GROUP_HEALTHY},SecurityError:0,SecurityError:0"),
+            Self::Nested => "SecurityError:1".to_owned(),
+        }
+    }
+
+    // The parent's view after the error pages load. A nested frame's parent no longer has frames.
+    fn after(self) -> String {
+        match self {
+            Self::Siblings => self.before(),
+            Self::Nested => "SecurityError:0".to_owned(),
+        }
+    }
+}
+
+// The constellation's record of one child frame of a view.
+#[derive(Clone, Debug, PartialEq)]
+struct ChildFrame {
+    context: BrowsingContextId,
+    parent: Option<BrowsingContextId>,
+    pipeline: PipelineId,
+    live: bool,
+    crash: Option<String>,
+    pending: bool,
+    event_loop: Option<String>,
+}
+
+// Every child frame of the view, in no particular order. Page JavaScript cannot supply these values.
+fn child_frames(view: &WebView) -> Vec<ChildFrame> {
+    view.child_frames_for_document_scope_probe()
+        .into_iter()
+        .map(
+            |(context, parent, pipeline, live, crash, pending, event_loop)| ChildFrame {
+                context,
+                parent,
+                pipeline,
+                live,
+                crash,
+                pending,
+                event_loop,
+            },
+        )
+        .collect()
+}
+
+fn same_frames(left: &[ChildFrame], right: &[ChildFrame]) -> bool {
+    left.len() == right.len() && left.iter().all(|frame| right.contains(frame))
+}
+
+// One notice lists every outermost failed frame of the group, in any order. A frame inside a
+// failed frame is no entry.
+fn group_notice(
+    notices: &[FrameFailure],
+    parent: DocumentIdentity,
+    frames: &[FailedFrame],
+    failure: ParseFailure,
+) -> Result<()> {
+    ensure!(
+        notices.len() == 1
+            && notices[0].document == Some(parent)
+            && notices[0].frames.len() == frames.len()
+            && frames.iter().all(|frame| notices[0].frames.contains(frame))
+            && failure.reported(&notices[0].reason),
+        "Unexpected frame failure notices: {notices:?}; expected {frames:?} for {parent:?}"
+    );
+    Ok(())
+}
+
+// Fail the event loop that several frames of one view share, and check the contained result.
+#[allow(clippy::too_many_arguments)]
+fn frame_group_failure(
+    servo: &Servo,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    engine_errors: &BackendErrors,
+    multiprocess: bool,
+    survivor: (&WebView, DocumentIdentity),
+    group: FrameGroup,
+    failure: ParseFailure,
+) -> Result<String> {
+    let reason = failure.reason();
+    let parent_path = group.parent_path();
+    let (frame_count, failed_count, outermost_count) = group.counts();
+    let delegate = Rc::new(Delegate::default());
+    *delegate.frame_markup.borrow_mut() = Some((parent_path.into(), group.markup()));
+    let view = WebViewBuilder::new(servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}{parent_path}"))?)
+        .delegate(delegate.clone())
+        .build();
+    drive_until(servo, deadline, || delegate.active.get().is_some())?;
+    wait_marker(servo, &view, deadline, parent_path)?;
+    let parent = identity(servo, &view, deadline)?;
+    // The parent's load event waits for every frame, including a frame's own frames.
+    drive_until(servo, deadline, || {
+        readiness(&delegate, parent).contains(&"load-complete")
+    })?;
+    wait_text(servo, &view, deadline, parent, GROUP_VIEW, &group.before())?;
+    ensure!(
+        delegate.active.get() == Some(parent)
+            && readiness(&delegate, parent) == ["dom-ready", "load-complete"],
+        "Unexpected parent lifecycle before the group failure: {:?}",
+        readiness(&delegate, parent)
+    );
+    ensure!(
+        view.crash_pending_script_thread_for_document_scope_probe()
+            .is_none(),
+        "A frame navigation created a pending top-level pipeline"
+    );
+    // The failed frames are those that share the newest frame's event loop.
+    let before = child_frames(&view);
+    let (newest, _) = frame_ids(&view)?;
+    let failed_loop = before
+        .iter()
+        .find(|frame| frame.context == newest)
+        .and_then(|frame| frame.event_loop.clone());
+    ensure!(
+        failed_loop.is_some()
+            && before.len() == frame_count
+            && before
+                .iter()
+                .all(|frame| frame.live && frame.crash.is_none() && !frame.pending),
+        "Unexpected child frames before the failure: {before:?}"
+    );
+    let failed: Vec<ChildFrame> = before
+        .iter()
+        .filter(|frame| frame.event_loop == failed_loop)
+        .cloned()
+        .collect();
+    let healthy: Vec<ChildFrame> = before
+        .iter()
+        .filter(|frame| frame.event_loop != failed_loop)
+        .cloned()
+        .collect();
+    // A failed frame whose own parent also failed closes with that parent.
+    let outermost: Vec<ChildFrame> = failed
+        .iter()
+        .filter(|frame| {
+            !failed
+                .iter()
+                .any(|other| Some(other.context) == frame.parent)
+        })
+        .cloned()
+        .collect();
+    ensure!(
+        failed.len() == failed_count && outermost.len() == outermost_count,
+        "Unexpected failed frames: failed={failed:?}, outermost={outermost:?}"
+    );
+    let inner: Vec<&ChildFrame> = failed
+        .iter()
+        .filter(|frame| !outermost.contains(frame))
+        .collect();
+    ensure!(
+        inner.iter().all(|frame| {
+            frame
+                .parent
+                .is_some_and(|parent| outermost.iter().any(|outer| outer.context == parent))
+        }),
+        "A frame inside a failed frame has another parent: {inner:?}"
+    );
+    let expected: Vec<FailedFrame> = outermost
+        .iter()
+        .map(|frame| FailedFrame {
+            browsing_context_id: frame.context,
+            pipeline_id: frame.pipeline,
+        })
+        .collect();
+    // This popup's `about:blank` document shares the parent's event loop.
+    let (parent_loop, parent_loop_delegate, parent_loop_document) =
+        open_popup(servo, &view, &delegate, context.clone(), deadline, parent)?;
+    let processes = if multiprocess {
+        let host = std::process::id();
+        let parent_process = view.content_process_id_for_document_scope_probe();
+        let failed_process = view.frame_content_process_id_for_document_scope_probe();
+        ensure!(
+            parent_process != host
+                && parent_loop.content_process_id_for_document_scope_probe() == parent_process
+                && failed_process != host
+                && failed_process != parent_process
+                && survivor.0.content_process_id_for_document_scope_probe() != failed_process,
+            "The failed frames did not run in a process of their own"
+        );
+        Some((parent_process, failed_process))
+    } else {
+        None
+    };
+    let ticket = delegate.ticket(parent)?;
+    let reply = scoped(servo, &view, deadline, parent, "'before-group-failure'")?;
+    ensure!(reply.is_ok(), "Frame group control failed");
+    let parent_loop_ticket = parent_loop_delegate.ticket(parent_loop_document)?;
+    let parent_loop_reply = scoped(
+        servo,
+        &parent_loop,
+        deadline,
+        parent_loop_document,
+        "'parent-loop-retained'",
+    )?;
+    ensure!(
+        parent_loop_reply.is_ok(),
+        "Parent-loop popup control failed"
+    );
+    // Every failed frame has lost its pipeline, or its whole browsing context.
+    let gone = |frames: &[ChildFrame]| {
+        failed.iter().all(|old| {
+            frames
+                .iter()
+                .find(|frame| frame.context == old.context)
+                .is_none_or(|frame| frame.pipeline == old.pipeline && !frame.live)
+        })
+    };
+    let mut separate = None;
+    // Hold the parent's script thread, so its callbacks cannot complete, and no frame can
+    // navigate, until the constellation has handled the failure.
+    let (audit, handled, held) = view.with_paused_script_for_document_scope_probe(|| {
+        let audit = CleanupAudit::queue(&view, Some(parent), &delegate, true);
+        match failure {
+            ParseFailure::ScriptThread => {
+                separate = view.crash_frame_script_thread_for_document_scope_probe();
+            }
+            ParseFailure::ProcessExit => {
+                view.with_terminating_frame_content_process_for_document_scope_probe(|| ())
+            }
+            ParseFailure::ProcessKill => {
+                view.with_killed_frame_content_process_for_document_scope_probe(|| ())
+            }
+            ParseFailure::Send => unreachable!("Frame groups do not cover a failed send"),
+        }
+        let barrier = deadline.min(Instant::now() + Duration::from_secs(4));
+        // A revocation of the parent also ends this wait, so the check below reports it.
+        let handled = drive_until(servo, barrier, || {
+            gone(&child_frames(&view)) || audit.calls.get() > 0 || delegate.crashed.get()
+        })
+        .and_then(|()| settle(servo, barrier, 200));
+        let held = (
+            audit.calls.get(),
+            delegate.active.get(),
+            delegate.crash_reasons.borrow().clone(),
+            child_frames(&view),
+            delegate.frame_failures.borrow().clone(),
+        );
+        (audit, handled, held)
+    });
+    ensure!(
+        failure == ParseFailure::ProcessExit
+            || failure == ParseFailure::ProcessKill
+            || separate == Some(true),
+        "Probe did not reach a frame pipeline in a separate event loop: {separate:?}"
+    );
+    handled.map_err(|error| {
+        anyhow::anyhow!(
+            "The frames' {} was not handled within the barrier: {error}; frames={:?}",
+            failure.how(),
+            child_frames(&view),
+        )
+    })?;
+    let (calls, active, crashes, frames_held, notices) = held;
+    ensure!(
+        (calls, active, crashes.as_slice()) == (0, Some(parent), &[][..]),
+        "The frames' {} revoked the healthy parent: calls={calls}, active={active:?}, crashes={crashes:?}",
+        failure.how()
+    );
+    // One engine notice names every outermost failed frame. It precedes the frames' crash
+    // navigations, which wait for the parent.
+    group_notice(&notices, parent, &expected, failure)?;
+    ensure!(
+        gone(&frames_held) && healthy.iter().all(|frame| frames_held.contains(frame)),
+        "The failed frame pipelines were not closed, or a healthy frame changed: {frames_held:?}"
+    );
+    // The parent's held callbacks then complete in the same document.
+    drive_until(servo, deadline, || audit.calls.get() == 8)?;
+    audit.check_completed(parent)?;
+    ensure!(
+        parent_loop_delegate.active.get() == Some(parent_loop_document)
+            && parent_loop_delegate.generation.get() == parent_loop_ticket.generation
+            && !parent_loop_delegate.crashed.get(),
+        "The failure revoked a document in the parent's event loop"
+    );
+    ensure!(
+        parent_loop_delegate.deliver(parent_loop_ticket, parent_loop_reply),
+        "The parent loop's retained reply lost its scope"
+    );
+    // Each outermost failed frame shows an error state in a new pipeline.
+    let mut crashed = Vec::new();
+    drive_until(servo, deadline, || {
+        let frames = child_frames(&view);
+        crashed = outermost
+            .iter()
+            .filter_map(|old| {
+                frames
+                    .iter()
+                    .find(|frame| {
+                        frame.context == old.context
+                            && frame.pipeline != old.pipeline
+                            && frame.live
+                            && !frame.pending
+                            && frame.crash.is_some()
+                    })
+                    .cloned()
+            })
+            .collect();
+        crashed.len() == outermost.len()
+    })
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "The failed frames did not activate new pipelines: {error}; frames={:?}",
+            child_frames(&view)
+        )
+    })?;
+    let after = child_frames(&view);
+    ensure!(
+        after.len() == healthy.len() + outermost.len()
+            && healthy.iter().all(|frame| after.contains(frame))
+            && crashed.iter().all(|frame| {
+                frame
+                    .crash
+                    .as_deref()
+                    .is_some_and(|crash| crash.starts_with(reason))
+                    && frame.event_loop != failed_loop
+                    && failed.iter().all(|old| old.pipeline != frame.pipeline)
+            })
+            && crashed
+                .iter()
+                .enumerate()
+                .all(|(index, frame)| crashed[..index]
+                    .iter()
+                    .all(|other| other.pipeline != frame.pipeline))
+            && inner
+                .iter()
+                .all(|old| after.iter().all(|frame| frame.context != old.context)),
+        "The failed frames did not get crash pages, or a frame inside a failed frame remained: {after:?}"
+    );
+    // The parent's load event is not repeated, and its readiness does not change.
+    wait_text(servo, &view, deadline, parent, GROUP_VIEW, &group.after())?;
+    ensure!(
+        readiness(&delegate, parent) == ["dom-ready", "load-complete"]
+            && delegate.active.get() == Some(parent)
+            && delegate.generation.get() == ticket.generation
+            && !delegate.crashed.get()
+            && view.pending_evaluations_for_document_scope_probe() == 0,
+        "The parent did not keep its document: readiness={:?}, active={:?}, crashes={:?}",
+        readiness(&delegate, parent),
+        delegate.active.get(),
+        delegate.crash_reasons.borrow()
+    );
+    ensure!(
+        delegate.deliver(ticket, reply),
+        "The parent's retained reply lost its scope"
+    );
+    if let Some((parent_process, failed_process)) = processes {
+        let crash_process = view.frame_content_process_id_for_document_scope_probe();
+        ensure!(
+            crash_process != parent_process
+                && crash_process != failed_process
+                && crash_process != std::process::id(),
+            "The newest frame's crash page did not run in a new content process"
+        );
+    }
+    // Nothing later changes the frames, the parent, or the notice.
+    let errors_before = engine_errors.0.borrow().len();
+    ensure!(
+        delegate.held.borrow().is_empty(),
+        "Unexpected withheld request"
+    );
+    settle(servo, deadline, 300)?;
+    ensure!(
+        identity(servo, &view, deadline)? == parent
+            && same_frames(&child_frames(&view), &after)
+            && readiness(&delegate, parent) == ["dom-ready", "load-complete"]
+            && delegate.crash_reasons.borrow().is_empty()
+            && !parent_loop_delegate.crashed.get(),
+        "The parent or a frame changed after the crash pages loaded: frames={:?}",
+        child_frames(&view)
+    );
+    text(
+        scoped(servo, &view, deadline, parent, GROUP_VIEW)?,
+        parent,
+        &group.after(),
+    )?;
+    let late_errors = engine_errors.0.borrow()[errors_before..].to_vec();
+    ensure!(
+        late_errors.is_empty(),
+        "The settled frames raised engine errors: {late_errors:?}"
+    );
+    // Only the parent receives a frame notice, and only once.
+    group_notice(
+        &delegate.frame_failures.borrow(),
+        parent,
+        &expected,
+        failure,
+    )?;
+    no_frame_notice("parent-loop popup", &parent_loop_delegate)?;
+    // Reload replaces the parent, and every frame loads again. A new URL recovers.
+    view.reload();
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != parent)
+    })?;
+    wait_marker(servo, &view, deadline, parent_path)?;
+    let reloaded = identity(servo, &view, deadline)?;
+    ensure!(reloaded != parent, "Reload kept the parent scope");
+    stale(scoped(servo, &view, deadline, parent, "'obsolete'")?)?;
+    wait_text(
+        servo,
+        &view,
+        deadline,
+        reloaded,
+        GROUP_VIEW,
+        &group.before(),
+    )?;
+    drive_until(servo, deadline, || {
+        let frames = child_frames(&view);
+        frames.len() == frame_count
+            && frames
+                .iter()
+                .all(|frame| frame.live && frame.crash.is_none() && !frame.pending)
+    })
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "Reload kept a crash page: {error}; frames={:?}",
+            child_frames(&view)
+        )
+    })?;
+    load(
+        servo,
+        &view,
+        deadline,
+        match group {
+            FrameGroup::Siblings => "/after-frame-siblings-failure",
+            FrameGroup::Nested => "/after-frame-nested-failure",
+        },
+    )?;
+    text(
+        scoped(
+            servo,
+            &parent_loop,
+            deadline,
+            parent_loop_document,
+            "'parent-loop-survivor'",
+        )?,
+        parent_loop_document,
+        "parent-loop-survivor",
+    )?;
+    let (survivor, survivor_document) = survivor;
+    text(
+        scoped(
+            servo,
+            survivor,
+            deadline,
+            survivor_document,
+            "'frame-group-survivor'",
+        )?,
+        survivor_document,
+        "frame-group-survivor",
+    )?;
+    ensure!(
+        audit.calls.get() == 8,
+        "Frame group recovery repeated callbacks"
+    );
+    let detail = match group {
+        FrameGroup::Siblings => {
+            "a healthy frame in the parent's event loop and two sibling frames in one failed event loop, the healthy frame kept its pipeline, both siblings got separate crash pages"
+        }
+        FrameGroup::Nested => {
+            "a frame and the frame inside it in one failed event loop, only the outer frame got a crash page, the inner frame's browsing context closed with it"
+        }
+    };
+    Ok(format!(
+        "{}, parent kept its document, scope, and retained reply, one frame notice naming {} outermost failed {} ({:?}), 8 held parent callbacks completed, parent-loop popup kept scope, {detail}, reload and new URL recover, survivor usable",
+        failure.how(),
+        outermost.len(),
+        if outermost.len() == 1 {
+            "frame"
+        } else {
+            "frames"
+        },
+        notices[0].reason,
+    ))
+}
+
 fn redirect_fixture() -> Result<(u16, thread::JoinHandle<Result<()>>)> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
@@ -6152,6 +6686,23 @@ fn frame_cases(
         ParseFailure::Send,
     )?;
     println!("S1 frame-send-failure: PASS ({detail})");
+    // One failure ends several frames of a view, or a frame and the frame inside it.
+    for (group, name) in [
+        (FrameGroup::Siblings, "frame-siblings-failure"),
+        (FrameGroup::Nested, "frame-nested-failure"),
+    ] {
+        let detail = frame_group_failure(
+            servo,
+            context.clone(),
+            deadline,
+            engine_errors,
+            multiprocess,
+            (failure, recovered),
+            group,
+            ParseFailure::ScriptThread,
+        )?;
+        println!("S1 {name}: PASS ({detail})");
+    }
     Ok(())
 }
 
@@ -6687,14 +7238,31 @@ fn process_cases(
             )?;
             println!("S1 {name}-process-{kind}: PASS ({detail})");
         }
+        // The same failures end a group of frames.
+        for (group, name) in [
+            (FrameGroup::Siblings, "frame-siblings"),
+            (FrameGroup::Nested, "frame-nested"),
+        ] {
+            let detail = frame_group_failure(
+                servo,
+                context.clone(),
+                deadline,
+                engine_errors,
+                multiprocess,
+                (failure, recovered),
+                group,
+                mode,
+            )?;
+            println!("S1 {name}-process-{kind}: PASS ({detail})");
+        }
     }
     Ok(())
 }
 
 // Case counts of each part. The runner checks each part and the total.
 const DOCUMENT_CASES: usize = 52;
-const FRAME_CASES: usize = 9;
-const PROCESS_CASES: usize = 28;
+const FRAME_CASES: usize = 11;
+const PROCESS_CASES: usize = 32;
 
 // Each part runs in its own engine process, so each part has its own deadline.
 pub(super) fn run(multiprocess: bool, part: Option<&str>) -> Result<()> {

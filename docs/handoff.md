@@ -26,11 +26,12 @@ The word "sandbox" has three unrelated meanings in these documents. Do not confu
 
 ## Current baseline
 
-Branch `feat/sanitize` at `8ad6b0d`, equal to fetched `origin/main` on 2026-11-27.
+Work started from `2a0a682` on `main` (merge of pull request 16). This checkpoint is the commit that follows it; its engine patch hash is `05c5b2da…` and matches the frame group evidence.
 Servo remains at `0.7.0`. Clojurust remains at `540e42181ad06046116f0e2007e7f0c449efaa65`.
 The two AOT workarounds remain until a replacement pin passes their regressions.
-The [owner decisions evidence](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) records the current runs.
-Its recorded baseline is `5d2cdf8`, the commit that work started from; the committed result is `8ad6b0d`, whose engine patch hash matches the evidence.
+The [frame group evidence](../experiments/phase3/document-frame-groups-evidence-2026-11-27.json) records the current runs.
+Its engine patch differs from the previous checkpoint's patch only by one read-only probe, which lists a view's child frames.
+The [owner decisions evidence](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) records the previous checkpoint, whose patch hash matches `2a0a682`.
 
 ## Current engineering task
 
@@ -39,7 +40,7 @@ The owner required three behaviors. Each is implemented in the experimental engi
 
 | Required behavior | Status |
 |---|---|
-| Contain a nested frame's failure to that frame, preserving a healthy top-level document and unrelated views | Implemented. The parent keeps its document, scope, and pending callbacks, and receives one frame failure notice. Only the frame shows Servo's error page. See [frame failure containment](phase-3-document-scope.md#frame-failure-containment) and [frame failure notice](phase-3-document-scope.md#frame-failure-notice). |
+| Contain a nested frame's failure to that frame, preserving a healthy top-level document and unrelated views | Implemented. The parent keeps its document, scope, and pending callbacks, and receives one frame failure notice. Only the frame shows Servo's error page. Several frames that fail together, and a frame inside a failed frame, also receive one notice that names only the outermost failed frames. See [frame failure containment](phase-3-document-scope.md#frame-failure-containment), [frame failure notice](phase-3-document-scope.md#frame-failure-notice), and [frame group failure](phase-3-document-scope.md#frame-group-failure). |
 | Prevent crash recovery from rendering a `javascript:` URL document's result again | Implemented. The crash document is Servo's error page, reload fetches the document's URL, and recovery removes an inactive `javascript:` URL history entry. See [JavaScript URL crash page](phase-3-document-scope.md#javascript-url-crash-page) and [JavaScript URL history entry](phase-3-document-scope.md#javascript-url-history-entry). |
 | Preserve the correct original document sandboxing state during recovery and reload | Implemented. The crash page's load data carries the original sandboxing flags, and reload restores them even after history rebuilds the crash page. See [crash error page audit](phase-3-document-scope.md#crash-error-page-audit). |
 
@@ -95,11 +96,12 @@ python3 -m unittest discover -s experiments -p test_document_scope_runner.py -v
 
 Expected results at this checkpoint:
 
-- Sixty-one shared cases pass in single-process mode (documents part: 52, frames part: 9). Multiprocess mode adds the processes part (28 cases) for eighty-nine total.
+- Sixty-three shared cases pass in single-process mode (documents part: 52, frames part: 11). Multiprocess mode adds the processes part (32 cases) for ninety-five total.
 - Each part runs in its own engine process, prints exactly its own markers, and reports its own case count. Each repeat covers every case of its mode once.
 - Both backend loss cases pass in their own engine processes in each mode. Both existing Servo controls pass.
-- The three current negative controls each fail at their first dependent case: the previous patch without the notice, the previous send-error path, and recovery without the history drop.
+- The two current negative controls each fail at their first dependent case: one notice for each failed frame instead of one for each view fails at `frame-siblings-failure`, and removing both guards that exclude a frame inside a failed frame fails at `frame-nested-failure`.
   See [Local evidence](phase-3-document-scope.md#local-evidence) for their exact failure points.
+  The three controls of the previous checkpoint (no notice, previous send-error path, no history drop) were not rerun.
 - All 61 portable tests, formatting, and portable/probe Clippy (warnings denied) pass. Python syntax checks and twelve runner tests pass.
 
 These fixture runs need native macOS graphics and window-server access.
@@ -168,7 +170,11 @@ the `javascript:` URL crash rule, failed views at `about:blank`, the `servo-net`
 - The actual-unwind fixture uses Servo's public panic-reporting setup with `hard_fail = false`. The product keeps its existing engine configuration.
 - These builds retained the previous line-table debug configuration. Backend cleanup completed 1,472 to 1,501 milliseconds after the crash request; the unwind delay's cause is not established.
 - The send case closes the constellation's channel with a probe. A real dead script thread, a serialization error to a live event loop, and the other send-error callers have no fixture.
-- A view with several failed frames in one failure, and a failed frame whose parent is itself a failed frame, have no notice fixture.
+- A frame inside a healthy frame, a nested failure whose inner frame runs in another event loop than its failed parent, and a failed send to a group of frames have no notice fixture.
+  The group fixtures cover script-thread unwind, content-process exit, and host SIGKILL for sibling frames and for a frame inside a failed frame.
+- The group fixtures do not read the error page's sandboxing flags.
+  The content-process id probe (`frame_content_process_id_for_document_scope_probe`) reports only the newest child frame's process, so the nested inner frame's process is never read.
+  Its membership in the failed event loop rests on the event loop identifier that the child frames probe reports before the failure, which equals the outer frame's.
 - A `javascript:` URL document in a frame or at `about:blank`, a `javascript:` URL entry in a frame's history, an entry that no diff enters, and an evicted entry have no fixture.
 - One single-process run of the first negative control printed its error and then exited with signal 11 during teardown.
   In multiprocess mode, the send-error control reached the runner deadline because the engine destructor waited for shutdown completion after the fixture returned its error.
@@ -184,7 +190,8 @@ Each evidence file records runs, source and binary hashes, negative controls, an
 
 | Evidence | Checkpoint |
 |---|---|
-| [Owner decisions, 2026-11-27](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) | Current: frame failure notice, send-error rule, history drop; three negative controls |
+| [Frame groups, 2026-11-27](../experiments/phase3/document-frame-groups-evidence-2026-11-27.json) | Current: sibling frames and a nested frame in one failure, sixty-three and ninety-five cases, two negative controls |
+| [Owner decisions, 2026-11-27](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) | Frame failure notice, send-error rule, history drop; three negative controls |
 | [Frame paths, 2026-11-27](../experiments/phase3/document-frame-paths-evidence-2026-11-27.json) | Frame path checkpoint and two isolation controls |
 | [JavaScript URL crash, 2026-11-26](../experiments/phase3/document-javascript-crash-evidence-2026-11-26.json) | JavaScript URL crash page and three negative controls |
 | [Frame containment, 2026-11-26](../experiments/phase3/document-frame-containment-evidence-2026-11-26.json) | Frame containment checkpoint and three negative controls |
@@ -215,7 +222,8 @@ After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), ru
 ## Next steps
 
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
-   - Review the frame failure notice contract before product integration. A view with several failed frames in one failure has no notice fixture.
+   - Review the frame failure notice contract before product integration. The fixtures now cover a view with several failed frames in one failure and a failed frame inside a failed frame.
+     A frame inside a healthy frame, a nested failure across event loops, and a failed send to a group remain unchecked.
    - The send case closes the constellation's channel with a probe. A real dead script thread and a serialization error to a live event loop remain unchecked.
    - A failed frame in an inactive parent, a navigation that the child starts, and a pending traversal inside a frame remain unchecked.
    - A failed frame whose healthy pending navigation shares the parent's event loop also remains unchecked.

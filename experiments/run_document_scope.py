@@ -40,6 +40,7 @@ FRAME_CASES = {
     "same-site-frame-pending-navigation-failure", "cross-site-frame-pending-navigation-failure",
     "cross-site-lone-frame-pending-navigation-failure", "frame-initial-navigation-failure",
     "frame-healthy-pending-navigation-failure", "frame-history-failure", "frame-send-failure",
+    "frame-siblings-failure", "frame-nested-failure",
 }
 PROCESS_CASES = {
     "content-process-failure", "content-process-kill", "shared-process-close",
@@ -55,6 +56,8 @@ PROCESS_CASES = {
     "frame-initial-navigation-process-exit", "frame-initial-navigation-process-kill",
     "frame-healthy-pending-process-exit", "frame-healthy-pending-process-kill",
     "frame-history-process-exit", "frame-history-process-kill",
+    "frame-siblings-process-exit", "frame-siblings-process-kill",
+    "frame-nested-process-exit", "frame-nested-process-kill",
 }
 # The processes part ends content processes, so it runs only in multiprocess mode.
 PARTS = {"documents": DOCUMENT_CASES, "frames": FRAME_CASES, "processes": PROCESS_CASES}
@@ -164,7 +167,8 @@ def main():
                   "containment of a child frame's failure to that frame when the parent's own "
                   "top-level document runs in another event loop, including a frame's first "
                   "navigation, a failed frame with a healthy pending navigation, frame "
-                  "history after a contained failure, and a failed send to a frame's pipeline, "
+                  "history after a contained failure, a failed send to a frame's pipeline, "
+                  "several sibling frames that fail together, and a frame inside a failed frame, "
                   "with one frame failure notice for each surviving view, "
                   "callback and delegate unwind safety, and constellation loss in a separate engine. "
                   "Remaining replacement audits remain open."),

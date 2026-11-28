@@ -431,7 +431,7 @@
      }
  }
 
-@@ -733,8 +744,363 @@
+@@ -733,8 +744,390 @@
          script: T,
          callback: impl FnOnce(Result<JSValue, JavaScriptEvaluationError>) + 'static,
      ) {
@@ -559,6 +559,33 @@
 +        );
 +        let Ok(reply) = reply.try_recv_timeout(std::time::Duration::from_secs(5)) else {
 +            panic!("Constellation did not answer the frame ids probe");
++        };
++        reply
++    }
++
++    /// Experimental instrumentation: read every child frame of this view. Each entry holds the
++    /// frame's browsing context, its parent's browsing context, its current pipeline, whether
++    /// that pipeline is live, its crash details, whether the frame has a pending pipeline, and
++    /// the identifier of its pipeline's event loop. The order is unspecified. Page JavaScript
++    /// cannot supply these values.
++    #[doc(hidden)]
++    pub fn child_frames_for_document_scope_probe(
++        &self,
++    ) -> Vec<(
++        servo_base::id::BrowsingContextId,
++        Option<servo_base::id::BrowsingContextId>,
++        servo_base::id::PipelineId,
++        bool,
++        Option<String>,
++        bool,
++        Option<String>,
++    )> {
++        let (sent, reply) = servo_base::generic_channel::channel().unwrap();
++        self.servo().constellation_proxy().send(
++            EmbedderToConstellationMessage::ChildFramesForDocumentScopeProbe(self.id(), sent),
++        );
++        let Ok(reply) = reply.try_recv_timeout(std::time::Duration::from_secs(5)) else {
++            panic!("Constellation did not answer the child frames probe");
 +        };
 +        reply
 +    }
@@ -898,7 +925,7 @@
              #[cfg(not(feature = "multiprocess"))]
              Request::RemoveProcess(_) => {},
          }
-@@ -1342,6 +1360,198 @@
+@@ -1342,6 +1360,229 @@
                  self.handle_new_top_level_browsing_context(url, new_webview_details);
              },
              // Close a top level browsing context.
@@ -965,6 +992,37 @@
 +                        (*child, pending)
 +                    });
 +                let _ = reply.send(ids);
++            }
++            EmbedderToConstellationMessage::ChildFramesForDocumentScopeProbe(webview_id, reply) => {
++                let top = BrowsingContextId::from(webview_id);
++                let frames = self
++                    .browsing_contexts
++                    .values()
++                    .filter(|context| context.webview_id == webview_id && context.id != top)
++                    .map(|context| {
++                        let pipeline = self.pipelines.get(&context.pipeline_id);
++                        let parent = context
++                            .parent_pipeline_id
++                            .and_then(|id| self.pipelines.get(&id))
++                            .map(|parent| parent.browsing_context_id);
++                        let pending = self.webviews.get(&webview_id).is_some_and(|webview| {
++                            webview
++                                .pending_changes
++                                .iter()
++                                .any(|change| change.browsing_context_id == context.id)
++                        });
++                        (
++                            context.id,
++                            parent,
++                            context.pipeline_id,
++                            pipeline.is_some(),
++                            pipeline.and_then(|pipeline| pipeline.load_data.crash.clone()),
++                            pending,
++                            pipeline.map(|pipeline| format!("{:?}", pipeline.event_loop.id())),
++                        )
++                    })
++                    .collect();
++                let _ = reply.send(frames);
 +            }
 +            EmbedderToConstellationMessage::FailFrameSendForDocumentScopeProbe(webview_id, sent) => {
 +                let active = self
@@ -1097,7 +1155,7 @@
              EmbedderToConstellationMessage::CloseWebView(webview_id) => {
                  self.handle_close_top_level_browsing_context(webview_id);
              },
-@@ -1408,10 +1618,18 @@
+@@ -1408,10 +1649,18 @@
              EmbedderToConstellationMessage::EvaluateJavaScript(
                  webview_id,
                  evaluation_id,
@@ -1118,7 +1176,7 @@
              EmbedderToConstellationMessage::CreateMemoryReport(sender) => {
                  self.mem_profiler_chan.send(ProfilerMsg::Report(sender));
              },
-@@ -1576,6 +1794,8 @@
+@@ -1576,6 +1825,8 @@
          &mut self,
          webview_id: WebViewId,
          evaluation_id: JavaScriptEvaluationId,
@@ -1127,7 +1185,7 @@
          script: String,
      ) {
          let browsing_context_id = BrowsingContextId::from(webview_id);
-@@ -1591,12 +1811,22 @@
+@@ -1591,12 +1842,22 @@
              return;
          };
 
@@ -1150,7 +1208,7 @@
                  script,
              ))
              .is_err()
-@@ -1795,8 +2025,37 @@
+@@ -1795,8 +2056,37 @@
                  self.handle_joint_session_history_length(webview_id, response_sender);
              },
              // Notification that the new document is ready to become active
@@ -1189,7 +1247,7 @@
              },
              // Update pipeline url after redirections
              ScriptToConstellationMessage::SetFinalUrl(final_url) => {
-@@ -2025,6 +2284,20 @@
+@@ -2025,6 +2315,20 @@
                      .send(mem::ProfilerMsg::Report(sender));
              },
              ScriptToConstellationMessage::FinishJavaScriptEvaluation(evaluation_id, result) => {
@@ -1210,7 +1268,7 @@
                  self.handle_finish_javascript_evaluation(evaluation_id, result)
              },
              ScriptToConstellationMessage::ForwardKeyboardScroll(pipeline_id, scroll) => {
-@@ -2569,7 +2842,7 @@
+@@ -2569,7 +2873,7 @@
 
                      if let Ok(process) = content.spawn_multiprocess() {
                          let crossbeam_receiver = receiver.route_preserving_errors();
@@ -1219,7 +1277,7 @@
                      } else {
                          return warn!("Failed to spawn process for SW manager.");
                      }
-@@ -2968,11 +3241,21 @@
+@@ -2968,11 +3272,21 @@
      fn handle_pipeline_exited(&mut self, pipeline_id: PipelineId, exit_source: PipelineExitSource) {
          debug!("{}: Exited", pipeline_id);
          self.remove_worker_animation_frame_providers_for_pipeline(pipeline_id);
@@ -1241,7 +1299,7 @@
          // Clean up any registered interests for this pipeline.
          self.pipeline_interests.retain(|_, set| {
              set.remove(&pipeline_id);
-@@ -2989,6 +3272,34 @@
+@@ -2989,6 +3303,34 @@
          ));
      }
 
@@ -1276,7 +1334,7 @@
      #[servo_tracing::instrument(skip_all)]
      fn handle_send_error(&mut self, pipeline_id: PipelineId, error: SendError) {
          error!("Error sending message to {pipeline_id:?}: {error}",);
-@@ -2997,13 +3308,19 @@
+@@ -2997,13 +3339,19 @@
          let Some(pipeline) = self.pipelines.get(&pipeline_id) else {
              return;
          };
@@ -1301,7 +1359,7 @@
      }
 
      #[servo_tracing::instrument(skip_all)]
-@@ -3024,17 +3341,44 @@
+@@ -3024,17 +3372,44 @@
              return;
          };
          debug!("Panic handler for {event_loop_id:?}: {reason:?}",);
@@ -1348,7 +1406,7 @@
              self.handle_panic_in_webview(webview_id, &reason, &backtrace);
          }
 
-@@ -3050,6 +3394,317 @@
+@@ -3050,6 +3425,317 @@
              // confirmation from the event loop.
              self.handle_pipeline_exited(pipeline_id, PipelineExitSource::all());
          }
@@ -1666,7 +1724,7 @@
      }
 
      fn handle_panic_in_webview(
-@@ -3058,6 +3713,60 @@
+@@ -3058,6 +3744,60 @@
          reason: &String,
          backtrace: &Option<String>,
      ) {
@@ -1727,7 +1785,7 @@
          self.constellation_to_embedder_proxy
              .send(ConstellationToEmbedderMsg::Panic(
                  webview_id,
-@@ -3104,7 +3813,8 @@
+@@ -3104,7 +3844,8 @@
                      .unwrap_or_else(|| reason.clone()),
              ),
              creation_sandboxing_flag_set: SandboxingFlagSet::all(),
@@ -1737,7 +1795,7 @@
          };
 
          let is_private = false;
-@@ -3402,6 +4112,11 @@
+@@ -3402,6 +4143,11 @@
      /// <https://html.spec.whatwg.org/multipage/#destroy-a-top-level-traversable>
      fn handle_close_top_level_browsing_context(&mut self, webview_id: WebViewId) {
          debug!("{webview_id}: Closing");
@@ -1749,7 +1807,7 @@
          let browsing_context_id = BrowsingContextId::from(webview_id);
          // Step 5. Remove traversable from the user agent's top-level traversable set.
          let browsing_context =
-@@ -3471,7 +4186,7 @@
+@@ -3471,7 +4217,7 @@
      fn handle_finish_javascript_evaluation(
          &mut self,
          evaluation_id: JavaScriptEvaluationId,
@@ -1758,7 +1816,7 @@
      ) {
          self.constellation_to_embedder_proxy.send(
              ConstellationToEmbedderMsg::FinishJavaScriptEvaluation(evaluation_id, result),
-@@ -4947,6 +5662,29 @@
+@@ -4947,6 +5693,29 @@
                  return warn!("{}: Got reload event after closure", browsing_context_id);
              },
          };
@@ -1788,7 +1846,7 @@
          self.send_message_to_pipeline(
              pipeline_id,
              ScriptThreadMessage::Reload(pipeline_id),
-@@ -5840,10 +6578,65 @@
+@@ -5840,10 +6609,65 @@
          }
      }
 
@@ -1884,7 +1942,7 @@
      /// Whether or not to allow a pipeline to load a url.
 --- a/servo-constellation/tracing.rs
 +++ b/servo-constellation/tracing.rs
-@@ -61,6 +61,45 @@
+@@ -61,6 +61,48 @@
                  Self::LogEntry(..) => target!("LogEntry"),
                  Self::NewWebView(..) => target!("NewWebView"),
                  Self::CloseWebView(..) => target!("CloseWebView"),
@@ -1924,13 +1982,16 @@
 +                Self::FrameIdsForDocumentScopeProbe(..) => {
 +                    target!("FrameIdsForDocumentScopeProbe")
 +                }
++                Self::ChildFramesForDocumentScopeProbe(..) => {
++                    target!("ChildFramesForDocumentScopeProbe")
++                }
 +                Self::FailFrameSendForDocumentScopeProbe(..) => {
 +                    target!("FailFrameSendForDocumentScopeProbe")
 +                }
                  Self::SetWebViewHasSystemFocus(..) => target!("SetWebViewHasSystemFocus"),
                  Self::ForwardInputEvent(_webview_id, event, ..) => event.log_target(),
                  Self::RefreshCursor(..) => target!("RefreshCursor"),
-@@ -181,7 +220,8 @@
+@@ -181,7 +223,8 @@
                  Self::ScriptLoadedURLInIFrame(..) => target!("ScriptLoadedURLInIFrame"),
                  Self::ScriptNewIFrame(..) => target!("ScriptNewIFrame"),
                  Self::CreateAuxiliaryWebView(..) => target!("ScriptNewAuxiliary"),
@@ -2016,7 +2077,7 @@
  use servo_base::id::{LCPCandidateID, MessagePortId, PipelineId, ScriptEventLoopId, WebViewId};
  use servo_config::prefs::PrefValue;
  use servo_url::{ImmutableOrigin, ServoUrl};
-@@ -72,6 +72,56 @@
+@@ -72,6 +72,74 @@
      NewWebView(ServoUrl, NewWebViewDetails),
      /// Close a top level browsing context.
      CloseWebView(WebViewId),
@@ -2064,6 +2125,24 @@
 +        WebViewId,
 +        GenericSender<Option<(servo_base::id::BrowsingContextId, Option<PipelineId>)>>,
 +    ),
++    /// Experimental read of every child frame of a view. Each reply entry holds the frame's
++    /// browsing context, its parent's browsing context, its current pipeline, whether that
++    /// pipeline is live, its crash details, whether the frame has a pending pipeline, and the
++    /// identifier of its pipeline's event loop.
++    ChildFramesForDocumentScopeProbe(
++        WebViewId,
++        GenericSender<
++            Vec<(
++                servo_base::id::BrowsingContextId,
++                Option<servo_base::id::BrowsingContextId>,
++                PipelineId,
++                bool,
++                Option<String>,
++                bool,
++                Option<String>,
++            )>,
++        >,
++    ),
 +    /// Experimental send failure for the event loop of the active top-level document's newest
 +    /// child frame. The constellation's channel to that event loop closes, and one message to
 +    /// the frame's pipeline then fails to send. The reply is `None` without such a frame.
@@ -2073,7 +2152,7 @@
      /// Set whether a WebView has system focus. This corresponds to the [HTML
      /// specification's] concept of "system focus" and is distinct from the browsing
      /// context or element that has focus within the WebView.
-@@ -97,7 +147,13 @@
+@@ -97,7 +165,13 @@
      PaintMetric(PipelineId, PaintMetricEvent),
      /// Evaluate a JavaScript string in the context of a `WebView`. When execution is complete or an
      /// error is encountered, a correpsonding message will be sent to the embedding layer.
