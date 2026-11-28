@@ -45,6 +45,8 @@ struct Delegate {
     held: RefCell<Vec<WebResourceLoad>>,
     // Serve withheld paths as a counting script instead of holding them.
     serve_held: Cell<bool>,
+    // Document paths that the host withholds while they are listed. Others are served.
+    hold_documents: RefCell<Vec<String>>,
     // Markup for one fixture path that depends on run-time data, such as a loopback port.
     frame_markup: RefCell<Option<(String, String)>>,
     // For each intercepted request of the `javascript:` URL source page, whether it carried a
@@ -207,6 +209,15 @@ impl WebViewDelegate for Delegate {
             }
             return;
         }
+        if self
+            .hold_documents
+            .borrow()
+            .iter()
+            .any(|path| path == url.path())
+        {
+            self.held.borrow_mut().push(load);
+            return;
+        }
         if url.host_str() == Some("127.0.0.1") && url.port() == Some(self.loopback_port.get()) {
             // Use the real HTTP loader for the redirect; interception skips that path.
             return;
@@ -223,10 +234,16 @@ impl WebViewDelegate for Delegate {
                 .insert("content-type", "text/html; charset=utf-8".parse().unwrap());
             let mut intercepted = load.intercept(response);
             // The outer frame of a nested group contains a frame of its own site.
-            let inner = if url.path() == NESTED_OUTER {
-                format!("<iframe src='{NESTED_INNER}'></iframe>")
-            } else {
-                String::new()
+            let inner = match url.path() {
+                NESTED_OUTER => format!("<iframe src='{NESTED_INNER}'></iframe>"),
+                // The child starts its own navigation when its parent asks.
+                CHILD_NAV_CROSS => format!(
+                    "<script>addEventListener('message', event => {{ if (event.data === 'navigate') location.href = {CHILD_NAV_CROSS_TARGET:?} }})</script>"
+                ),
+                CHILD_NAV_SAME => format!(
+                    "<script>addEventListener('message', event => {{ if (event.data === 'navigate') location.href = {CHILD_NAV_SAME_TARGET:?} }})</script>"
+                ),
+                _ => String::new(),
             };
             intercepted.send_body_data(
                 format!(
@@ -3297,6 +3314,12 @@ const FRAME_ACTIVE_CHILD: &str = "/frame-active-child";
 const FRAME_HISTORY_FIRST: &str = "/frame-history-first";
 const FRAME_HISTORY_SECOND: &str = "/frame-history-second";
 const FRAME_SEND_CHILD: &str = "/frame-send-child";
+// Cross-site children that start their own navigation when their parent posts `navigate`.
+// The target of the first is a third site, and the target of the second is the child's site.
+const CHILD_NAV_CROSS: &str = "/frame-child-nav-cross";
+const CHILD_NAV_SAME: &str = "/frame-child-nav-same";
+const CHILD_NAV_CROSS_TARGET: &str = "https://child-target.invalid/held-child-navigation";
+const CHILD_NAV_SAME_TARGET: &str = "/held-child-navigation-same";
 // The parent's view of its frame: the last reported path, the frame's load events, the joint
 // session history length, and the frame's URL or the error that a cross-origin read raises.
 const FRAME_VIEW: &str = "String(window.frameState) + '|' + String(window.frameLoads) + '|' + history.length + '|' + (() => { try { return String(frames[0].location.href); } catch (error) { return error.name; } })()";
@@ -3313,6 +3336,12 @@ enum FramePath {
     History,
     // A loaded cross-site child in an event loop of its own, with no pending navigation.
     Loaded,
+    // A loaded cross-site child starts a navigation to a third site, and the host withholds its
+    // response. The pending pipeline runs in a third event loop when the child's fails.
+    ChildNavigation,
+    // A loaded cross-site child starts a navigation within its own site, and the host withholds
+    // its response. The pending pipeline shares the failed event loop.
+    ChildSameSite,
 }
 
 impl FramePath {
@@ -3322,6 +3351,17 @@ impl FramePath {
             Self::HealthyPending => "/frame-healthy-pending-parent",
             Self::History => "/frame-history-parent",
             Self::Loaded => "/frame-send-parent",
+            Self::ChildNavigation => "/frame-child-navigation-parent",
+            Self::ChildSameSite => "/frame-child-same-site-parent",
+        }
+    }
+
+    // The child's path and the withheld path of its own navigation, for the child-started paths.
+    fn child_navigation(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::ChildNavigation => Some((CHILD_NAV_CROSS, "/held-child-navigation")),
+            Self::ChildSameSite => Some((CHILD_NAV_SAME, CHILD_NAV_SAME_TARGET)),
+            _ => None,
         }
     }
 
@@ -3331,6 +3371,8 @@ impl FramePath {
             Self::HealthyPending => format!("{FRAME_ORIGIN}{FRAME_ACTIVE_CHILD}"),
             Self::History => format!("{FRAME_ORIGIN}{FRAME_HISTORY_FIRST}"),
             Self::Loaded => format!("{FRAME_ORIGIN}{FRAME_SEND_CHILD}"),
+            Self::ChildNavigation => format!("{FRAME_ORIGIN}{CHILD_NAV_CROSS}"),
+            Self::ChildSameSite => format!("{FRAME_ORIGIN}{CHILD_NAV_SAME}"),
         }
     }
 
@@ -3341,6 +3383,8 @@ impl FramePath {
             Self::HealthyPending => format!("{FRAME_ACTIVE_CHILD}|1|1|SecurityError"),
             Self::History => format!("{FRAME_HISTORY_SECOND}|2|2|SecurityError"),
             Self::Loaded => format!("{FRAME_SEND_CHILD}|1|1|SecurityError"),
+            Self::ChildNavigation => format!("{CHILD_NAV_CROSS}|1|1|SecurityError"),
+            Self::ChildSameSite => format!("{CHILD_NAV_SAME}|1|1|SecurityError"),
         }
     }
 
@@ -3351,6 +3395,8 @@ impl FramePath {
             Self::HealthyPending => format!("{FRAME_ACTIVE_CHILD}|2|1|SecurityError"),
             Self::History => format!("{FRAME_HISTORY_SECOND}|3|2|SecurityError"),
             Self::Loaded => format!("{FRAME_SEND_CHILD}|2|1|SecurityError"),
+            Self::ChildNavigation => format!("{CHILD_NAV_CROSS}|2|1|SecurityError"),
+            Self::ChildSameSite => format!("{CHILD_NAV_SAME}|2|1|SecurityError"),
         }
     }
 }
@@ -3421,6 +3467,26 @@ fn frame_path_failure(
                 readiness(&delegate, parent).contains(&"load-complete")
             })?;
         }
+        FramePath::ChildNavigation | FramePath::ChildSameSite => {
+            wait_text(servo, &view, deadline, parent, FRAME_VIEW, &path.before())?;
+            drive_until(servo, deadline, || {
+                readiness(&delegate, parent).contains(&"load-complete")
+            })?;
+            // The child's own script starts the navigation. The host never evaluates in the frame.
+            text(
+                scoped(
+                    servo,
+                    &view,
+                    deadline,
+                    parent,
+                    "frames[0].postMessage('navigate', '*'); 'posted'",
+                )?,
+                parent,
+                "posted",
+            )?;
+            let held_path = path.child_navigation().unwrap().1;
+            drive_until(servo, deadline, || held_count(&delegate, held_path) == 1)?;
+        }
         FramePath::History => {
             wait_text(
                 servo,
@@ -3488,7 +3554,7 @@ fn frame_path_failure(
                 && survivor.0.content_process_id_for_document_scope_probe() != failed_process,
             "The failed frame pipeline did not run in a process of its own"
         );
-        if path == FramePath::HealthyPending {
+        if matches!(path, FramePath::HealthyPending | FramePath::ChildNavigation) {
             let pending_process = view.pending_frame_content_process_id_for_document_scope_probe();
             ensure!(
                 pending_process != host
@@ -3497,21 +3563,46 @@ fn frame_path_failure(
                 "The healthy pending navigation did not run in a third process"
             );
         }
+        if path == FramePath::ChildSameSite {
+            ensure!(
+                view.pending_frame_content_process_id_for_document_scope_probe() == failed_process,
+                "The child's same-site navigation did not share the failed process"
+            );
+        }
         Some((parent_process, failed_process))
     } else {
         None
     };
-    // The constellation's record of the frame. Only the initial and healthy pending paths have a
-    // pending pipeline.
+    // The constellation's record of the frame. The initial, healthy pending, and child-started
+    // paths have a pending pipeline.
     let before = frame_state(&view)?;
     ensure!(
         before.1
             && before.2.is_none()
-            && before.3 == matches!(path, FramePath::Initial | FramePath::HealthyPending),
+            && before.3
+                == matches!(
+                    path,
+                    FramePath::Initial
+                        | FramePath::HealthyPending
+                        | FramePath::ChildNavigation
+                        | FramePath::ChildSameSite
+                ),
         "Unexpected child frame state before the failure: {before:?}"
     );
     // In the initial path the failed pipeline is pending. Otherwise it is the current child.
-    let failed_frame = match (path, frame_ids(&view)?) {
+    // In the child's same-site path, the current and the pending pipeline fail together, and the
+    // notice names the frame once, with either of them.
+    let same_site_pending = match (path, frame_ids(&view)?) {
+        (FramePath::ChildSameSite, (browsing_context_id, Some(pipeline_id))) => Some(FailedFrame {
+            browsing_context_id,
+            pipeline_id,
+        }),
+        (FramePath::ChildSameSite, ids) => {
+            anyhow::bail!("The frame had no pending pipeline: {ids:?}")
+        }
+        _ => None,
+    };
+    let mut failed_frame = match (path, frame_ids(&view)?) {
         (FramePath::Initial, (browsing_context_id, Some(pipeline_id))) => FailedFrame {
             browsing_context_id,
             pipeline_id,
@@ -3632,6 +3723,14 @@ fn frame_path_failure(
         failure.how()
     );
     // The engine notice precedes the frame's crash navigation, which waits for the parent.
+    let named_pending = same_site_pending.is_some_and(|pending| {
+        notices
+            .first()
+            .is_some_and(|notice| notice.frames == [pending])
+    });
+    if named_pending {
+        failed_frame = same_site_pending.unwrap();
+    }
     frame_notice(&notices, parent, failed_frame, failure)?;
     ensure!(
         frame_held.as_ref().is_some_and(gone),
@@ -3713,6 +3812,9 @@ fn frame_path_failure(
     match path {
         FramePath::Initial => release_held_document(&delegate, "/held-initial-frame")?,
         FramePath::HealthyPending => release_held_document(&delegate, "/held-healthy-navigation")?,
+        FramePath::ChildNavigation | FramePath::ChildSameSite => {
+            release_held_document(&delegate, path.child_navigation().unwrap().1)?
+        }
         FramePath::History | FramePath::Loaded => ensure!(
             delegate.held.borrow().is_empty(),
             "Unexpected withheld request"
@@ -3796,6 +3898,35 @@ fn frame_path_failure(
                 "/after-frame-healthy-pending-failure",
             )?;
             "loaded child failed with a healthy pending navigation in a third event loop, pending navigation closed, crash page replaced the child, frame load event fired, late response ignored, reload and new URL recover"
+        }
+        FramePath::ChildNavigation | FramePath::ChildSameSite => {
+            view.reload();
+            drive_until(servo, deadline, || {
+                delegate.active.get().is_some_and(|id| id != parent)
+            })?;
+            wait_marker(servo, &view, deadline, parent_path)?;
+            let reloaded = identity(servo, &view, deadline)?;
+            ensure!(reloaded != parent, "Reload kept the parent scope");
+            stale(scoped(servo, &view, deadline, parent, "'obsolete'")?)?;
+            // The original child loads again, without its earlier navigation.
+            wait_text(servo, &view, deadline, reloaded, FRAME_VIEW, &path.before())?;
+            ensure!(
+                frame_state(&view)?.2.is_none() && !frame_state(&view)?.3,
+                "Reload kept the frame's crash page or its navigation"
+            );
+            load(
+                servo,
+                &view,
+                deadline,
+                "/after-frame-child-navigation-failure",
+            )?;
+            if path == FramePath::ChildNavigation {
+                "loaded child failed while its own navigation to a third site waited in a third event loop, pending navigation closed, history unchanged, crash page replaced the child, frame load event fired, late response ignored, reload and new URL recover"
+            } else if named_pending {
+                "loaded child failed while its own same-site navigation waited in the failed event loop, the notice named the pending pipeline, pending navigation closed with it, history unchanged, crash page replaced the child, frame load event fired, late response ignored, reload and new URL recover"
+            } else {
+                "loaded child failed while its own same-site navigation waited in the failed event loop, the notice named the current pipeline, pending navigation closed with it, history unchanged, crash page replaced the child, frame load event fired, late response ignored, reload and new URL recover"
+            }
         }
         FramePath::Loaded => {
             view.reload();
@@ -4459,6 +4590,849 @@ fn frame_group_failure(
             "frames"
         },
         notices[0].reason,
+    ))
+}
+
+const INACTIVE_PARENT: &str = "/frame-inactive-parent";
+const INACTIVE_NEXT: &str = "/frame-inactive-next";
+const INACTIVE_CHILD: &str = "/frame-inactive-child";
+
+// A frame of a document that is no longer active. The view navigated away, and session history
+// keeps the old document with its live frame. A popup of the frame's site shares the frame's
+// event loop, and the host fails that event loop through the popup, because the probes that
+// fail a frame read only the active document's frames. The active document is in another
+// event loop. The notice for this layout is an observed rule, not an owner decision.
+#[allow(clippy::too_many_arguments)]
+fn frame_inactive_parent_failure(
+    servo: &Servo,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    engine_errors: &BackendErrors,
+    multiprocess: bool,
+    survivor: (&WebView, DocumentIdentity),
+    failure: ParseFailure,
+) -> Result<String> {
+    ensure!(!failure.is_send(), "Only frame paths cover a failed send");
+    let reason = failure.reason();
+    let delegate = Rc::new(Delegate::default());
+    *delegate.frame_markup.borrow_mut() = Some((
+        INACTIVE_PARENT.into(),
+        format!(
+            "{FRAME_LISTENER}<iframe {FRAME_LOADS} src='{FRAME_ORIGIN}{INACTIVE_CHILD}'></iframe>"
+        ),
+    ));
+    let view = WebViewBuilder::new(servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}{INACTIVE_PARENT}"))?)
+        .delegate(delegate.clone())
+        .build();
+    drive_until(servo, deadline, || delegate.active.get().is_some())?;
+    wait_marker(servo, &view, deadline, INACTIVE_PARENT)?;
+    let first = identity(servo, &view, deadline)?;
+    let loaded = format!("{INACTIVE_CHILD}|1|1|SecurityError");
+    wait_text(servo, &view, deadline, first, FRAME_VIEW, &loaded)?;
+    drive_until(servo, deadline, || {
+        readiness(&delegate, first).contains(&"load-complete")
+    })?;
+    // This popup loads the frame's site, so it shares the frame's event loop.
+    let (child_loop, child_loop_delegate, _) =
+        open_popup(servo, &view, &delegate, context.clone(), deadline, first)?;
+    child_loop.load(url::Url::parse(&format!("{FRAME_ORIGIN}{FRAME_SIBLING}"))?);
+    wait_marker(servo, &child_loop, deadline, FRAME_SIBLING)?;
+    let child_loop_document = identity(servo, &child_loop, deadline)?;
+    let processes = if multiprocess {
+        let parent_process = view.content_process_id_for_document_scope_probe();
+        let frame_process = view.frame_content_process_id_for_document_scope_probe();
+        ensure!(
+            frame_process != parent_process
+                && frame_process != std::process::id()
+                && child_loop.content_process_id_for_document_scope_probe() == frame_process
+                && survivor.0.content_process_id_for_document_scope_probe() != frame_process,
+            "The frame and the child-site popup did not share a process of their own"
+        );
+        Some((parent_process, frame_process))
+    } else {
+        None
+    };
+    let before = child_frames(&view);
+    let (frame_context, _) = frame_ids(&view)?;
+    ensure!(
+        before.len() == 1
+            && before[0].context == frame_context
+            && before[0].live
+            && before[0].crash.is_none()
+            && !before[0].pending
+            && before[0].event_loop.is_some(),
+        "Unexpected child frames before the navigation: {before:?}"
+    );
+    let failed_loop = before[0].event_loop.clone();
+    let failed_frame = FailedFrame {
+        browsing_context_id: frame_context,
+        pipeline_id: before[0].pipeline,
+    };
+    // Navigate away. Session history keeps the first document and its live frame.
+    load(servo, &view, deadline, INACTIVE_NEXT)?;
+    let second = identity(servo, &view, deadline)?;
+    ensure!(
+        second != first,
+        "The navigation kept the first document's scope"
+    );
+    stale(scoped(servo, &view, deadline, first, "'obsolete'")?)?;
+    ensure!(
+        same_frames(&child_frames(&view), &before)
+            && view.frame_state_for_document_scope_probe().is_none(),
+        "The inactive parent's frame did not stay live and apart from the active document: {:?}",
+        child_frames(&view)
+    );
+    // This popup's `about:blank` document shares the active document's event loop.
+    let (second_loop, second_loop_delegate, second_loop_document) =
+        open_popup(servo, &view, &delegate, context.clone(), deadline, second)?;
+    let ticket = delegate.ticket(second)?;
+    let reply = scoped(servo, &view, deadline, second, "'before-inactive-failure'")?;
+    ensure!(reply.is_ok(), "Inactive parent control failed");
+    let second_loop_ticket = second_loop_delegate.ticket(second_loop_document)?;
+    let second_loop_reply = scoped(
+        servo,
+        &second_loop,
+        deadline,
+        second_loop_document,
+        "'second-loop-retained'",
+    )?;
+    ensure!(
+        second_loop_reply.is_ok(),
+        "Active-loop popup control failed"
+    );
+    let child_loop_ticket = child_loop_delegate.ticket(child_loop_document)?;
+    let child_loop_reply = scoped(
+        servo,
+        &child_loop,
+        deadline,
+        child_loop_document,
+        "'child-loop-retained'",
+    )?;
+    ensure!(child_loop_reply.is_ok(), "Child-loop popup control failed");
+    let gone = |frames: &[ChildFrame]| {
+        frames.iter().any(|frame| {
+            frame.context == frame_context && frame.pipeline == before[0].pipeline && !frame.live
+        })
+    };
+    // Hold the active document's script thread, so its callbacks cannot complete until the
+    // constellation has handled the failure.
+    let (audit, child_loop_audit, handled, held) = view
+        .with_paused_script_for_document_scope_probe(|| {
+            let audit = CleanupAudit::queue(&view, Some(second), &delegate, true);
+            let queue_child_loop = || {
+                CleanupAudit::queue(
+                    &child_loop,
+                    Some(child_loop_document),
+                    &child_loop_delegate,
+                    true,
+                )
+            };
+            let child_loop_audit = match failure {
+                ParseFailure::ScriptThread => {
+                    child_loop.crash_script_thread_for_document_scope_probe();
+                    queue_child_loop()
+                }
+                ParseFailure::ProcessExit => child_loop
+                    .with_terminating_content_process_for_document_scope_probe(queue_child_loop),
+                ParseFailure::ProcessKill => child_loop
+                    .with_killed_content_process_for_document_scope_probe(queue_child_loop),
+                ParseFailure::Send
+                | ParseFailure::DeadThreadSend
+                | ParseFailure::DeadProcessSend => {
+                    unreachable!("Only frame paths cover a failed send")
+                }
+            };
+            let barrier = deadline.min(Instant::now() + Duration::from_secs(4));
+            // A revocation of the active document also ends this wait, so the check below
+            // reports it.
+            let handled = drive_until(servo, barrier, || {
+                child_loop_audit.calls.get() == 8
+                    && (gone(&child_frames(&view))
+                        || audit.calls.get() > 0
+                        || delegate.crashed.get())
+            })
+            .and_then(|()| settle(servo, barrier, 200));
+            let held = (
+                audit.calls.get(),
+                delegate.active.get(),
+                delegate.crash_reasons.borrow().clone(),
+                child_frames(&view),
+                delegate.frame_failures.borrow().clone(),
+            );
+            (audit, child_loop_audit, handled, held)
+        });
+    handled.map_err(|error| {
+        anyhow::anyhow!(
+            "The inactive parent's frame {} was not handled within the barrier: {error}; frames={:?}",
+            failure.how(),
+            child_frames(&view)
+        )
+    })?;
+    let (calls, active, crashes, frames_held, notices) = held;
+    ensure!(
+        (calls, active, crashes.as_slice()) == (0, Some(second), &[][..]),
+        "The inactive parent's frame {} revoked the active document: calls={calls}, active={active:?}, crashes={crashes:?}",
+        failure.how()
+    );
+    // Observed rule: one notice names the active document and the failed frame of the inactive
+    // document. The owner has not decided whether such a notice belongs to the active document.
+    frame_notice(&notices, second, failed_frame, failure)?;
+    ensure!(
+        gone(&frames_held),
+        "The failed frame pipeline was not closed: {frames_held:?}"
+    );
+    // The active document's held callbacks complete in the same document.
+    drive_until(servo, deadline, || audit.calls.get() == 8)?;
+    audit.check_completed(second)?;
+    // The child-site popup's own top-level document ran in the failed event loop.
+    child_loop_audit.check()?;
+    drive_until(servo, deadline, || child_loop_delegate.crashed.get())?;
+    ensure!(
+        child_loop_delegate.crash_reasons.borrow().as_slice() == [reason]
+            && child_loop.pending_evaluations_for_document_scope_probe() == 0,
+        "Unexpected child-loop popup failure notifications: {:?}",
+        child_loop_delegate.crash_reasons.borrow()
+    );
+    child_loop_delegate.reject(child_loop_ticket, child_loop_reply)?;
+    ensure!(
+        second_loop_delegate.active.get() == Some(second_loop_document)
+            && second_loop_delegate.generation.get() == second_loop_ticket.generation
+            && !second_loop_delegate.crashed.get(),
+        "The failure revoked a document in the active document's event loop"
+    );
+    ensure!(
+        second_loop_delegate.deliver(second_loop_ticket, second_loop_reply),
+        "The active loop's retained reply lost its scope"
+    );
+    // The inactive parent's frame gets Servo's error page in a new pipeline and event loop.
+    let mut crashed = None;
+    drive_until(servo, deadline, || {
+        crashed = child_frames(&view).into_iter().find(|frame| {
+            frame.context == frame_context
+                && frame.pipeline != before[0].pipeline
+                && frame.live
+                && !frame.pending
+                && frame.crash.is_some()
+        });
+        crashed.is_some()
+    })
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "The inactive parent's frame did not activate a new pipeline: {error}; frames={:?}",
+            child_frames(&view)
+        )
+    })?;
+    let crashed = crashed.unwrap();
+    ensure!(
+        crashed
+            .crash
+            .as_deref()
+            .is_some_and(|crash| crash.starts_with(reason))
+            && crashed.event_loop != failed_loop
+            && child_frames(&view).len() == 1,
+        "The inactive parent's frame did not get a crash page: {crashed:?}"
+    );
+    if let Some((parent_process, frame_process)) = processes {
+        // The active frame probe has no frame, so the crash page's process is not readable.
+        // The old frame process must be gone, and the active document keeps its own process.
+        ensure!(
+            view.content_process_id_for_document_scope_probe() == parent_process
+                && frame_process != parent_process,
+            "The active document changed process"
+        );
+    }
+    ensure!(
+        readiness(&delegate, second) == ["dom-ready", "load-complete"]
+            && delegate.active.get() == Some(second)
+            && delegate.generation.get() == ticket.generation
+            && !delegate.crashed.get()
+            && view.pending_evaluations_for_document_scope_probe() == 0,
+        "The active document did not keep its document: readiness={:?}, active={:?}, crashes={:?}",
+        readiness(&delegate, second),
+        delegate.active.get(),
+        delegate.crash_reasons.borrow()
+    );
+    ensure!(
+        delegate.deliver(ticket, reply),
+        "The active document's retained reply lost its scope"
+    );
+    // Nothing later changes the frame, the active document, or the notice.
+    let errors_before = engine_errors.0.borrow().len();
+    settle(servo, deadline, 300)?;
+    ensure!(
+        identity(servo, &view, deadline)? == second
+            && child_frames(&view) == [crashed.clone()]
+            && delegate.crash_reasons.borrow().is_empty()
+            && !second_loop_delegate.crashed.get(),
+        "The active document or the frame changed after the crash page loaded: frames={:?}",
+        child_frames(&view)
+    );
+    let late_errors = engine_errors.0.borrow()[errors_before..].to_vec();
+    ensure!(
+        late_errors.is_empty(),
+        "The settled frame raised engine errors: {late_errors:?}"
+    );
+    frame_notice(
+        &delegate.frame_failures.borrow(),
+        second,
+        failed_frame,
+        failure,
+    )?;
+    no_frame_notice("active-loop popup", &second_loop_delegate)?;
+    no_frame_notice("child-site popup", &child_loop_delegate)?;
+    // Back restores the first document with a new identity. Its frame shows the same error
+    // page, and no dead pipeline returns.
+    let traversal = view.go_back(1);
+    drive_until(servo, deadline, || {
+        delegate.traversals.borrow().contains(&traversal)
+    })?;
+    wait_marker(servo, &view, deadline, INACTIVE_PARENT)?;
+    let restored = identity(servo, &view, deadline)?;
+    ensure!(
+        restored != first && restored != second,
+        "Back to the inactive parent kept an old scope"
+    );
+    stale(scoped(servo, &view, deadline, first, "'obsolete'")?)?;
+    stale(scoped(servo, &view, deadline, second, "'obsolete'")?)?;
+    ensure!(
+        frame_state(&view)? == (crashed.pipeline, true, crashed.crash.clone(), false)
+            && child_frames(&view) == [crashed.clone()],
+        "Back did not restore the parent with the frame's crash page: {:?}",
+        child_frames(&view)
+    );
+    text(
+        scoped(servo, &view, deadline, restored, FRAME_VIEW)?,
+        restored,
+        &format!("{INACTIVE_CHILD}|2|2|SecurityError"),
+    )?;
+    ensure!(
+        delegate.crash_reasons.borrow().is_empty() && delegate.frame_failures.borrow().len() == 1,
+        "Back changed the failure notifications"
+    );
+    // Reload loads the child again. A new URL recovers.
+    view.reload();
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != restored)
+    })?;
+    wait_marker(servo, &view, deadline, INACTIVE_PARENT)?;
+    let reloaded = identity(servo, &view, deadline)?;
+    ensure!(
+        reloaded != restored,
+        "Reload kept the restored parent's scope"
+    );
+    stale(scoped(servo, &view, deadline, restored, "'obsolete'")?)?;
+    wait_text(
+        servo,
+        &view,
+        deadline,
+        reloaded,
+        FRAME_VIEW,
+        &format!("{INACTIVE_CHILD}|1|2|SecurityError"),
+    )?;
+    ensure!(
+        frame_state(&view)?.2.is_none(),
+        "Reload kept the frame's crash page"
+    );
+    load(servo, &view, deadline, "/after-frame-inactive-failure")?;
+    // The child-site popup recovers with a new URL.
+    stale(scoped(
+        servo,
+        &child_loop,
+        deadline,
+        child_loop_document,
+        "'obsolete'",
+    )?)?;
+    load(
+        servo,
+        &child_loop,
+        deadline,
+        "/after-frame-inactive-sibling-failure",
+    )?;
+    let child_loop_recovered = identity(servo, &child_loop, deadline)?;
+    text(
+        scoped(
+            servo,
+            &child_loop,
+            deadline,
+            child_loop_recovered,
+            "'child-loop-recovered'",
+        )?,
+        child_loop_recovered,
+        "child-loop-recovered",
+    )?;
+    text(
+        scoped(
+            servo,
+            &second_loop,
+            deadline,
+            second_loop_document,
+            "'second-loop-survivor'",
+        )?,
+        second_loop_document,
+        "second-loop-survivor",
+    )?;
+    let (survivor, survivor_document) = survivor;
+    text(
+        scoped(
+            servo,
+            survivor,
+            deadline,
+            survivor_document,
+            "'inactive-survivor'",
+        )?,
+        survivor_document,
+        "inactive-survivor",
+    )?;
+    ensure!(
+        audit.calls.get() == 8 && child_loop_audit.calls.get() == 8,
+        "Inactive parent recovery repeated callbacks"
+    );
+    Ok(format!(
+        "{}, active document kept its document, scope, and retained reply, 8 held callbacks completed, one frame notice ({:?}) that names the active document and the failed frame of the inactive document, child-site popup revoked before 8 callbacks, active-loop popup kept scope, the inactive document's frame got a crash page in a new event loop, back restored the first document with a new identity and the same crash page, reload and new URL recover, survivor usable",
+        failure.how(),
+        notices[0].reason,
+    ))
+}
+
+const TRAVERSAL_PARENT: &str = "/frame-traversal-parent";
+
+// A history traversal inside a frame that is pending when the event loop of its target fails.
+// A first failure ends the frame's event loop with two documents in its history, so the first
+// document's entry must reload. Back then starts a traversal whose new pipeline waits for its
+// response headers alone in a new event loop, and a second failure ends that event loop.
+#[allow(clippy::too_many_arguments)]
+fn frame_traversal_failure(
+    servo: &Servo,
+    context: Rc<dyn RenderingContext>,
+    deadline: Instant,
+    engine_errors: &BackendErrors,
+    multiprocess: bool,
+    survivor: (&WebView, DocumentIdentity),
+    failure: ParseFailure,
+) -> Result<String> {
+    ensure!(!failure.is_send(), "Only frame paths cover a failed send");
+    let reason = failure.reason();
+    let delegate = Rc::new(Delegate::default());
+    *delegate.frame_markup.borrow_mut() = Some((
+        TRAVERSAL_PARENT.into(),
+        format!(
+            "{FRAME_LISTENER}<iframe {FRAME_LOADS} src='{FRAME_ORIGIN}{FRAME_HISTORY_FIRST}'></iframe>"
+        ),
+    ));
+    let view = WebViewBuilder::new(servo, context.clone())
+        .url(url::Url::parse(&format!("{ORIGIN}{TRAVERSAL_PARENT}"))?)
+        .delegate(delegate.clone())
+        .build();
+    drive_until(servo, deadline, || delegate.active.get().is_some())?;
+    wait_marker(servo, &view, deadline, TRAVERSAL_PARENT)?;
+    let parent = identity(servo, &view, deadline)?;
+    wait_text(
+        servo,
+        &view,
+        deadline,
+        parent,
+        FRAME_VIEW,
+        &format!("{FRAME_HISTORY_FIRST}|1|1|SecurityError"),
+    )?;
+    drive_until(servo, deadline, || {
+        readiness(&delegate, parent).contains(&"load-complete")
+    })?;
+    // The frame's second document comes from the same site, so both documents share one
+    // event loop, and the first failure ends both.
+    text(
+        scoped(
+            servo,
+            &view,
+            deadline,
+            parent,
+            &format!(
+                "document.querySelector('iframe').src = '{FRAME_ORIGIN}{FRAME_HISTORY_SECOND}'; 'navigating'"
+            ),
+        )?,
+        parent,
+        "navigating",
+    )?;
+    let second_view = format!("{FRAME_HISTORY_SECOND}|2|2|SecurityError");
+    wait_text(servo, &view, deadline, parent, FRAME_VIEW, &second_view)?;
+    // This popup's `about:blank` document shares the parent's event loop.
+    let (parent_loop, parent_loop_delegate, parent_loop_document) =
+        open_popup(servo, &view, &delegate, context.clone(), deadline, parent)?;
+    let second = frame_state(&view)?;
+    let (frame_context, _) = frame_ids(&view)?;
+    ensure!(
+        second.1 && second.2.is_none() && !second.3,
+        "Unexpected child frame state before the first failure: {second:?}"
+    );
+    let first_failed = FailedFrame {
+        browsing_context_id: frame_context,
+        pipeline_id: second.0,
+    };
+    let processes = if multiprocess {
+        let host = std::process::id();
+        let parent_process = view.content_process_id_for_document_scope_probe();
+        let frame_process = view.frame_content_process_id_for_document_scope_probe();
+        ensure!(
+            parent_process != host
+                && frame_process != host
+                && frame_process != parent_process
+                && parent_loop.content_process_id_for_document_scope_probe() == parent_process
+                && survivor.0.content_process_id_for_document_scope_probe() != frame_process,
+            "The frame did not run in a process of its own"
+        );
+        Some((parent_process, frame_process))
+    } else {
+        None
+    };
+    // The first failure. Nothing waits at a barrier.
+    match failure {
+        ParseFailure::ScriptThread => {
+            ensure!(
+                view.crash_frame_script_thread_for_document_scope_probe() == Some(true),
+                "Probe did not reach a frame pipeline in a separate event loop"
+            );
+        }
+        ParseFailure::ProcessExit => {
+            view.with_terminating_frame_content_process_for_document_scope_probe(|| ())
+        }
+        ParseFailure::ProcessKill => {
+            view.with_killed_frame_content_process_for_document_scope_probe(|| ())
+        }
+        ParseFailure::Send | ParseFailure::DeadThreadSend | ParseFailure::DeadProcessSend => {
+            unreachable!("Only frame paths cover a failed send")
+        }
+    }
+    let mut first_page = None;
+    drive_until(servo, deadline, || {
+        first_page = frame_state(&view)
+            .ok()
+            .filter(|state| state.0 != second.0 && state.1 && !state.3);
+        first_page.is_some()
+    })
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "The first failure did not give the frame a crash page: {error}; frame={:?}",
+            frame_state(&view).ok()
+        )
+    })?;
+    let first_page = first_page.unwrap();
+    ensure!(
+        first_page
+            .2
+            .as_deref()
+            .is_some_and(|crash| crash.starts_with(reason)),
+        "The first failure's crash page has the wrong reason: {first_page:?}"
+    );
+    wait_text(
+        servo,
+        &view,
+        deadline,
+        parent,
+        FRAME_VIEW,
+        &format!("{FRAME_HISTORY_SECOND}|3|2|SecurityError"),
+    )?;
+    group_notice(
+        &delegate.frame_failures.borrow(),
+        parent,
+        &[first_failed],
+        failure,
+    )?;
+    // Back rebuilds the first document, and the host withholds its response. The traversal
+    // stays pending, and the frame still shows the first crash page.
+    delegate
+        .hold_documents
+        .borrow_mut()
+        .push(FRAME_HISTORY_FIRST.to_owned());
+    let traversal = view.go_back(1);
+    drive_until(servo, deadline, || {
+        held_count(&delegate, FRAME_HISTORY_FIRST) == 1
+    })?;
+    settle(servo, deadline, 300)?;
+    let (_, pending) = frame_ids(&view)?;
+    let before = frame_state(&view)?;
+    ensure!(
+        pending.is_some()
+            && before == (first_page.0, true, first_page.2.clone(), true)
+            && !delegate.traversals.borrow().contains(&traversal),
+        "The back traversal is not pending: pending={pending:?}, frame={before:?}"
+    );
+    ensure!(
+        delegate.active.get() == Some(parent)
+            && delegate.crash_reasons.borrow().is_empty()
+            && delegate.frame_failures.borrow().len() == 1
+            && view
+                .crash_pending_script_thread_for_document_scope_probe()
+                .is_none(),
+        "The pending traversal changed the parent or created a top-level pipeline"
+    );
+    let failed_pending = FailedFrame {
+        browsing_context_id: frame_context,
+        pipeline_id: pending.unwrap(),
+    };
+    if let Some((parent_process, _)) = processes {
+        let pending_process = view.pending_frame_content_process_id_for_document_scope_probe();
+        ensure!(
+            pending_process != std::process::id()
+                && pending_process != parent_process
+                && pending_process != view.frame_content_process_id_for_document_scope_probe(),
+            "The pending traversal did not run in a process of its own"
+        );
+    }
+    let ticket = delegate.ticket(parent)?;
+    let reply = scoped(servo, &view, deadline, parent, "'before-traversal-failure'")?;
+    ensure!(reply.is_ok(), "Frame traversal control failed");
+    let parent_loop_ticket = parent_loop_delegate.ticket(parent_loop_document)?;
+    let parent_loop_reply = scoped(
+        servo,
+        &parent_loop,
+        deadline,
+        parent_loop_document,
+        "'parent-loop-retained'",
+    )?;
+    ensure!(
+        parent_loop_reply.is_ok(),
+        "Parent-loop popup control failed"
+    );
+    // The second failure ends the pending traversal's event loop. Hold the parent's script
+    // thread, so its callbacks cannot complete until the constellation has handled it.
+    let mut separate = None;
+    let (audit, handled, held) = view.with_paused_script_for_document_scope_probe(|| {
+        let audit = CleanupAudit::queue(&view, Some(parent), &delegate, true);
+        match failure {
+            ParseFailure::ScriptThread => {
+                separate = view.crash_pending_frame_script_thread_for_document_scope_probe();
+            }
+            ParseFailure::ProcessExit => {
+                view.with_terminating_pending_frame_content_process_for_document_scope_probe(|| ())
+            }
+            ParseFailure::ProcessKill => {
+                view.with_killed_pending_frame_content_process_for_document_scope_probe(|| ())
+            }
+            ParseFailure::Send | ParseFailure::DeadThreadSend | ParseFailure::DeadProcessSend => {
+                unreachable!("Only frame paths cover a failed send")
+            }
+        }
+        let barrier = deadline.min(Instant::now() + Duration::from_secs(4));
+        // A revocation of the parent also ends this wait, so the check below reports it.
+        let handled = drive_until(servo, barrier, || {
+            delegate.frame_failures.borrow().len() == 2
+                || audit.calls.get() > 0
+                || delegate.crashed.get()
+        })
+        .and_then(|()| settle(servo, barrier, 200));
+        let held = (
+            audit.calls.get(),
+            delegate.active.get(),
+            delegate.crash_reasons.borrow().clone(),
+            frame_ids(&view).ok(),
+            frame_state(&view).ok(),
+            delegate.frame_failures.borrow().clone(),
+            delegate.traversals.borrow().contains(&traversal),
+        );
+        (audit, handled, held)
+    });
+    ensure!(
+        matches!(
+            failure,
+            ParseFailure::ProcessExit | ParseFailure::ProcessKill
+        ) || separate == Some(true),
+        "Probe did not reach the pending pipeline in a separate event loop: {separate:?}"
+    );
+    handled.map_err(|error| {
+        anyhow::anyhow!(
+            "The pending traversal's {} was not handled within the barrier: {error}; frame={:?}",
+            failure.how(),
+            frame_state(&view).ok(),
+        )
+    })?;
+    let (calls, active, crashes, ids_held, frame_held, notices, completed) = held;
+    ensure!(
+        (calls, active, crashes.as_slice()) == (0, Some(parent), &[][..]),
+        "The pending traversal's {} revoked the healthy parent: calls={calls}, active={active:?}, crashes={crashes:?}",
+        failure.how()
+    );
+    // One notice per failure. The second names the traversal's pending pipeline.
+    ensure!(
+        notices.len() == 2
+            && notices[1].document == Some(parent)
+            && notices[1].frames == [failed_pending]
+            && failure.reported(&notices[1].reason),
+        "Unexpected frame failure notices: {notices:?}; expected {failed_pending:?} for {parent:?}"
+    );
+    ensure!(
+        ids_held == Some((frame_context, None))
+            && frame_held == Some((first_page.0, true, first_page.2.clone(), false)),
+        "The failed pending pipeline was not closed, or the frame changed early: ids={ids_held:?}, frame={frame_held:?}"
+    );
+    // The constellation completes the traversal when its pending pipeline closes.
+    ensure!(
+        completed,
+        "The host did not receive the traversal's completion inside the barrier"
+    );
+    // The parent's held callbacks then complete in the same document.
+    drive_until(servo, deadline, || audit.calls.get() == 8)?;
+    audit.check_completed(parent)?;
+    ensure!(
+        parent_loop_delegate.active.get() == Some(parent_loop_document)
+            && parent_loop_delegate.generation.get() == parent_loop_ticket.generation
+            && !parent_loop_delegate.crashed.get(),
+        "The failure revoked a document in the parent's event loop"
+    );
+    ensure!(
+        parent_loop_delegate.deliver(parent_loop_ticket, parent_loop_reply),
+        "The parent loop's retained reply lost its scope"
+    );
+    // The frame's error page then replaces the first crash page.
+    let mut second_page = None;
+    drive_until(servo, deadline, || {
+        second_page = frame_state(&view)
+            .ok()
+            .filter(|state| state.0 != first_page.0 && state.1 && !state.3);
+        second_page.is_some()
+    })
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "The failed traversal did not give the frame a new crash page: {error}; frame={:?}",
+            frame_state(&view).ok()
+        )
+    })?;
+    let second_page = second_page.unwrap();
+    ensure!(
+        second_page
+            .2
+            .as_deref()
+            .is_some_and(|crash| crash.starts_with(reason))
+            && child_frames(&view).len() == 1
+            && child_frames(&view)[0].pipeline == second_page.0,
+        "The failed traversal did not get a crash page: {second_page:?}"
+    );
+    let after = format!("{FRAME_HISTORY_SECOND}|4|2|SecurityError");
+    wait_text(servo, &view, deadline, parent, FRAME_VIEW, &after)?;
+    ensure!(
+        readiness(&delegate, parent) == ["dom-ready", "load-complete"]
+            && delegate.active.get() == Some(parent)
+            && delegate.generation.get() == ticket.generation
+            && !delegate.crashed.get()
+            && view.pending_evaluations_for_document_scope_probe() == 0,
+        "The parent did not keep its document: readiness={:?}, active={:?}, crashes={:?}",
+        readiness(&delegate, parent),
+        delegate.active.get(),
+        delegate.crash_reasons.borrow()
+    );
+    ensure!(
+        delegate.deliver(ticket, reply),
+        "The parent's retained reply lost its scope"
+    );
+    if let Some((parent_process, _)) = processes {
+        let crash_process = view.frame_content_process_id_for_document_scope_probe();
+        ensure!(
+            crash_process != parent_process && crash_process != std::process::id(),
+            "The frame's crash page did not run in a content process of its own"
+        );
+    }
+    // A late response for the traversal's document must not reach any live document.
+    let errors_before_release = engine_errors.0.borrow().len();
+    release_held_document(&delegate, FRAME_HISTORY_FIRST)?;
+    settle(servo, deadline, 300)?;
+    ensure!(
+        identity(servo, &view, deadline)? == parent
+            && frame_state(&view)? == second_page
+            && readiness(&delegate, parent) == ["dom-ready", "load-complete"]
+            && delegate.crash_reasons.borrow().is_empty()
+            && !parent_loop_delegate.crashed.get(),
+        "The late traversal response changed the parent or the frame's crash page: frame={:?}",
+        frame_state(&view).ok()
+    );
+    text(
+        scoped(servo, &view, deadline, parent, FRAME_VIEW)?,
+        parent,
+        &after,
+    )?;
+    let late_errors = engine_errors.0.borrow()[errors_before_release..].to_vec();
+    ensure!(
+        late_errors.is_empty(),
+        "The late traversal response raised engine errors: {late_errors:?}"
+    );
+    // The parent has exactly one notice for each failure. Nothing else receives one.
+    ensure!(
+        delegate.frame_failures.borrow().len() == 2
+            && delegate.frame_failures.borrow()[1].frames == [failed_pending],
+        "Unexpected frame failure notices after the late response: {:?}",
+        delegate.frame_failures.borrow()
+    );
+    no_frame_notice("parent-loop popup", &parent_loop_delegate)?;
+    // Further traversals inside the frame complete without a hang, and the frame keeps its
+    // crash page. This is the observed rule: the failed traversal's entry holds the crash page.
+    for (name, traversal) in [("back", view.go_back(1)), ("forward", view.go_forward(1))] {
+        drive_until(servo, deadline, || {
+            delegate.traversals.borrow().contains(&traversal)
+        })
+        .map_err(|error| anyhow::anyhow!("A {name} traversal did not complete: {error}"))?;
+        settle(servo, deadline, 200)?;
+        ensure!(
+            frame_state(&view)? == second_page && delegate.crash_reasons.borrow().is_empty(),
+            "A {name} traversal changed the frame after the failed traversal: {:?}",
+            frame_state(&view).ok()
+        );
+    }
+    text(
+        scoped(servo, &view, deadline, parent, FRAME_VIEW)?,
+        parent,
+        &after,
+    )?;
+    // Reload replaces the parent, and the first child loads again. A new URL recovers.
+    delegate.hold_documents.borrow_mut().clear();
+    view.reload();
+    drive_until(servo, deadline, || {
+        delegate.active.get().is_some_and(|id| id != parent)
+    })?;
+    wait_marker(servo, &view, deadline, TRAVERSAL_PARENT)?;
+    let reloaded = identity(servo, &view, deadline)?;
+    ensure!(reloaded != parent, "Reload kept the parent scope");
+    stale(scoped(servo, &view, deadline, parent, "'obsolete'")?)?;
+    wait_text(
+        servo,
+        &view,
+        deadline,
+        reloaded,
+        FRAME_VIEW,
+        &format!("{FRAME_HISTORY_FIRST}|1|1|SecurityError"),
+    )?;
+    ensure!(
+        frame_state(&view)?.2.is_none() && !frame_state(&view)?.3,
+        "Reload kept the frame's crash page"
+    );
+    load(servo, &view, deadline, "/after-frame-traversal-failure")?;
+    text(
+        scoped(
+            servo,
+            &parent_loop,
+            deadline,
+            parent_loop_document,
+            "'parent-loop-survivor'",
+        )?,
+        parent_loop_document,
+        "parent-loop-survivor",
+    )?;
+    let (survivor, survivor_document) = survivor;
+    text(
+        scoped(
+            servo,
+            survivor,
+            deadline,
+            survivor_document,
+            "'frame-traversal-survivor'",
+        )?,
+        survivor_document,
+        "frame-traversal-survivor",
+    )?;
+    ensure!(
+        audit.calls.get() == 8,
+        "Frame traversal recovery repeated callbacks"
+    );
+    Ok(format!(
+        "{} twice, once for the frame's second document and once for the pending back traversal, parent kept its document, scope, and retained reply, one frame notice for each failure, the host received the traversal's completion, 8 held parent callbacks completed, parent-loop popup kept scope, the second crash page replaced the first, late response ignored, further back and forward completed without changing the frame, reload and new URL recover, survivor usable",
+        failure.how(),
     ))
 }
 
@@ -6773,6 +7747,47 @@ fn frame_cases(
         )?;
         println!("S1 {name}: PASS ({detail})");
     }
+    // A child frame fails while its parent is no longer the view's active document, while the
+    // child's own navigation is pending, or while a history traversal inside the frame is pending.
+    let detail = frame_inactive_parent_failure(
+        servo,
+        context.clone(),
+        deadline,
+        engine_errors,
+        multiprocess,
+        (failure, recovered),
+        ParseFailure::ScriptThread,
+    )?;
+    println!("S1 frame-inactive-parent-failure: PASS ({detail})");
+    for (path, name) in [
+        (FramePath::ChildNavigation, "frame-child-navigation-failure"),
+        (
+            FramePath::ChildSameSite,
+            "frame-child-same-site-navigation-failure",
+        ),
+    ] {
+        let detail = frame_path_failure(
+            servo,
+            context.clone(),
+            deadline,
+            engine_errors,
+            multiprocess,
+            (failure, recovered),
+            path,
+            ParseFailure::ScriptThread,
+        )?;
+        println!("S1 {name}: PASS ({detail})");
+    }
+    let detail = frame_traversal_failure(
+        servo,
+        context.clone(),
+        deadline,
+        engine_errors,
+        multiprocess,
+        (failure, recovered),
+        ParseFailure::ScriptThread,
+    )?;
+    println!("S1 frame-traversal-failure: PASS ({detail})");
     Ok(())
 }
 
@@ -7326,6 +8341,49 @@ fn process_cases(
             println!("S1 {name}-process-{kind}: PASS ({detail})");
         }
     }
+    // A child exits or is killed while its frame's parent is inactive, while its own navigation
+    // is pending, or while a history traversal inside the frame is pending.
+    for (mode, kind) in [
+        (ParseFailure::ProcessExit, "exit"),
+        (ParseFailure::ProcessKill, "kill"),
+    ] {
+        let detail = frame_inactive_parent_failure(
+            servo,
+            context.clone(),
+            deadline,
+            engine_errors,
+            multiprocess,
+            (failure, recovered),
+            mode,
+        )?;
+        println!("S1 frame-inactive-parent-process-{kind}: PASS ({detail})");
+        for (path, name) in [
+            (FramePath::ChildNavigation, "frame-child-navigation"),
+            (FramePath::ChildSameSite, "frame-child-same-site-navigation"),
+        ] {
+            let detail = frame_path_failure(
+                servo,
+                context.clone(),
+                deadline,
+                engine_errors,
+                multiprocess,
+                (failure, recovered),
+                path,
+                mode,
+            )?;
+            println!("S1 {name}-process-{kind}: PASS ({detail})");
+        }
+        let detail = frame_traversal_failure(
+            servo,
+            context.clone(),
+            deadline,
+            engine_errors,
+            multiprocess,
+            (failure, recovered),
+            mode,
+        )?;
+        println!("S1 frame-traversal-process-{kind}: PASS ({detail})");
+    }
     // The constellation kills a child frame's content process and sends to it before the
     // lifeline can report. The failed send alone recovers the frame.
     let detail = frame_path_failure(
@@ -7344,8 +8402,8 @@ fn process_cases(
 
 // Case counts of each part. The runner checks each part and the total.
 const DOCUMENT_CASES: usize = 52;
-const FRAME_CASES: usize = 12;
-const PROCESS_CASES: usize = 33;
+const FRAME_CASES: usize = 16;
+const PROCESS_CASES: usize = 41;
 
 // Each part runs in its own engine process, so each part has its own deadline.
 pub(super) fn run(multiprocess: bool, part: Option<&str>) -> Result<()> {

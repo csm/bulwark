@@ -191,8 +191,8 @@ P3.4 remains gated by R1. The P3.7 bridge remains gated by S2 and the D6 disposi
 P3.5 can use deferred allow/deny, while its complete redirect/rewrite API depends on S3.
 The next mechanism work targets scoped engine evaluation, evaluator authority, and protocol-source binding, with the listed regressions.
 
-The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and sixty-four shared regression cases.
-Multiprocess mode adds thirty-three cases, for unexpected content-process exit, forced termination of a fixture-owned child process, shared-process teardown, pending-process failure, process loss during parsing, process loss of a child frame's pending pipeline, process loss in three more frame paths, process loss of a group of sibling frames and of a frame inside a failed frame, and a send that reaches a killed content process before the lifeline.
+The [document scope follow-up](phase-3-document-scope.md) adds an isolated Servo patch and sixty-eight shared regression cases.
+Multiprocess mode adds forty-one cases, for unexpected content-process exit, forced termination of a fixture-owned child process, shared-process teardown, pending-process failure, process loss during parsing, process loss of a child frame's pending pipeline, process loss in three more frame paths, process loss of a group of sibling frames and of a frame inside a failed frame, a send that reaches a killed content process before the lifeline, process loss of a frame in an inactive parent, process loss of a child frame that has started its own navigation, and process loss of a pending traversal inside a frame.
 The cases run in three parts, each in its own engine process.
 The prototype checks document incarnations at execution and after serialization.
 Lifecycle snapshots identify the top document and invalidate obsolete replies at a host allocation check.

@@ -41,6 +41,8 @@ FRAME_CASES = {
     "cross-site-lone-frame-pending-navigation-failure", "frame-initial-navigation-failure",
     "frame-healthy-pending-navigation-failure", "frame-history-failure", "frame-send-failure",
     "frame-send-dead-thread", "frame-siblings-failure", "frame-nested-failure",
+    "frame-inactive-parent-failure", "frame-child-navigation-failure",
+    "frame-child-same-site-navigation-failure", "frame-traversal-failure",
 }
 PROCESS_CASES = {
     "content-process-failure", "content-process-kill", "shared-process-close",
@@ -58,6 +60,11 @@ PROCESS_CASES = {
     "frame-history-process-exit", "frame-history-process-kill",
     "frame-siblings-process-exit", "frame-siblings-process-kill",
     "frame-nested-process-exit", "frame-nested-process-kill", "frame-send-dead-process",
+    "frame-inactive-parent-process-exit", "frame-inactive-parent-process-kill",
+    "frame-child-navigation-process-exit", "frame-child-navigation-process-kill",
+    "frame-child-same-site-navigation-process-exit",
+    "frame-child-same-site-navigation-process-kill",
+    "frame-traversal-process-exit", "frame-traversal-process-kill",
 }
 # The processes part ends content processes, so it runs only in multiprocess mode.
 PARTS = {"documents": DOCUMENT_CASES, "frames": FRAME_CASES, "processes": PROCESS_CASES}
