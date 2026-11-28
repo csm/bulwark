@@ -1592,21 +1592,36 @@ enum ParseFailure {
     // The constellation's channel to a frame's event loop closes, and one send to the frame
     // fails. No script thread unwinds and no process exits. Only frame paths use it.
     Send,
+    // The failed frame's script thread unwinds, and the constellation sends to its pipeline
+    // before it reads the panic report. The send then fails against a dead receiver.
+    DeadThreadSend,
+    // The constellation kills the failed frame's content process, and sends to its pipeline
+    // before it reads the lifeline. The send then fails against a dead process. Multiprocess only.
+    DeadProcessSend,
 }
 
 impl ParseFailure {
+    fn is_send(self) -> bool {
+        matches!(
+            self,
+            Self::Send | Self::DeadThreadSend | Self::DeadProcessSend
+        )
+    }
+
     // For a failed send, the reason continues with the channel's own error.
     fn reason(self) -> &'static str {
         match self {
             Self::ScriptThread => "S1 probe actual script-thread panic",
             Self::ProcessExit | Self::ProcessKill => "Content process disconnected",
-            Self::Send => "Send failed (",
+            Self::Send | Self::DeadThreadSend | Self::DeadProcessSend => "Send failed (",
         }
     }
 
     fn reported(self, reason: &str) -> bool {
         match self {
-            Self::Send => reason.starts_with(self.reason()),
+            Self::Send | Self::DeadThreadSend | Self::DeadProcessSend => {
+                reason.starts_with(self.reason())
+            }
             _ => reason == self.reason(),
         }
     }
@@ -1617,13 +1632,17 @@ impl ParseFailure {
             Self::ProcessExit => "child exit",
             Self::ProcessKill => "host SIGKILL",
             Self::Send => "failed send",
+            Self::DeadThreadSend => "send to a dead script thread",
+            Self::DeadProcessSend => "send to a killed content process",
         }
     }
 
     // Only the lifeline can report a process failure. Bound its delay.
     fn wait(self, deadline: Instant) -> Instant {
         match self {
-            Self::ScriptThread | Self::Send => deadline,
+            Self::ScriptThread | Self::Send | Self::DeadThreadSend | Self::DeadProcessSend => {
+                deadline
+            }
             Self::ProcessExit | Self::ProcessKill => {
                 deadline.min(Instant::now() + Duration::from_secs(5))
             }
@@ -1714,10 +1733,7 @@ fn cross_site_parse_failure(
     survivor: (&WebView, DocumentIdentity),
     failure: ParseFailure,
 ) -> Result<String> {
-    ensure!(
-        failure != ParseFailure::Send,
-        "Only frame paths cover a failed send"
-    );
+    ensure!(!failure.is_send(), "Only frame paths cover a failed send");
     let reason = failure.reason();
     let held_path = "/held-cross-site-script";
     let delegate = Rc::new(Delegate::default());
@@ -1806,7 +1822,9 @@ fn cross_site_parse_failure(
         ParseFailure::ProcessKill => {
             view.with_killed_content_process_for_document_scope_probe(queue)
         }
-        ParseFailure::Send => unreachable!("Only frame paths cover a failed send"),
+        ParseFailure::Send | ParseFailure::DeadThreadSend | ParseFailure::DeadProcessSend => {
+            unreachable!("Only frame paths cover a failed send")
+        }
     };
     // Send no further work to the failed document. Only revocation can complete these callbacks.
     drive_until(servo, failure.wait(deadline), || {
@@ -2016,10 +2034,7 @@ fn frame_parse_failure(
     frame: FrameParse,
     failure: ParseFailure,
 ) -> Result<String> {
-    ensure!(
-        failure != ParseFailure::Send,
-        "Only frame paths cover a failed send"
-    );
+    ensure!(!failure.is_send(), "Only frame paths cover a failed send");
     let reason = failure.reason();
     let parent_path = frame.parent_path();
     let held_path = frame.held_path();
@@ -2179,7 +2194,11 @@ fn frame_parse_failure(
                     ),
                 ParseFailure::ProcessKill => view
                     .with_killed_frame_content_process_for_document_scope_probe(queue_child_loop),
-                ParseFailure::Send => unreachable!("Only frame paths cover a failed send"),
+                ParseFailure::Send
+                | ParseFailure::DeadThreadSend
+                | ParseFailure::DeadProcessSend => {
+                    unreachable!("Only frame paths cover a failed send")
+                }
             };
             let barrier = deadline.min(Instant::now() + Duration::from_secs(4));
             // The failed frame pipeline is gone, and each view in the failed event loop is revoked.
@@ -2562,10 +2581,7 @@ fn frame_pending_failure(
     site: FrameSite,
     failure: ParseFailure,
 ) -> Result<String> {
-    ensure!(
-        failure != ParseFailure::Send,
-        "Only frame paths cover a failed send"
-    );
+    ensure!(!failure.is_send(), "Only frame paths cover a failed send");
     let reason = failure.reason();
     let parent_path = site.parent_path();
     let server = match site {
@@ -2766,7 +2782,9 @@ fn frame_pending_failure(
             ParseFailure::ProcessKill => {
                 view.with_killed_pending_frame_content_process_for_document_scope_probe(queue_both)
             }
-            ParseFailure::Send => unreachable!("Only frame paths cover a failed send"),
+            ParseFailure::Send | ParseFailure::DeadThreadSend | ParseFailure::DeadProcessSend => {
+                unreachable!("Only frame paths cover a failed send")
+            }
         };
         ensure!(
             failure != ParseFailure::ScriptThread || separate == Some(false),
@@ -2961,7 +2979,11 @@ fn frame_pending_failure(
                     .with_killed_pending_frame_content_process_for_document_scope_probe(
                         queue_popup,
                     ),
-                ParseFailure::Send => unreachable!("Only frame paths cover a failed send"),
+                ParseFailure::Send
+                | ParseFailure::DeadThreadSend
+                | ParseFailure::DeadProcessSend => {
+                    unreachable!("Only frame paths cover a failed send")
+                }
             };
             let barrier = deadline.min(Instant::now() + Duration::from_secs(4));
             // The pending pipeline is gone, the old child is still current, and each view in
@@ -3521,6 +3543,7 @@ fn frame_path_failure(
         state.0 == before.0 && state.1 == (path == FramePath::Initial) && !state.3
     };
     let mut separate = None;
+    let mut send_failed = None;
     // Hold the parent's script thread, so its callbacks cannot complete, and the frame cannot
     // navigate, until the constellation has handled the failure.
     let (audit, handled, held) = view.with_paused_script_for_document_scope_probe(|| {
@@ -3548,7 +3571,20 @@ fn frame_path_failure(
             (FramePath::Loaded, ParseFailure::Send) => {
                 separate = view.fail_frame_send_for_document_scope_probe();
             }
-            (_, ParseFailure::Send) => unreachable!("Only a loaded child covers a failed send"),
+            // The event loop really ends. The constellation sends before it reads the report.
+            (FramePath::Loaded, ParseFailure::DeadThreadSend | ParseFailure::DeadProcessSend) => {
+                let probe = view.fail_dead_frame_send_for_document_scope_probe(
+                    failure == ParseFailure::DeadProcessSend,
+                );
+                separate = probe.map(|(separate, _)| separate);
+                send_failed = probe.map(|(_, failed)| failed);
+            }
+            (
+                _,
+                ParseFailure::Send | ParseFailure::DeadThreadSend | ParseFailure::DeadProcessSend,
+            ) => {
+                unreachable!("Only a loaded child covers a failed send")
+            }
         }
         let barrier = deadline.min(Instant::now() + Duration::from_secs(4));
         // A revocation of the parent also ends this wait, so the check below reports it.
@@ -3568,9 +3604,19 @@ fn frame_path_failure(
         (audit, handled, held)
     });
     ensure!(
-        !matches!(failure, ParseFailure::ScriptThread | ParseFailure::Send)
-            || separate == Some(true),
+        matches!(
+            failure,
+            ParseFailure::ProcessExit | ParseFailure::ProcessKill
+        ) || separate == Some(true),
         "Probe did not reach a frame pipeline in a separate event loop: {separate:?}"
+    );
+    // A dead event loop must fail a real send before the report or lifeline can be read.
+    ensure!(
+        !matches!(
+            failure,
+            ParseFailure::DeadThreadSend | ParseFailure::DeadProcessSend
+        ) || send_failed == Some(true),
+        "No send to the dead event loop failed within the probe: {send_failed:?}"
     );
     handled.map_err(|error| {
         anyhow::anyhow!(
@@ -3767,7 +3813,17 @@ fn frame_path_failure(
                 "Reload kept the frame's crash page"
             );
             load(servo, &view, deadline, "/after-frame-send-failure")?;
-            "send to the loaded child's event loop failed in the constellation's send helper, crash page replaced the child, frame load event fired, reload and new URL recover"
+            match failure {
+                ParseFailure::DeadThreadSend => {
+                    "send to the loaded child's unwound script thread failed in the constellation's send helper before the panic report, one notice, crash page replaced the child, frame load event fired, no second recovery, reload and new URL recover"
+                }
+                ParseFailure::DeadProcessSend => {
+                    "send to the loaded child's killed content process failed in the constellation's send helper before the lifeline, one notice, crash page in a new process replaced the child, frame load event fired, no second recovery, reload and new URL recover"
+                }
+                _ => {
+                    "send to the loaded child's event loop failed in the constellation's send helper, crash page replaced the child, frame load event fired, reload and new URL recover"
+                }
+            }
         }
         FramePath::History => {
             let crash = crashed_frame.0;
@@ -4151,7 +4207,9 @@ fn frame_group_failure(
             ParseFailure::ProcessKill => {
                 view.with_killed_frame_content_process_for_document_scope_probe(|| ())
             }
-            ParseFailure::Send => unreachable!("Frame groups do not cover a failed send"),
+            ParseFailure::Send | ParseFailure::DeadThreadSend | ParseFailure::DeadProcessSend => {
+                unreachable!("Frame groups do not cover a failed send")
+            }
         }
         let barrier = deadline.min(Instant::now() + Duration::from_secs(4));
         // A revocation of the parent also ends this wait, so the check below reports it.
@@ -6686,6 +6744,18 @@ fn frame_cases(
         ParseFailure::Send,
     )?;
     println!("S1 frame-send-failure: PASS ({detail})");
+    // The same frame's script thread really dies, and a send reaches it before the report.
+    let detail = frame_path_failure(
+        servo,
+        context.clone(),
+        deadline,
+        engine_errors,
+        multiprocess,
+        (failure, recovered),
+        FramePath::Loaded,
+        ParseFailure::DeadThreadSend,
+    )?;
+    println!("S1 frame-send-dead-thread: PASS ({detail})");
     // One failure ends several frames of a view, or a frame and the frame inside it.
     for (group, name) in [
         (FrameGroup::Siblings, "frame-siblings-failure"),
@@ -7256,13 +7326,26 @@ fn process_cases(
             println!("S1 {name}-process-{kind}: PASS ({detail})");
         }
     }
+    // The constellation kills a child frame's content process and sends to it before the
+    // lifeline can report. The failed send alone recovers the frame.
+    let detail = frame_path_failure(
+        servo,
+        context.clone(),
+        deadline,
+        engine_errors,
+        multiprocess,
+        (failure, recovered),
+        FramePath::Loaded,
+        ParseFailure::DeadProcessSend,
+    )?;
+    println!("S1 frame-send-dead-process: PASS ({detail})");
     Ok(())
 }
 
 // Case counts of each part. The runner checks each part and the total.
 const DOCUMENT_CASES: usize = 52;
-const FRAME_CASES: usize = 11;
-const PROCESS_CASES: usize = 32;
+const FRAME_CASES: usize = 12;
+const PROCESS_CASES: usize = 33;
 
 // Each part runs in its own engine process, so each part has its own deadline.
 pub(super) fn run(multiprocess: bool, part: Option<&str>) -> Result<()> {

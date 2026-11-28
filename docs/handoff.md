@@ -26,12 +26,12 @@ The word "sandbox" has three unrelated meanings in these documents. Do not confu
 
 ## Current baseline
 
-Work started from `2a0a682` on `main` (merge of pull request 16). This checkpoint is the commit that follows it; its engine patch hash is `05c5b2da…` and matches the frame group evidence.
+Work started from `2c2ee2e` on `main` (the frame group checkpoint). This checkpoint is the commit that follows it; its engine patch hash is `0fb160a5…` and matches the dead event loop evidence.
 Servo remains at `0.7.0`. Clojurust remains at `540e42181ad06046116f0e2007e7f0c449efaa65`.
 The two AOT workarounds remain until a replacement pin passes their regressions.
-The [frame group evidence](../experiments/phase3/document-frame-groups-evidence-2026-11-27.json) records the current runs.
-Its engine patch differs from the previous checkpoint's patch only by one read-only probe, which lists a view's child frames.
-The [owner decisions evidence](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) records the previous checkpoint, whose patch hash matches `2a0a682`.
+The [dead event loop evidence](../experiments/phase3/document-dead-send-evidence-2026-11-27.json) records the current runs.
+Its engine patch differs from the previous checkpoint's patch only by one test-only probe, which ends a child frame's event loop and sends to it before the panic report or lifeline is read.
+The [frame group evidence](../experiments/phase3/document-frame-groups-evidence-2026-11-27.json) records the previous checkpoint, whose patch hash `05c5b2da…` matches `2c2ee2e`.
 
 ## Current engineering task
 
@@ -96,12 +96,13 @@ python3 -m unittest discover -s experiments -p test_document_scope_runner.py -v
 
 Expected results at this checkpoint:
 
-- Sixty-three shared cases pass in single-process mode (documents part: 52, frames part: 11). Multiprocess mode adds the processes part (32 cases) for ninety-five total.
+- Sixty-four shared cases pass in single-process mode (documents part: 52, frames part: 12). Multiprocess mode adds the processes part (33 cases) for ninety-seven total.
 - Each part runs in its own engine process, prints exactly its own markers, and reports its own case count. Each repeat covers every case of its mode once.
 - Both backend loss cases pass in their own engine processes in each mode. Both existing Servo controls pass.
-- The two current negative controls each fail at their first dependent case: one notice for each failed frame instead of one for each view fails at `frame-siblings-failure`, and removing both guards that exclude a frame inside a failed frame fails at `frame-nested-failure`.
+- The two current negative controls each fail at their first dependent case. Removing the probe's send loop, so that the panic report or lifeline is read first, fails at `frame-send-dead-thread` in both modes and at `frame-send-dead-process` in the processes part.
+  Restoring the previous `handle_send_error` rule fails at `frame-send-failure` in the frames part, and at `frame-send-dead-process` in the processes part. A direct run without `frame-send-failure` fails `frame-send-dead-thread`.
   See [Local evidence](phase-3-document-scope.md#local-evidence) for their exact failure points.
-  The three controls of the previous checkpoint (no notice, previous send-error path, no history drop) were not rerun.
+  The earlier controls (one notice for each failed frame, removal of the nested-frame guards, no notice, no history drop) were not rerun.
 - All 61 portable tests, formatting, and portable/probe Clippy (warnings denied) pass. Python syntax checks and twelve runner tests pass.
 
 These fixture runs need native macOS graphics and window-server access.
@@ -169,7 +170,8 @@ the `javascript:` URL crash rule, failed views at `about:blank`, the `servo-net`
   The product keeps its existing single-process configuration.
 - The actual-unwind fixture uses Servo's public panic-reporting setup with `hard_fail = false`. The product keeps its existing engine configuration.
 - These builds retained the previous line-table debug configuration. Backend cleanup completed 1,472 to 1,501 milliseconds after the crash request; the unwind delay's cause is not established.
-- The send case closes the constellation's channel with a probe. A real dead script thread, a serialization error to a live event loop, and the other send-error callers have no fixture.
+- The `frame-send-dead-thread` and `frame-send-dead-process` cases cover a send that reaches a really dead script thread or killed content process before the constellation reads the panic report or lifeline. The probe holds the constellation's thread to fix that order. The other order is the existing report and lifeline cases.
+  A serialization error to a live event loop has no fixture, and the Servo sources have no message whose serialization can fail without an engine change. The other send-error callers (pipeline creation, frame navigation and load sends to a parent, focus) and a send to a group of frames have no fixture.
 - A frame inside a healthy frame, a nested failure whose inner frame runs in another event loop than its failed parent, and a failed send to a group of frames have no notice fixture.
   The group fixtures cover script-thread unwind, content-process exit, and host SIGKILL for sibling frames and for a frame inside a failed frame.
 - The group fixtures do not read the error page's sandboxing flags.
@@ -190,7 +192,8 @@ Each evidence file records runs, source and binary hashes, negative controls, an
 
 | Evidence | Checkpoint |
 |---|---|
-| [Frame groups, 2026-11-27](../experiments/phase3/document-frame-groups-evidence-2026-11-27.json) | Current: sibling frames and a nested frame in one failure, sixty-three and ninety-five cases, two negative controls |
+| [Dead event loop, 2026-11-27](../experiments/phase3/document-dead-send-evidence-2026-11-27.json) | Current: a send to a dead script thread and to a killed content process, sixty-four and ninety-seven cases, two negative controls |
+| [Frame groups, 2026-11-27](../experiments/phase3/document-frame-groups-evidence-2026-11-27.json) | Sibling frames and a nested frame in one failure, sixty-three and ninety-five cases, two negative controls |
 | [Owner decisions, 2026-11-27](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) | Frame failure notice, send-error rule, history drop; three negative controls |
 | [Frame paths, 2026-11-27](../experiments/phase3/document-frame-paths-evidence-2026-11-27.json) | Frame path checkpoint and two isolation controls |
 | [JavaScript URL crash, 2026-11-26](../experiments/phase3/document-javascript-crash-evidence-2026-11-26.json) | JavaScript URL crash page and three negative controls |
@@ -224,7 +227,8 @@ After the [documented builds](phase-3-mechanisms.md#reproduction-and-checks), ru
 1. Continue P3.1 from the [required mechanisms](phase-3-mechanisms.md#required-upstream-and-integration-contracts).
    - Review the frame failure notice contract before product integration. The fixtures now cover a view with several failed frames in one failure and a failed frame inside a failed frame.
      A frame inside a healthy frame, a nested failure across event loops, and a failed send to a group remain unchecked.
-   - The send case closes the constellation's channel with a probe. A real dead script thread and a serialization error to a live event loop remain unchecked.
+   - A send to a really dead script thread and to a killed content process now has fixtures. A serialization error to a live event loop remains unchecked and cannot be produced without a contrived engine change.
+     The other send-error callers and a failed send to a group of frames remain unchecked.
    - A failed frame in an inactive parent, a navigation that the child starts, and a pending traversal inside a frame remain unchecked.
    - A failed frame whose healthy pending navigation shares the parent's event loop also remains unchecked.
    - Failed views at `about:blank` rely on the product's native error state. Their blank crash documents have the origin `null` and run inserted scripts.

@@ -320,14 +320,15 @@ It rejects the retained reply before host allocation and requires an empty pendi
 It evaluates the crash document, navigates to a new document, and rejects the failed document's identity.
 An independent view keeps its scope and accepts evaluation.
 
-All sixty-three shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
+All sixty-four shared cases also run in multiprocess mode, including queued cancellation, active interruption, construction failures, and history recovery.
 The exit and kill fixtures add two cases in that mode. The [shared-process audit](#shared-process-audit) adds four more.
 The [recovery audit](#pending-process-and-recovery-audit) adds four pending-process cases.
 The [cross-site parsing audit](#cross-site-parsing-audit) adds four parsing-process cases.
 The [pending frame audit](#pending-frame-audit) adds eight cases.
 The [frame failure containment](#frame-failure-containment) change converts eight of those multiprocess cases.
 The [frame path audit](#frame-path-audit) adds six cases.
-The [frame group failure](#frame-group-failure) cases add four more, for ninety-five cases in total with the current shared cases.
+The [frame group failure](#frame-group-failure) cases add four more.
+The [dead event loop](#frame-send-to-a-dead-event-loop) cases add one in each part, for ninety-seven cases in total with the current shared cases.
 The exit checkpoint's negative control disables only lifeline recovery after process reaping.
 It reaches the process fixture deadline with eight callbacks and obsolete host scope still live.
 The kill negative control keeps the barrier, process id report, and acknowledgment, but sends no signal.
@@ -668,6 +669,7 @@ It receives one [frame failure notice](#frame-failure-notice) instead.
 One failure can therefore send crash notifications to several views, and a host must expect each of them.
 The lifeline handler uses the same panic handler, so process exit and kill follow the same rules.
 A failed send to a frame's pipeline now follows the same rules for its view, per the [frame send failure](#frame-send-failure) section.
+A send that fails against a really dead script thread or killed content process follows them too, per the [dead event loop](#frame-send-to-a-dead-event-loop) section.
 
 In a surviving view, the patch finds each outermost frame whose current or pending pipeline ran in the failed event loop.
 It builds a crash load from that pipeline's load data, with every sandboxing flag, as the top-level recovery does.
@@ -912,6 +914,55 @@ The checks inside the barrier, after release, and for the popups match the other
 The error page replaces the child, and the frame element fires its second load event.
 Reload loads the child again, and a new URL recovers.
 The second negative control in the [local evidence](#local-evidence) restores the previous send-error path. The case then fails.
+The [dead event loop](#frame-send-to-a-dead-event-loop) section covers the same path with a really dead script thread and process.
+
+## Frame send to a dead event loop
+
+The [frame send failure](#frame-send-failure) fixture closes the constellation's channel with a probe. No script thread or process dies in it.
+The owner's rule covers a send that fails because the frame's event loop really is dead.
+Two new cases cover that path. The patch already meets the rule, so this checkpoint changes only probes and fixtures.
+
+A real death also reaches the constellation by another route.
+A script-thread unwind sends a panic report, and a content-process exit or kill closes the process lifeline.
+Both routes run the same recovery, and they race with any later send to the frame.
+If a report or the lifeline is handled first, the failed pipelines are already gone. The send then finds no pipeline and `handle_send_error` ignores it.
+Only a send that fails before the constellation reads the report or lifeline can reach `handle_send_error`.
+
+A new probe makes that order deterministic without changing recovery.
+The constellation runs it on its own thread as one request, so the report and the lifeline wait in their queues.
+The probe ends the event loop of the active top-level document's newest child frame:
+
+- With a script-thread unwind, it sends the existing crash message to the frame's pipeline. The frame's script thread panics.
+- With a kill, it asks the process manager for the content process of the frame's event loop and sends `SIGKILL`. It requires multiprocess mode. The process manager now records each process's event loop identifier, and it reports a process id for that identifier.
+
+The probe then calls `send_message_to_pipeline` in a loop, with two milliseconds between sends and a three-second limit, until the frame's pipeline is gone.
+Sends made before the death succeed. The first send that fails goes through the constellation's own helper into `handle_send_error`.
+Nothing in the probe calls the failure handler. It reports whether the frame runs in another event loop than the parent, and whether a real send failed and closed the frame's pipeline.
+It reads the same constellation state as the other probes, and page JavaScript cannot supply it.
+
+The errors come from the real channels.
+In single-process mode, the dead script thread's receiver is dropped, and the send returns `Disconnected`.
+In multiprocess mode, the send returns `SerializationError("Error in IO: Bogus destination port..")` for both the unwound script thread and the killed process.
+In this build, that variant is how the IPC layer reports a dead peer. It does not mean that a message failed to serialize.
+
+The `frame-send-dead-thread` case runs in the frames part in both modes, and `frame-send-dead-process` runs in the processes part.
+Both use the loaded child alone in an event loop of its own, as `frame-send-failure` does, with the same barrier, eight callbacks, popups, and checks.
+Each case also requires that the probe reports a failed send, so a lifeline or panic report that wins the race fails the case.
+The crash details and the notice must begin with `Send failed (`, and the reason must not be `Content process disconnected` or the panic message.
+The notice must be the parent's only one after the error page loads, the late data, and 300 milliseconds. No second recovery or notice follows.
+The panic report or lifeline then arrives and finds no pipeline of the dead event loop. It does nothing.
+In the process case, the error page runs in a new content process. Reload loads the child again, and a new URL recovers.
+
+The result equals the lifeline path's result for the same frame: one notice for the parent, an intact parent and popups, and one error page that replaces the child.
+The only difference is the reason text, which names the send. The send and the lifeline path therefore recover a frame once between them.
+
+A serialization error to a live event loop has no fixture, and this checkpoint leaves it open.
+The IPC layer reports a dead peer with the `SerializationError` variant, so the variant alone does not identify a serialization failure.
+A real one needs a message to a live script thread that fails to serialize.
+The constellation's messages to script derive their serialization. The `servo-constellation`, `servo-constellation-traits`, and `servo-script-traits` sources contain no hand-written `Serialize` implementation.
+A fixture would have to add a message type with a failing implementation to the engine, which is a contrived change that tests no real path.
+The other callers of `handle_send_error` have no fixture either: the two pipeline-creation sends, the two frame navigation and load sends to a parent pipeline, and the three focus sends.
+They share the helper's rule, but only `send_message_to_pipeline` has coverage.
 
 ## Frame group failure
 
@@ -1258,11 +1309,11 @@ Fixture markers establish test order, without authentication claims.
 | Shutdown delegate panics | Both retained views receive revocation despite delegate panics. Engine shutdown completes. |
 
 The scope cases run in three parts. Each part runs in its own engine process with its own deadline.
-The documents part has fifty-two cases, and the frames part has eleven cases. Both parts run in each mode.
-The processes part has thirty-two cases. It runs only in multiprocess mode.
+The documents part has fifty-two cases, and the frames part has twelve cases. Both parts run in each mode.
+The processes part has thirty-three cases. It runs only in multiprocess mode.
 The frames and processes parts each start a fresh view at the fixture origin. Their cases check that view as the independent view.
 Each part must print exactly its own markers. Its summary marker must report its own case count.
-Each repeat must cover sixty-three cases in single-process mode or ninety-five cases in multiprocess mode, each case once.
+Each repeat must cover sixty-four cases in single-process mode or ninety-seven cases in multiprocess mode, each case once.
 Each repeat also runs the two backend loss cases in a separate engine process.
 Both modes retain the existing Servo contract and E4 baseline results.
 The host-ticket fixture suppresses allocation after delivery. Engine cancellation separately rejects closed permits before and during execution.
@@ -1271,8 +1322,9 @@ The separate script-thread fixture terminates the receiving thread through a Rus
 
 ## Local evidence
 
-The [frame group evidence](../experiments/phase3/document-frame-groups-evidence-2026-11-27.json) records the current runs, source hashes, binary hashes, negative controls, and local checks.
-Its baseline is `2a0a682`; the runs used the working tree that followed it. The only patch change is the new child frame probe.
+The [dead event loop evidence](../experiments/phase3/document-dead-send-evidence-2026-11-27.json) records the current runs, source hashes, binary hashes, negative control, and local checks.
+Its baseline is `2c2ee2e`; the runs used the working tree that followed it. The only patch change is the new dead frame send probe.
+The [frame group evidence](../experiments/phase3/document-frame-groups-evidence-2026-11-27.json) preserves the previous checkpoint and its two negative controls.
 The [owner decisions evidence](../experiments/phase3/document-owner-decisions-evidence-2026-11-27.json) preserves the previous checkpoint and its three negative controls.
 The [frame path evidence](../experiments/phase3/document-frame-paths-evidence-2026-11-27.json) preserves the frame path checkpoint and its two isolation controls.
 The [JavaScript URL crash evidence](../experiments/phase3/document-javascript-crash-evidence-2026-11-26.json) preserves the JavaScript URL crash checkpoint and its three negative controls.
@@ -1300,15 +1352,43 @@ The [lifecycle evidence](../experiments/phase3/document-lifecycle-evidence-2026-
 The [earlier evidence](../experiments/phase3/document-scope-evidence-2026-11-22.json) preserves the nine-case checkpoint before lifecycle notifications.
 That earlier checkpoint retained identities across history activation. The current prototype deliberately changes that policy.
 
-All sixty-three shared cases passed in three single-process runs on macOS arm64 with software rendering.
-All ninety-five cases passed in three multiprocess runs.
+All sixty-four shared cases passed in three single-process runs on macOS arm64 with software rendering.
+All ninety-seven cases passed in three multiprocess runs.
 Each run has three parts in multiprocess mode and two parts in single-process mode. Each part ran in its own engine process.
-In multiprocess mode, the documents part took 37.8 to 38.1 seconds, the frames part 28.5 to 28.7 seconds, and the processes part 18.0 to 18.3 seconds.
-Their margins to the 80-second fixture deadline are about 42, 51, and 62 seconds.
-In single-process mode, the documents part took 6.3 to 9.2 seconds, and the frames part took 8.9 to 9.0 seconds, within the 30-second fixture deadline.
-The runner times each part's whole process. The documents part has no new case and took about three seconds longer than in the previous checkpoint, so part times vary between checkpoints.
+In multiprocess mode, the documents part took 37.8 to 38.1 seconds, the frames part 31.3 to 31.6 seconds, and the processes part 18.9 to 19.0 seconds.
+Their margins to the 80-second fixture deadline are about 42, 48, and 61 seconds.
+In single-process mode, the documents part took 6.4 to 9.4 seconds, and the frames part took 9.5 to 9.7 seconds, within the 30-second fixture deadline.
+The runner times each part's whole process. The multiprocess frames part grew by about three seconds, because `frame-send-dead-thread` waits for the dead script thread's port to fail.
 This checkpoint keeps all fixture and runner deadlines.
-One development run of the frames part in each mode, and of the processes part, passed before the final runs. The final binary came from a fresh preparation of the same fixture source. No final run failed.
+One development run of the frames part in each mode, and of the processes part, passed before the final runs. The final binary came from a fresh preparation of the formatted fixture source. No final run failed.
+
+Two negative controls each used a separate preparation and the final fixture. Each edits only that preparation's copied `constellation.rs` after the preparation script applied the final patch.
+The runner accepts them because it checks the patch file's hash, so the repository patch was never modified. Each failed in all three runs of each mode, and its documents part passed.
+The first control removes the probe's send loop. The handler ends the frame's event loop and replies at once, so the constellation reads the panic report or the lifeline before any send.
+The frames part passes nine cases and fails at `frame-send-dead-thread` with `No send to the dead event loop failed within the probe: Some(false)`.
+In multiprocess mode, the processes part passes thirty-two cases and fails at `frame-send-dead-process` with the same error.
+The control shows that the fixture detects the other order, where recovery runs from the report or the lifeline and the send path never runs.
+It does not test a patch fix, because the patch needed none.
+The second control restores the previous `handle_send_error` rule: it deletes the check of `top_level_failed` and the single-view recovery, so every failed send fails the whole view again.
+In single-process mode, the frames part passes eight cases and fails at `frame-send-failure`, the case before the new ones. The parent had eight terminal callbacks and the crash notification `Send failed (Disconnected)`.
+In multiprocess mode, the frames part reaches the 90-second runner deadline in `frame-send-failure`, as the earlier control did.
+The processes part passes thirty-two cases and fails at `frame-send-dead-process` with `No send to the dead event loop failed within the probe: Some(false)`. With the old rule, the failed send no longer closes the frame's pipeline, so the probe's loop ends at its limit.
+A runner part stops at its first failure, so `frame-send-failure` hides `frame-send-dead-thread`. A second binary of that preparation, built after its candidate copy of the fixture dropped the `frame-send-failure` call, ran the frames part directly in each mode. It is not a runner run.
+In single-process mode, `frame-send-dead-thread` fails with `The frame send to a dead script thread revoked the healthy parent`, and the crash notification `Send failed (Disconnected)`.
+In multiprocess mode, it fails with the same probe error as the process case. Both new cases therefore depend on the send-error rule.
+Both backend loss cases passed in three separate engine runs in each mode. Cleanup completed 1,482 to 1,547 milliseconds after the crash request.
+Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
+Clippy denied warnings for the probe and portable workspace. The probe command exits with status 0 and prints 18 warnings, all in the copied Servo package sources.
+None is on a line that the patch adds or changes. Fourteen are in files that the patch does not touch.
+Four are in patched files but on upstream code that the patch does not mention: an import in `servo.rs` that only a feature-gated bluetooth line uses, an unused parameter in `queue_document_completion`, and two unused testing methods.
+They come from disabled features in published code. The previous checkpoint's log did not show them because it reused cached crates, and the fresh preparation recompiled `servo-script`.
+Python syntax checks and twelve runner tests also passed. The runner test pins each part's documented case count and the totals.
+These builds retained the previous line-table debug configuration.
+
+The previous checkpoint's results follow.
+
+All sixty-three shared cases passed in three single-process runs, and all ninety-five cases passed in three multiprocess runs.
+In multiprocess mode, its documents part took 37.8 to 38.1 seconds, its frames part 28.5 to 28.7 seconds, and its processes part 18.0 to 18.3 seconds.
 
 Two negative controls each used a separate preparation and the final fixture. Each edits only that preparation's copied `constellation.rs` after the preparation script applied the final patch.
 The runner accepts them because it checks the patch file's hash, so the repository patch was never modified. Each failed in all three runs of each mode, and its documents part passed.
@@ -1320,13 +1400,9 @@ The frames part passes ten cases and fails at `frame-nested-failure`, because th
 In multiprocess mode, the processes part passes twenty-six cases and fails at `frame-nested-process-exit`.
 One single-process frames run of each control exited with signal 11 during teardown. The other runs exited with status 1.
 Removing only the guard in `contained_failed_frames` is not a control. It passed every case in all three runs of each mode, because the notice loop's filter also drops the inner frame.
-Both backend loss cases passed in three separate engine runs in each mode. Cleanup completed 1,486 to 1,533 milliseconds after the crash request.
-Both existing Servo controls, all 61 portable tests, formatting, and portable/probe Clippy passed locally.
-Clippy denied warnings for the probe and portable workspace. The probe command reports one unused-import warning in the copied `servo` package source and exits with status 0.
-Python syntax checks and twelve runner tests also passed. The runner test pins each part's documented case count and the totals.
-These builds retained the previous line-table debug configuration.
+Cleanup completed 1,486 to 1,533 milliseconds after the crash request in that checkpoint's runs.
 
-The previous checkpoint's negative controls and notes follow.
+The earlier checkpoint's negative controls and notes follow.
 
 Three negative controls each used a separate preparation and the final fixture. Each failed in all three runs of each mode.
 The first control is the previous patch with only the new probes and the inert notice API.
@@ -1405,8 +1481,9 @@ The frame shows Servo's error page, and the parent keeps its document and its sc
 A view whose own top-level document ran in the failed event loop still fails. A host must expect crash notifications for several views from one failure.
 The contained view now receives one frame failure notice. Its document and scope stay valid.
 A negative control shows that process loss of a lone pending frame pipeline depends on the lifeline's pending-change clause.
-A failed send to a frame's pipeline now stays inside that frame. The fixture closes the constellation's channel with a probe.
-The send path treats every send error to such a pipeline as a failure of its event loop for that view. A serialization error to a live event loop has no fixture.
+A failed send to a frame's pipeline now stays inside that frame. One fixture closes the constellation's channel with a probe.
+Two more fixtures send to a really dead script thread and to a killed content process before the constellation reads the panic report or the lifeline.
+The send path treats every send error to such a pipeline as a failure of its event loop for that view. A serialization error to a live event loop has no fixture, and the other send-error callers have none.
 A frame's first navigation, a failed frame with a healthy pending navigation, and frame history after a contained failure now have evidence.
 A failed frame in an inactive parent document, a navigation that the child starts, and a pending traversal inside a frame remain untested.
 Error-page recovery through reload, back, forward, and a new URL has evidence for top-level history.
